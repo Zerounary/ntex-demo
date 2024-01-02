@@ -1,4 +1,5 @@
 use ntex::web;
+use ntex_files as fs;
 
 #[web::get("/")]
 async fn hello() -> impl web::Responder {
@@ -17,9 +18,11 @@ async fn manual_hello() -> impl web::Responder {
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     web::HttpServer::new(|| {
+
         web::App::new()
             .service(hello)
             .service(echo)
+            .service(fs::Files::new("/", "./static").show_files_listing())
             .route("/hey", web::get().to(manual_hello))
     })
     .bind(("127.0.0.1", 8080))?
