@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 ntex = { version = "0.7", features = ["tokio"] }
 ntex-files = "0.3.0"
+dotenv = "0.15"

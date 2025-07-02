@@ -1,5 +1,7 @@
 use ntex::web;
 use ntex_files as fs;
+use dotenv::dotenv;
+use std::env;
 
 #[web::post("/echo")]
 async fn echo(req_body: String) -> impl web::Responder {
@@ -12,6 +14,13 @@ async fn manual_hello() -> impl web::Responder {
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok(); // Load .env file
+
+    let port = env::var("PORT")
+        .unwrap_or_else(|_| "8080".to_string())
+        .parse()
+        .expect("PORT must be a number");
+
     web::HttpServer::new(|| {
 
         web::App::new()
@@ -23,7 +32,7 @@ async fn main() -> std::io::Result<()> {
             )
             .route("/hey", web::get().to(manual_hello))
     })
-    .bind(("127.0.0.1", 8080))?
+    .bind(("127.0.0.1", port))?
     .run()
     .await
 }
