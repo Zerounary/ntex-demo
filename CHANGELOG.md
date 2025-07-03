@@ -21,3 +21,7 @@ Note: In this file, do not use the hard wrap in the middle of a sentence for com
 ## [0.0.6] - 2023-11-24
 
 - 初步版本 简单实现 还未优化
+
+## [0.0.7] - 2025-07-03
+
+- 支持env配置修改端口
