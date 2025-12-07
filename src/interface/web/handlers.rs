@@ -17,7 +17,7 @@ use super::dto::{
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
-#[web::get("/api/accelerator/bootstrap")]
+#[web::get("/accelerator/bootstrap")]
 pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let repo = AcceleratorRepositoryImpl::new(&state.db);
     let usecase = AcceleratorUseCase::new(repo);
@@ -25,7 +25,7 @@ pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpRespons
     Ok(ApiResponse::success(AcceleratorBootstrapVO::from(payload)).into_http(StatusCode::OK))
 }
 
-#[web::post("/api/accelerator/profiles")]
+#[web::post("/accelerator/profiles")]
 pub async fn sync_profiles(
     state: State<AppState>,
     Json(body): Json<ProfileSyncRequest>,
@@ -40,7 +40,7 @@ pub async fn sync_profiles(
     .into_http(StatusCode::OK))
 }
 
-#[web::get("/api/dashboard")]
+#[web::get("/dashboard")]
 pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -48,7 +48,7 @@ pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError>
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
-#[web::get("/api/library")]
+#[web::get("/library")]
 pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -56,7 +56,7 @@ pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
-#[web::get("/api/settings/meta")]
+#[web::get("/settings/meta")]
 pub async fn settings(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -64,7 +64,7 @@ pub async fn settings(state: State<AppState>) -> Result<HttpResponse, AppError> 
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
-#[web::get("/api/navigation")]
+#[web::get("/navigation")]
 pub async fn navigation(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -72,7 +72,7 @@ pub async fn navigation(state: State<AppState>) -> Result<HttpResponse, AppError
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
-#[web::post("/api/auth/wechat/ticket")]
+#[web::post("/auth/wechat/ticket")]
 pub async fn create_wechat_ticket(
     state: State<AppState>,
     Json(body): Json<TicketRequestVO>,
@@ -83,7 +83,7 @@ pub async fn create_wechat_ticket(
     Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::CREATED))
 }
 
-#[web::get("/api/auth/wechat/status")]
+#[web::get("/auth/wechat/status")]
 pub async fn wechat_status(
     state: State<AppState>,
     Query(query): Query<TicketStatusQuery>,
@@ -94,7 +94,7 @@ pub async fn wechat_status(
     Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::OK))
 }
 
-#[web::post("/api/auth/account")]
+#[web::post("/auth/account")]
 pub async fn account_login(
     state: State<AppState>,
     Json(body): Json<AccountLoginRequestVO>,

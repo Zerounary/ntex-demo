@@ -4,7 +4,7 @@ use super::handlers;
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
-        web::scope("")
+        web::scope("/api")
             .service(handlers::accelerator_bootstrap)
             .service(handlers::sync_profiles)
             .service(handlers::dashboard)
