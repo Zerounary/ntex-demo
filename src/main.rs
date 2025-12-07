@@ -5,7 +5,7 @@ mod infrastructure;
 mod interface;
 
 use dotenv::dotenv;
-use infrastructure::database;
+use infrastructure::{database, seed};
 use interface::web::{self, AppState};
 
 use crate::config::AppConfig;
@@ -19,6 +19,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .map_err(to_io_error)?;
     database::init(&db).await.map_err(to_io_error)?;
+    seed::seed(&db).await.map_err(to_io_error)?;
 
     let state = AppState::new(db);
     web::serve(config.port, state).await

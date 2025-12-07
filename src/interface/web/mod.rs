@@ -35,4 +35,3 @@ pub async fn serve(port: u16, state: AppState) -> std::io::Result<()> {
     .run()
     .await
 }
-

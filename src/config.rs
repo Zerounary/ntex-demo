@@ -19,4 +19,3 @@ impl AppConfig {
         Self { port, database_url }
     }
 }
-

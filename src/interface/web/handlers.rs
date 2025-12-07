@@ -1,68 +1,97 @@
 use ntex::http::StatusCode;
-use ntex::web::types::{Json, Path, State};
 use ntex::web::HttpResponse;
+use ntex::web::types::{Json, Query, State};
 
-use crate::application::todo_usecase::TodoUseCase;
-use crate::infrastructure::persistence::todo_repository::TodoRepositoryImpl;
-
-use super::dto::{
-    ApiResponse, CreateTodoRequest, MessageBody, TodoVO, UpdateTodoRequest,
+use crate::application::accelerator_usecase::AcceleratorUseCase;
+use crate::application::auth_usecase::AuthUseCase;
+use crate::application::content_usecase::ContentUseCase;
+use crate::infrastructure::persistence::repositories::{
+    AcceleratorRepositoryImpl, AuthRepositoryImpl, ConfigRepositoryImpl,
 };
-use super::errors::AppError;
+
 use super::AppState;
+use super::dto::{
+    AcceleratorBootstrapVO, AccountLoginRequestVO, AccountLoginResponseVO, DashboardVO, LibraryVO,
+    NavigationVO, ProfileSyncRequest, SettingsMetaVO, TicketRequestVO, TicketStatusQuery,
+    WechatTicketVO,
+};
+use super::errors::{ApiResponse, AppError, MessageResponse};
 
-pub async fn list_todos(state: State<AppState>) -> Result<HttpResponse, AppError> {
-    let repo = TodoRepositoryImpl::new(&state.db);
-    let usecase = TodoUseCase::new(repo);
-    let todos = usecase.list().await?;
-    let payload: Vec<TodoVO> = todos.into_iter().map(Into::into).collect();
-    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let repo = AcceleratorRepositoryImpl::new(&state.db);
+    let usecase = AcceleratorUseCase::new(repo);
+    let payload = usecase.bootstrap().await?;
+    Ok(ApiResponse::success(AcceleratorBootstrapVO::from(payload)).into_http(StatusCode::OK))
 }
 
-pub async fn get_todo(
+pub async fn sync_profiles(
     state: State<AppState>,
-    path: Path<i32>,
+    Json(body): Json<ProfileSyncRequest>,
 ) -> Result<HttpResponse, AppError> {
-    let repo = TodoRepositoryImpl::new(&state.db);
-    let usecase = TodoUseCase::new(repo);
-    let todo = usecase.get(path.into_inner()).await?;
-    Ok(ApiResponse::success(TodoVO::from(todo)).into_http(StatusCode::OK))
-}
-
-pub async fn create_todo(
-    state: State<AppState>,
-    payload: Json<CreateTodoRequest>,
-) -> Result<HttpResponse, AppError> {
-    let repo = TodoRepositoryImpl::new(&state.db);
-    let usecase = TodoUseCase::new(repo);
-    let todo = usecase.create(payload.into_inner().into()).await?;
-    Ok(ApiResponse::success(TodoVO::from(todo)).into_http(StatusCode::CREATED))
-}
-
-pub async fn update_todo(
-    state: State<AppState>,
-    path: Path<i32>,
-    payload: Json<UpdateTodoRequest>,
-) -> Result<HttpResponse, AppError> {
-    let repo = TodoRepositoryImpl::new(&state.db);
-    let usecase = TodoUseCase::new(repo);
-    let result = usecase
-        .update(path.into_inner(), payload.into_inner().into())
-        .await?;
-    Ok(ApiResponse::success(TodoVO::from(result)).into_http(StatusCode::OK))
-}
-
-pub async fn delete_todo(
-    state: State<AppState>,
-    path: Path<i32>,
-) -> Result<HttpResponse, AppError> {
-    let repo = TodoRepositoryImpl::new(&state.db);
-    let usecase = TodoUseCase::new(repo);
-    usecase.delete(path.into_inner()).await?;
-
-    Ok(ApiResponse::success(MessageBody {
-        message: "Todo deleted".into(),
+    let repo = AcceleratorRepositoryImpl::new(&state.db);
+    let usecase = AcceleratorUseCase::new(repo);
+    let profiles: Vec<_> = body.into();
+    usecase.sync_profiles(profiles).await?;
+    Ok(ApiResponse::success(MessageResponse {
+        message: "Profiles updated".into(),
     })
     .into_http(StatusCode::OK))
 }
 
+pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let config = ConfigRepositoryImpl::new(&state.db);
+    let usecase = ContentUseCase::new(config);
+    let payload: DashboardVO = usecase.dashboard().await?;
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
+pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let config = ConfigRepositoryImpl::new(&state.db);
+    let usecase = ContentUseCase::new(config);
+    let payload: LibraryVO = usecase.library().await?;
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
+pub async fn settings(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let config = ConfigRepositoryImpl::new(&state.db);
+    let usecase = ContentUseCase::new(config);
+    let payload: SettingsMetaVO = usecase.settings().await?;
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
+pub async fn navigation(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let config = ConfigRepositoryImpl::new(&state.db);
+    let usecase = ContentUseCase::new(config);
+    let payload: NavigationVO = usecase.navigation().await?;
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
+pub async fn create_wechat_ticket(
+    state: State<AppState>,
+    Json(body): Json<TicketRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = AuthUseCase::new(repo);
+    let ticket = usecase.create_ticket(body.scene).await?;
+    Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::CREATED))
+}
+
+pub async fn wechat_status(
+    state: State<AppState>,
+    Query(query): Query<TicketStatusQuery>,
+) -> Result<HttpResponse, AppError> {
+    let repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = AuthUseCase::new(repo);
+    let ticket = usecase.ticket_status(&query.ticket_id).await?;
+    Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::OK))
+}
+
+pub async fn account_login(
+    state: State<AppState>,
+    Json(body): Json<AccountLoginRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = AuthUseCase::new(repo);
+    let response = usecase.account_login(body.into()).await?;
+    Ok(ApiResponse::success(AccountLoginResponseVO::from(response)).into_http(StatusCode::OK))
+}

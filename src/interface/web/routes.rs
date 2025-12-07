@@ -6,16 +6,22 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
             .service(
-                web::resource("/todos")
-                    .route(web::get().to(handlers::list_todos))
-                    .route(web::post().to(handlers::create_todo)),
+                web::scope("/accelerator")
+                    .route("/bootstrap", web::get().to(handlers::accelerator_bootstrap))
+                    .route("/profiles", web::post().to(handlers::sync_profiles)),
             )
+            .route("/dashboard", web::get().to(handlers::dashboard))
+            .route("/library", web::get().to(handlers::library))
+            .route("/settings/meta", web::get().to(handlers::settings))
+            .route("/navigation", web::get().to(handlers::navigation))
             .service(
-                web::resource("/todos/{id}")
-                    .route(web::get().to(handlers::get_todo))
-                    .route(web::put().to(handlers::update_todo))
-                    .route(web::delete().to(handlers::delete_todo)),
+                web::scope("/auth")
+                    .route(
+                        "/wechat/ticket",
+                        web::post().to(handlers::create_wechat_ticket),
+                    )
+                    .route("/wechat/status", web::get().to(handlers::wechat_status))
+                    .route("/account", web::post().to(handlers::account_login)),
             ),
     );
 }
-
