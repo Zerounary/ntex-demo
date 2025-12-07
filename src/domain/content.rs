@@ -48,6 +48,7 @@ pub struct Snapshot {
 #[serde(rename_all = "camelCase")]
 pub struct LabelValue {
     pub label: String,
+    #[serde(alias = "detail")]
     pub value: String,
 }
 
