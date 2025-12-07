@@ -1,6 +1,6 @@
 use ntex::http::StatusCode;
-use ntex::web::HttpResponse;
 use ntex::web::types::{Json, Query, State};
+use ntex::web::{self, HttpResponse};
 
 use crate::application::accelerator_usecase::AcceleratorUseCase;
 use crate::application::auth_usecase::AuthUseCase;
@@ -17,6 +17,7 @@ use super::dto::{
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
+#[web::get("/api/accelerator/bootstrap")]
 pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let repo = AcceleratorRepositoryImpl::new(&state.db);
     let usecase = AcceleratorUseCase::new(repo);
@@ -24,6 +25,7 @@ pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpRespons
     Ok(ApiResponse::success(AcceleratorBootstrapVO::from(payload)).into_http(StatusCode::OK))
 }
 
+#[web::post("/api/accelerator/profiles")]
 pub async fn sync_profiles(
     state: State<AppState>,
     Json(body): Json<ProfileSyncRequest>,
@@ -38,6 +40,7 @@ pub async fn sync_profiles(
     .into_http(StatusCode::OK))
 }
 
+#[web::get("/api/dashboard")]
 pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -45,6 +48,7 @@ pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError>
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
+#[web::get("/api/library")]
 pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -52,6 +56,7 @@ pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
+#[web::get("/api/settings/meta")]
 pub async fn settings(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -59,6 +64,7 @@ pub async fn settings(state: State<AppState>) -> Result<HttpResponse, AppError> 
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
+#[web::get("/api/navigation")]
 pub async fn navigation(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);
     let usecase = ContentUseCase::new(config);
@@ -66,6 +72,7 @@ pub async fn navigation(state: State<AppState>) -> Result<HttpResponse, AppError
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
+#[web::post("/api/auth/wechat/ticket")]
 pub async fn create_wechat_ticket(
     state: State<AppState>,
     Json(body): Json<TicketRequestVO>,
@@ -76,6 +83,7 @@ pub async fn create_wechat_ticket(
     Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::CREATED))
 }
 
+#[web::get("/api/auth/wechat/status")]
 pub async fn wechat_status(
     state: State<AppState>,
     Query(query): Query<TicketStatusQuery>,
@@ -86,6 +94,7 @@ pub async fn wechat_status(
     Ok(ApiResponse::success(WechatTicketVO::from(ticket)).into_http(StatusCode::OK))
 }
 
+#[web::post("/api/auth/account")]
 pub async fn account_login(
     state: State<AppState>,
     Json(body): Json<AccountLoginRequestVO>,
