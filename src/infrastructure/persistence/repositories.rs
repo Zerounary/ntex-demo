@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
+use moka::future::Cache;
+use once_cell::sync::Lazy;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, JsonValue, QueryFilter, Set,
 };
@@ -18,6 +20,27 @@ use super::account_user;
 use super::config_entry;
 use super::wechat_ticket;
 
+static GAME_CACHE: Lazy<Cache<&'static str, Vec<Game>>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(32)
+        .time_to_live(std::time::Duration::from_secs(30))
+        .build()
+});
+
+static PROFILE_CACHE: Lazy<Cache<&'static str, Vec<Profile>>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(32)
+        .time_to_live(std::time::Duration::from_secs(30))
+        .build()
+});
+
+static BOOTSTRAP_CACHE: Lazy<Cache<&'static str, BootstrapPayload>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(16)
+        .time_to_live(std::time::Duration::from_secs(30))
+        .build()
+});
+
 pub struct AcceleratorRepositoryImpl<'a> {
     db: &'a DatabaseConnection,
 }
@@ -31,19 +54,31 @@ impl<'a> AcceleratorRepositoryImpl<'a> {
 #[async_trait]
 impl<'a> AcceleratorRepository for AcceleratorRepositoryImpl<'a> {
     async fn list_games(&self) -> Result<Vec<Game>, RepositoryError> {
+        if let Some(cached) = GAME_CACHE.get("all").await {
+            return Ok(cached);
+        }
+
         let models = accelerator_game::Entity::find()
             .all(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-        Ok(models.into_iter().map(Into::into).collect())
+        let list: Vec<Game> = models.into_iter().map(Into::into).collect();
+        GAME_CACHE.insert("all", list.clone()).await;
+        Ok(list)
     }
 
     async fn list_profiles(&self) -> Result<Vec<Profile>, RepositoryError> {
+        if let Some(cached) = PROFILE_CACHE.get("all").await {
+            return Ok(cached);
+        }
+
         let models = accelerator_profile::Entity::find()
             .all(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-        Ok(models.into_iter().map(Into::into).collect())
+        let list: Vec<Profile> = models.into_iter().map(Into::into).collect();
+        PROFILE_CACHE.insert("all", list.clone()).await;
+        Ok(list)
     }
 
     async fn upsert_profiles(&self, profiles: Vec<Profile>) -> Result<(), RepositoryError> {
@@ -60,6 +95,8 @@ impl<'a> AcceleratorRepository for AcceleratorRepositoryImpl<'a> {
                 .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
         }
 
+        PROFILE_CACHE.invalidate_all();
+        BOOTSTRAP_CACHE.invalidate_all();
         Ok(())
     }
 
@@ -72,14 +109,20 @@ impl<'a> AcceleratorRepository for AcceleratorRepositoryImpl<'a> {
     }
 
     async fn bootstrap(&self) -> Result<BootstrapPayload, RepositoryError> {
+        if let Some(cached) = BOOTSTRAP_CACHE.get("all").await {
+            return Ok(cached);
+        }
+
         let games = self.list_games().await?;
         let profiles = self.list_profiles().await?;
         let user = self.current_user().await?;
-        Ok(BootstrapPayload {
+        let payload = BootstrapPayload {
             games,
             profiles,
             user,
-        })
+        };
+        BOOTSTRAP_CACHE.insert("all", payload.clone()).await;
+        Ok(payload)
     }
 }
 
