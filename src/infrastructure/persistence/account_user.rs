@@ -5,7 +5,7 @@ use struct_convert::Convert;
 #[sea_orm(table_name = "account_users")]
 #[convert(into = "crate::domain::auth::AccountUser")]
 pub struct Model {
-    #[sea_orm(primary_key, column_type = "String(Some(64))")]
+    #[sea_orm(primary_key, auto_increment = false, column_type = "String(Some(64))")]
     pub id: String,
     #[sea_orm(column_type = "String(Some(32))")]
     pub phone: String,

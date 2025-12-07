@@ -5,6 +5,7 @@ mod infrastructure;
 mod interface;
 
 use dotenv::dotenv;
+use env_logger::Env;
 use infrastructure::{database, seed};
 use interface::web::{self, AppState};
 
@@ -13,6 +14,7 @@ use crate::config::AppConfig;
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let config = AppConfig::from_env();
 
     let db = database::connect(&config.database_url)

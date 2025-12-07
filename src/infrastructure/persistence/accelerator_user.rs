@@ -5,7 +5,7 @@ use struct_convert::Convert;
 #[sea_orm(table_name = "accelerator_users")]
 #[convert(into = "crate::domain::accelerator::AcceleratorUser")]
 pub struct Model {
-    #[sea_orm(primary_key, column_type = "String(Some(64))")]
+    #[sea_orm(primary_key, auto_increment = false, column_type = "String(Some(64))")]
     pub id: String,
     pub name: String,
     pub valid_until: DateTimeUtc,

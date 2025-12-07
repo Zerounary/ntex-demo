@@ -76,13 +76,18 @@ async fn seed_config_entries(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
     ];
 
     for (key, payload) in entries {
-        config_entry::ActiveModel {
-            key: Set(key.to_string()),
-            payload: Set(payload),
-            updated_at: Set(Utc::now().into()),
+        let exists = config_entry::Entity::find_by_id(key.to_string())
+            .one(db)
+            .await?;
+        if exists.is_none() {
+            config_entry::ActiveModel {
+                key: Set(key.to_string()),
+                payload: Set(payload),
+                updated_at: Set(Utc::now().into()),
+            }
+            .insert(db)
+            .await?;
         }
-        .save(db)
-        .await?;
     }
 
     Ok(())

@@ -9,6 +9,7 @@ use crate::application::errors::RepositoryError;
 use crate::application::ports::{AcceleratorRepository, AuthRepository, ConfigRepository};
 use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Profile};
 use crate::domain::auth::{AccountLoginRequest, AccountLoginResponse, TicketStatus, WechatTicket};
+use log::{info, warn};
 
 use super::accelerator_game;
 use super::accelerator_profile;
@@ -134,6 +135,11 @@ impl<'a> AuthRepositoryImpl<'a> {
 #[async_trait]
 impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
     async fn insert_ticket(&self, ticket: &WechatTicket) -> Result<(), RepositoryError> {
+        info!(
+            "Inserting ticket {} with status {}",
+            ticket.ticket_id,
+            ticket.status.as_str()
+        );
         let active = ticket_into_active(ticket);
         active
             .insert(self.db)
@@ -166,9 +172,36 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
     }
 
     async fn save_ticket(&self, ticket: &WechatTicket) -> Result<(), RepositoryError> {
-        let active = ticket_into_active(ticket);
+        let existing = wechat_ticket::Entity::find_by_id(ticket.ticket_id.clone())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?
+            .ok_or_else(|| {
+                warn!(
+                    "Attempted to update ticket {} but it was not found",
+                    ticket.ticket_id
+                );
+                RepositoryError::Persistence("ticket not found".into())
+            })?;
+
+        let expires_at = Utc::now() + Duration::seconds(ticket.expires_in);
+        let mut active: wechat_ticket::ActiveModel = existing.into();
+        active.qr_code_url = Set(ticket.qr_code_url.clone());
+        active.expires_at = Set(expires_at.into());
+        active.status = Set(ticket.status.as_str().to_string());
+        active.scene = Set(ticket.scene.clone());
+        active.success = Set(ticket.success);
+        active.user_id = Set(ticket.user.as_ref().map(|u| u.id.clone()));
+        active.updated_at = Set(Utc::now().into());
+
+        info!(
+            "Updating ticket {} to status {} (expires in {}s)",
+            ticket.ticket_id,
+            ticket.status.as_str(),
+            ticket.expires_in
+        );
         active
-            .save(self.db)
+            .update(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
         Ok(())
