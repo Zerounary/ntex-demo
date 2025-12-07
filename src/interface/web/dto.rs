@@ -1,18 +1,31 @@
+use chrono::{DateTime, Utc};
 use ntex::http::StatusCode;
 use ntex::web::HttpResponse;
 use serde::{Deserialize, Serialize};
+use struct_convert::Convert;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Convert)]
+#[convert(into = "crate::domain::todo::NewTodo")]
 pub struct CreateTodoRequest {
     pub title: String,
     #[serde(default)]
     pub completed: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Convert)]
+#[convert(into = "crate::domain::todo::UpdateTodo")]
 pub struct UpdateTodoRequest {
     pub title: Option<String>,
     pub completed: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Convert)]
+#[convert(from = "crate::domain::todo::Todo")]
+pub struct TodoVO {
+    pub id: i32,
+    pub title: String,
+    pub completed: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]

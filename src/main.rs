@@ -2,11 +2,11 @@ mod application;
 mod config;
 mod domain;
 mod infrastructure;
-mod presentation;
+mod interface;
 
 use dotenv::dotenv;
 use infrastructure::database;
-use presentation::web::{self, AppState};
+use interface::web::{self, AppState};
 
 use crate::config::AppConfig;
 
