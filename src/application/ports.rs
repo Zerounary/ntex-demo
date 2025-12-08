@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Node, Profile};
 use crate::domain::auth::{AccountLoginRequest, AccountLoginResponse, WechatTicket};
+use crate::domain::cdk::{CdkCode, CdkGenerateRequest, CdkRedeemRequest, CdkRedeemResponse};
 
 use super::errors::RepositoryError;
 
@@ -39,4 +40,18 @@ pub trait AuthRepository: Send + Sync {
         &self,
         request: AccountLoginRequest,
     ) -> Result<AccountLoginResponse, RepositoryError>;
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<AcceleratorUser>, RepositoryError>;
+    async fn update_user_valid_until(
+        &self,
+        user_id: &str,
+        valid_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), RepositoryError>;
+}
+
+#[async_trait]
+pub trait CdkRepository: Send + Sync {
+    async fn generate_cdks(&self, request: CdkGenerateRequest) -> Result<Vec<CdkCode>, RepositoryError>;
+    async fn get_cdk_by_code(&self, code: &str) -> Result<Option<CdkCode>, RepositoryError>;
+    async fn redeem_cdk(&self, request: CdkRedeemRequest) -> Result<CdkRedeemResponse, RepositoryError>;
+    async fn list_cdks(&self, status: Option<&str>) -> Result<Vec<CdkCode>, RepositoryError>;
 }

@@ -18,6 +18,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(handlers::unregister_node)
             .service(handlers::node_heartbeat)
             .service(handlers::list_nodes)
-            .service(handlers::list_active_nodes),
+            .service(handlers::list_active_nodes)
+            .service(handlers::generate_cdks)
+            .service(handlers::redeem_cdk)
+            .service(handlers::list_cdks)
+            .service(handlers::validate_account)
+            .service(handlers::start_acceleration),
     );
 }

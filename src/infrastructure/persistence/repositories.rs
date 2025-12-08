@@ -9,10 +9,11 @@ use sha2::{Digest, Sha256};
 
 use crate::application::errors::RepositoryError;
 use crate::application::ports::{
-    AcceleratorRepository, AuthRepository, ConfigRepository, NodeRepository,
+    AcceleratorRepository, AuthRepository, CdkRepository, ConfigRepository, NodeRepository,
 };
 use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Node, Profile};
 use crate::domain::auth::{AccountLoginRequest, AccountLoginResponse, TicketStatus, WechatTicket};
+use crate::domain::cdk::{CdkCode, CdkGenerateRequest, CdkRedeemRequest, CdkRedeemResponse, CdkStatus, CdkType};
 use log::{info, warn};
 
 use super::accelerator_game;
@@ -20,6 +21,7 @@ use super::accelerator_node;
 use super::accelerator_profile;
 use super::accelerator_user;
 use super::account_user;
+use super::cdk_code;
 use super::config_entry;
 use super::wechat_ticket;
 
@@ -371,6 +373,63 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
         };
         Ok(response)
     }
+
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<AcceleratorUser>, RepositoryError> {
+        // 先尝试从 accelerator_users 表查找
+        let user = accelerator_user::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        
+        if let Some(user) = user {
+            return Ok(Some(user.into()));
+        }
+
+        // 如果不存在，从 account_users 表查找
+        let account = account_user::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        
+        Ok(account.map(Into::into))
+    }
+
+    async fn update_user_valid_until(
+        &self,
+        user_id: &str,
+        valid_until: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), RepositoryError> {
+        // 先尝试更新 accelerator_users
+        let user = accelerator_user::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+
+        if let Some(user) = user {
+            let mut active: accelerator_user::ActiveModel = user.into();
+            active.valid_until = Set(valid_until.into());
+            active
+                .update(self.db)
+                .await
+                .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+            return Ok(());
+        }
+
+        // 如果不存在，更新 account_users
+        let account = account_user::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?
+            .ok_or_else(|| RepositoryError::Persistence("user not found".into()))?;
+
+        let mut active: account_user::ActiveModel = account.into();
+        active.valid_until = Set(valid_until.into());
+        active
+            .update(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(())
+    }
 }
 
 fn ticket_into_active(ticket: &WechatTicket) -> wechat_ticket::ActiveModel {
@@ -415,4 +474,149 @@ impl From<account_user::Model> for AcceleratorUser {
             valid_until: model.valid_until.into(),
         }
     }
+}
+
+pub struct CdkRepositoryImpl<'a> {
+    db: &'a DatabaseConnection,
+}
+
+impl<'a> CdkRepositoryImpl<'a> {
+    pub fn new(db: &'a DatabaseConnection) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
+    async fn generate_cdks(&self, request: CdkGenerateRequest) -> Result<Vec<CdkCode>, RepositoryError> {
+        use uuid::Uuid;
+        let mut cdks = Vec::new();
+        let duration = if request.cdk_type == CdkType::Minute {
+            request.duration_minutes.unwrap_or(0)
+        } else {
+            request.cdk_type.duration_minutes()
+        };
+
+        for _ in 0..request.count {
+            let id = Uuid::new_v4().to_string();
+            let code = generate_cdk_code();
+            let cdk = CdkCode {
+                id: id.clone(),
+                code: code.clone(),
+                cdk_type: request.cdk_type.clone(),
+                duration_minutes: duration,
+                status: CdkStatus::Unused,
+                used_by: None,
+                used_at: None,
+                expires_at: request.expires_at,
+                created_at: Utc::now(),
+            };
+
+            let active = cdk_into_active_model(cdk.clone());
+            active
+                .insert(self.db)
+                .await
+                .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+            cdks.push(cdk);
+        }
+
+        info!("Generated {} CDK codes", cdks.len());
+        Ok(cdks)
+    }
+
+    async fn get_cdk_by_code(&self, code: &str) -> Result<Option<CdkCode>, RepositoryError> {
+        let model = cdk_code::Entity::find()
+            .filter(cdk_code::Column::Code.eq(code))
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(model.map(Into::into))
+    }
+
+    async fn redeem_cdk(&self, request: CdkRedeemRequest) -> Result<CdkRedeemResponse, RepositoryError> {
+        let model = cdk_code::Entity::find()
+            .filter(cdk_code::Column::Code.eq(&request.code))
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?
+            .ok_or_else(|| RepositoryError::Persistence("CDK not found".into()))?;
+
+        let cdk: CdkCode = model.clone().into();
+
+        // 检查CDK状态
+        if cdk.status != CdkStatus::Unused {
+            return Err(RepositoryError::Persistence("CDK already used or expired".into()));
+        }
+
+        // 检查CDK是否过期
+        if let Some(expires_at) = cdk.expires_at {
+            if expires_at < Utc::now() {
+                return Err(RepositoryError::Persistence("CDK expired".into()));
+            }
+        }
+
+        // 更新CDK状态
+        let mut active: cdk_code::ActiveModel = model.into();
+        active.status = Set(CdkStatus::Used.as_str().to_string());
+        active.used_by = Set(Some(request.user_id.clone()));
+        active.used_at = Set(Some(Utc::now().into()));
+        active
+            .update(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+
+        // 计算新的有效期
+        let now = Utc::now();
+        let valid_until = now + chrono::Duration::minutes(cdk.duration_minutes);
+
+        Ok(CdkRedeemResponse {
+            success: true,
+            message: "CDK redeemed successfully".into(),
+            duration_minutes: cdk.duration_minutes,
+            valid_until,
+        })
+    }
+
+    async fn list_cdks(&self, status: Option<&str>) -> Result<Vec<CdkCode>, RepositoryError> {
+        let mut query = cdk_code::Entity::find();
+        if let Some(status_str) = status {
+            query = query.filter(cdk_code::Column::Status.eq(status_str));
+        }
+        let models = query
+            .all(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+}
+
+fn cdk_into_active_model(cdk: CdkCode) -> cdk_code::ActiveModel {
+    cdk_code::ActiveModel {
+        id: Set(cdk.id),
+        code: Set(cdk.code),
+        cdk_type: Set(cdk.cdk_type.as_str().to_string()),
+        duration_minutes: Set(cdk.duration_minutes),
+        status: Set(cdk.status.as_str().to_string()),
+        used_by: Set(cdk.used_by),
+        used_at: Set(cdk.used_at.map(Into::into)),
+        expires_at: Set(cdk.expires_at.map(Into::into)),
+        created_at: Set(cdk.created_at.into()),
+    }
+}
+
+fn generate_cdk_code() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 排除容易混淆的字符
+    const CODE_LENGTH: usize = 12;
+    
+    let mut rng = rand::thread_rng();
+    let code: String = (0..CODE_LENGTH)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+    
+    // 格式化为 XXXX-XXXX-XXXX
+    format!("{}-{}-{}", &code[0..4], &code[4..8], &code[8..12])
 }

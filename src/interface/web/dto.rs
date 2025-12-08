@@ -4,6 +4,7 @@ use struct_convert::Convert;
 use crate::domain::{
     accelerator::{AcceleratorUser, BootstrapPayload, Game, Profile},
     auth::{AccountLoginResponse, WechatTicket},
+    cdk::{AccountValidationRequest, AccountValidationResponse, CdkCode, CdkGenerateRequest, CdkRedeemRequest, CdkRedeemResponse, CdkType},
     content::{DashboardPayload, LibraryPayload, NavigationConfig, SettingsMeta},
 };
 
@@ -245,6 +246,127 @@ impl From<NodeRegisterRequest> for crate::domain::accelerator::Node {
             ping: value.ping,
             status: value.status,
             last_heartbeat: Utc::now(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CdkGenerateRequestVO {
+    pub cdk_type: String,
+    pub count: u32,
+    pub duration_minutes: Option<i64>,
+    pub expires_at: Option<String>,
+}
+
+impl From<CdkGenerateRequestVO> for CdkGenerateRequest {
+    fn from(value: CdkGenerateRequestVO) -> Self {
+        use chrono::DateTime;
+        Self {
+            cdk_type: CdkType::from_str(&value.cdk_type).unwrap_or(CdkType::Day),
+            count: value.count,
+            duration_minutes: value.duration_minutes,
+            expires_at: value.expires_at.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&chrono::Utc))),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CdkRedeemRequestVO {
+    pub code: String,
+    pub user_id: String,
+}
+
+impl From<CdkRedeemRequestVO> for CdkRedeemRequest {
+    fn from(value: CdkRedeemRequestVO) -> Self {
+        Self {
+            code: value.code,
+            user_id: value.user_id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CdkRedeemResponseVO {
+    pub success: bool,
+    pub message: String,
+    pub duration_minutes: i64,
+    pub valid_until: String,
+}
+
+impl From<CdkRedeemResponse> for CdkRedeemResponseVO {
+    fn from(value: CdkRedeemResponse) -> Self {
+        Self {
+            success: value.success,
+            message: value.message,
+            duration_minutes: value.duration_minutes,
+            valid_until: value.valid_until.format("%Y-%m-%d %H:%M:%S").to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CdkCodeVO {
+    pub id: String,
+    pub code: String,
+    pub cdk_type: String,
+    pub duration_minutes: i64,
+    pub status: String,
+    pub used_by: Option<String>,
+    pub used_at: Option<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+}
+
+impl From<CdkCode> for CdkCodeVO {
+    fn from(value: CdkCode) -> Self {
+        Self {
+            id: value.id,
+            code: value.code,
+            cdk_type: value.cdk_type.as_str().to_string(),
+            duration_minutes: value.duration_minutes,
+            status: value.status.as_str().to_string(),
+            used_by: value.used_by,
+            used_at: value.used_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            expires_at: value.expires_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            created_at: value.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountValidationRequestVO {
+    pub user_id: String,
+}
+
+impl From<AccountValidationRequestVO> for AccountValidationRequest {
+    fn from(value: AccountValidationRequestVO) -> Self {
+        Self {
+            user_id: value.user_id,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountValidationResponseVO {
+    pub is_valid: bool,
+    pub is_paid: bool,
+    pub valid_until: Option<String>,
+    pub message: String,
+}
+
+impl From<AccountValidationResponse> for AccountValidationResponseVO {
+    fn from(value: AccountValidationResponse) -> Self {
+        Self {
+            is_valid: value.is_valid,
+            is_paid: value.is_paid,
+            valid_until: value.valid_until.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            message: value.message,
         }
     }
 }
