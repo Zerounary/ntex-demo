@@ -8,12 +8,15 @@ use sea_orm::{
 use sha2::{Digest, Sha256};
 
 use crate::application::errors::RepositoryError;
-use crate::application::ports::{AcceleratorRepository, AuthRepository, ConfigRepository};
-use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Profile};
+use crate::application::ports::{
+    AcceleratorRepository, AuthRepository, ConfigRepository, NodeRepository,
+};
+use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Node, Profile};
 use crate::domain::auth::{AccountLoginRequest, AccountLoginResponse, TicketStatus, WechatTicket};
 use log::{info, warn};
 
 use super::accelerator_game;
+use super::accelerator_node;
 use super::accelerator_profile;
 use super::accelerator_user;
 use super::account_user;
@@ -116,8 +119,14 @@ impl<'a> AcceleratorRepository for AcceleratorRepositoryImpl<'a> {
         let games = self.list_games().await?;
         let profiles = self.list_profiles().await?;
         let user = self.current_user().await?;
+        
+        // 获取所有节点
+        let node_repo = NodeRepositoryImpl::new(self.db);
+        let nodes = node_repo.list_nodes().await?;
+        
         let payload = BootstrapPayload {
             games,
+            nodes,
             profiles,
             user,
         };
@@ -131,16 +140,104 @@ fn profile_into_active_model(profile: Profile) -> accelerator_profile::ActiveMod
         id: Set(profile.id),
         game_id: Set(profile.game_id),
         display_name: Set(profile.display_name),
-        process_name: Set(profile.process_name),
-        vmess_uuid: Set(profile.vmess_uuid),
-        vmess_server: Set(profile.vmess_server),
-        vmess_port: Set(profile.vmess_port),
-        vmess_email: Set(profile.vmess_email),
-        udp_proxy: Set(profile.udp_proxy),
-        mode: Set(profile.mode),
+        node_id: Set(profile.node_id),
         status: Set(profile.status),
-        region: Set(profile.region),
-        ping: Set(profile.ping),
+    }
+}
+
+pub struct NodeRepositoryImpl<'a> {
+    db: &'a DatabaseConnection,
+}
+
+impl<'a> NodeRepositoryImpl<'a> {
+    pub fn new(db: &'a DatabaseConnection) -> Self {
+        Self { db }
+    }
+}
+
+#[async_trait]
+impl<'a> NodeRepository for NodeRepositoryImpl<'a> {
+    async fn register_node(&self, node: Node) -> Result<(), RepositoryError> {
+        let node_id = node.id.clone();
+        let active = node_into_active_model(node);
+        active
+            .insert(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        info!("Node registered: {}", node_id);
+        Ok(())
+    }
+
+    async fn unregister_node(&self, node_id: &str) -> Result<(), RepositoryError> {
+        let result = accelerator_node::Entity::delete_by_id(node_id.to_string())
+            .exec(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        
+        if result.rows_affected > 0 {
+            info!("Node unregistered: {}", node_id);
+        } else {
+            warn!("Node not found for unregister: {}", node_id);
+        }
+        Ok(())
+    }
+
+    async fn update_node_heartbeat(&self, node_id: &str) -> Result<(), RepositoryError> {
+        let node = accelerator_node::Entity::find_by_id(node_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?
+            .ok_or_else(|| RepositoryError::Persistence("node not found".into()))?;
+
+        let mut active: accelerator_node::ActiveModel = node.into();
+        active.last_heartbeat = Set(Utc::now().into());
+        active
+            .update(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_node(&self, node_id: &str) -> Result<Option<Node>, RepositoryError> {
+        let model = accelerator_node::Entity::find_by_id(node_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(model.map(Into::into))
+    }
+
+    async fn list_nodes(&self) -> Result<Vec<Node>, RepositoryError> {
+        let models = accelerator_node::Entity::find()
+            .all(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+
+    async fn list_active_nodes(&self) -> Result<Vec<Node>, RepositoryError> {
+        let threshold = Utc::now() - Duration::minutes(5);
+        let models = accelerator_node::Entity::find()
+            .filter(accelerator_node::Column::LastHeartbeat.gte(threshold))
+            .filter(accelerator_node::Column::Status.eq("active"))
+            .all(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(models.into_iter().map(Into::into).collect())
+    }
+}
+
+fn node_into_active_model(node: Node) -> accelerator_node::ActiveModel {
+    accelerator_node::ActiveModel {
+        id: Set(node.id),
+        vmess_uuid: Set(node.vmess_uuid),
+        vmess_server: Set(node.vmess_server),
+        vmess_port: Set(node.vmess_port),
+        vmess_email: Set(node.vmess_email),
+        udp_proxy: Set(node.udp_proxy),
+        mode: Set(node.mode),
+        ping: Set(node.ping),
+        status: Set(node.status),
+        last_heartbeat: Set(node.last_heartbeat.into()),
     }
 }
 

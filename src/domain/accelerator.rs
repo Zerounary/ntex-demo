@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub type GameId = String;
 pub type ProfileId = String;
+pub type NodeId = String;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Game {
@@ -11,6 +12,8 @@ pub struct Game {
     pub icon: String,
     pub status: String,
     pub ping: i32,
+    pub process_name: String,
+    pub region: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,16 +21,22 @@ pub struct Profile {
     pub id: ProfileId,
     pub game_id: GameId,
     pub display_name: String,
-    pub process_name: String,
+    pub node_id: NodeId,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Node {
+    pub id: NodeId,
     pub vmess_uuid: String,
     pub vmess_server: String,
     pub vmess_port: i32,
     pub vmess_email: String,
     pub udp_proxy: String,
     pub mode: String,
-    pub status: String,
-    pub region: String,
     pub ping: i32,
+    pub status: String,
+    pub last_heartbeat: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -40,6 +49,7 @@ pub struct AcceleratorUser {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BootstrapPayload {
     pub games: Vec<Game>,
+    pub nodes: Vec<Node>,
     pub profiles: Vec<Profile>,
     pub user: Option<AcceleratorUser>,
 }

@@ -13,6 +13,11 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(handlers::navigation)
             .service(handlers::create_wechat_ticket)
             .service(handlers::wechat_status)
-            .service(handlers::account_login),
+            .service(handlers::account_login)
+            .service(handlers::register_node)
+            .service(handlers::unregister_node)
+            .service(handlers::node_heartbeat)
+            .service(handlers::list_nodes)
+            .service(handlers::list_active_nodes),
     );
 }

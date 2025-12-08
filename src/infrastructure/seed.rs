@@ -4,7 +4,8 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::infrastructure::persistence::{
-    accelerator_game, accelerator_profile, accelerator_user, account_user, config_entry,
+    accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
+    config_entry,
 };
 
 pub async fn seed(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
@@ -23,6 +24,8 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             icon: Set("i-mdi-google-chrome".to_string()),
             status: Set("idle".to_string()),
             ping: Set(0),
+            process_name: Set("chrome.exe".to_string()),
+            region: Set("测试".to_string()),
         }];
 
         for game in games {
@@ -30,22 +33,34 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
         }
     }
 
-    let profile_count = accelerator_profile::Entity::find().count(db).await?;
-    if profile_count == 0 {
-        let profiles = vec![accelerator_profile::ActiveModel {
+    let node_count = accelerator_node::Entity::find().count(db).await?;
+    if node_count == 0 {
+        let nodes = vec![accelerator_node::ActiveModel {
             id: Set("node-chrome-test".to_string()),
-            game_id: Set("7".to_string()),
-            display_name: Set("Chrome · 调试隧道".to_string()),
-            process_name: Set("chrome.exe".to_string()),
             vmess_uuid: Set("9acea125-3ca7-1212-2121-000000010135".to_string()),
             vmess_server: Set("123.206.203.43".to_string()),
             vmess_port: Set(11111),
             vmess_email: Set("lol-kr@acc.local".to_string()),
             udp_proxy: Set("123.206.203.43:10810".to_string()),
             mode: Set("进程模式".to_string()),
-            status: Set("空闲".to_string()),
-            region: Set("测试".to_string()),
             ping: Set(5),
+            status: Set("active".to_string()),
+            last_heartbeat: Set(Utc::now().into()),
+        }];
+
+        for node in nodes {
+            node.insert(db).await?;
+        }
+    }
+
+    let profile_count = accelerator_profile::Entity::find().count(db).await?;
+    if profile_count == 0 {
+        let profiles = vec![accelerator_profile::ActiveModel {
+            id: Set("profile-chrome-test".to_string()),
+            game_id: Set("7".to_string()),
+            display_name: Set("Chrome · 调试隧道".to_string()),
+            node_id: Set("node-chrome-test".to_string()),
+            status: Set("空闲".to_string()),
         }];
 
         for profile in profiles {

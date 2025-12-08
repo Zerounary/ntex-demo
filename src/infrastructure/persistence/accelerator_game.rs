@@ -11,6 +11,8 @@ pub struct Model {
     pub icon: String,
     pub status: String,
     pub ping: i32,
+    pub process_name: String,
+    pub region: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

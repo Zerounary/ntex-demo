@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Profile};
+use crate::domain::accelerator::{AcceleratorUser, BootstrapPayload, Game, Node, Profile};
 use crate::domain::auth::{AccountLoginRequest, AccountLoginResponse, WechatTicket};
 
 use super::errors::RepositoryError;
@@ -18,6 +18,16 @@ pub trait AcceleratorRepository: Send + Sync {
 #[async_trait]
 pub trait ConfigRepository: Send + Sync {
     async fn get_entry(&self, key: &str) -> Result<Option<Value>, RepositoryError>;
+}
+
+#[async_trait]
+pub trait NodeRepository: Send + Sync {
+    async fn register_node(&self, node: Node) -> Result<(), RepositoryError>;
+    async fn unregister_node(&self, node_id: &str) -> Result<(), RepositoryError>;
+    async fn update_node_heartbeat(&self, node_id: &str) -> Result<(), RepositoryError>;
+    async fn get_node(&self, node_id: &str) -> Result<Option<Node>, RepositoryError>;
+    async fn list_nodes(&self) -> Result<Vec<Node>, RepositoryError>;
+    async fn list_active_nodes(&self) -> Result<Vec<Node>, RepositoryError>;
 }
 
 #[async_trait]

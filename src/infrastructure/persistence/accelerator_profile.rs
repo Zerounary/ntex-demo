@@ -10,16 +10,9 @@ pub struct Model {
     #[sea_orm(column_type = "String(Some(64))")]
     pub game_id: String,
     pub display_name: String,
-    pub process_name: String,
-    pub vmess_uuid: String,
-    pub vmess_server: String,
-    pub vmess_port: i32,
-    pub vmess_email: String,
-    pub udp_proxy: String,
-    pub mode: String,
+    #[sea_orm(column_type = "String(Some(128))")]
+    pub node_id: String,
     pub status: String,
-    pub region: String,
-    pub ping: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

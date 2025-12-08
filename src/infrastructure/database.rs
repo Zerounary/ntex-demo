@@ -1,8 +1,8 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 
 use crate::infrastructure::persistence::{
-    accelerator_game, accelerator_profile, accelerator_user, account_user, config_entry,
-    wechat_ticket,
+    accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
+    config_entry, wechat_ticket,
 };
 
 pub async fn connect(url: &str) -> Result<DatabaseConnection, DbErr> {
@@ -15,6 +15,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     for table in [
         schema.create_table_from_entity(accelerator_game::Entity),
+        schema.create_table_from_entity(accelerator_node::Entity),
         schema.create_table_from_entity(accelerator_profile::Entity),
         schema.create_table_from_entity(accelerator_user::Entity),
         schema.create_table_from_entity(account_user::Entity),

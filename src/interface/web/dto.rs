@@ -17,9 +17,46 @@ pub struct AcceleratorBootstrapVO {
 
 impl From<BootstrapPayload> for AcceleratorBootstrapVO {
     fn from(value: BootstrapPayload) -> Self {
+        // 创建节点和游戏的查找映射
+        let node_map: std::collections::HashMap<_, _> = value
+            .nodes
+            .iter()
+            .map(|n| (n.id.clone(), n.clone()))
+            .collect();
+        let game_map: std::collections::HashMap<_, _> = value
+            .games
+            .iter()
+            .map(|g| (g.id.clone(), g.clone()))
+            .collect();
+
+        // 组装 ProfileVO，从 Profile + Node + Game 组合
+        let profiles: Vec<ProfileVO> = value
+            .profiles
+            .into_iter()
+            .filter_map(|p| {
+                let node = node_map.get(&p.node_id)?;
+                let game = game_map.get(&p.game_id)?;
+                Some(ProfileVO {
+                    id: p.id,
+                    game_id: p.game_id,
+                    display_name: p.display_name,
+                    process_name: game.process_name.clone(),
+                    vmess_uuid: node.vmess_uuid.clone(),
+                    vmess_server: node.vmess_server.clone(),
+                    vmess_port: node.vmess_port,
+                    vmess_email: node.vmess_email.clone(),
+                    udp_proxy: node.udp_proxy.clone(),
+                    mode: node.mode.clone(),
+                    status: p.status,
+                    region: game.region.clone(),
+                    ping: node.ping,
+                })
+            })
+            .collect();
+
         Self {
             games: value.games.into_iter().map(GameVO::from).collect(),
-            profiles: value.profiles.into_iter().map(ProfileVO::from).collect(),
+            profiles,
             user: value.user.map(UserVO::from),
         }
     }
@@ -65,23 +102,13 @@ pub struct ProfileVO {
     pub ping: i32,
 }
 
+// ProfileVO 现在通过 BootstrapPayload 的 From 实现来组装
+// 这里保留一个简单的实现用于向后兼容（如果需要）
 impl From<Profile> for ProfileVO {
-    fn from(value: Profile) -> Self {
-        Self {
-            id: value.id,
-            game_id: value.game_id,
-            display_name: value.display_name,
-            process_name: value.process_name,
-            vmess_uuid: value.vmess_uuid,
-            vmess_server: value.vmess_server,
-            vmess_port: value.vmess_port,
-            vmess_email: value.vmess_email,
-            udp_proxy: value.udp_proxy,
-            mode: value.mode,
-            status: value.status,
-            region: value.region,
-            ping: value.ping,
-        }
+    fn from(_value: Profile) -> Self {
+        // 这个实现不应该被直接使用，因为 ProfileVO 需要从 Profile + Node + Game 组合
+        // 如果被调用，返回一个默认值（这种情况不应该发生）
+        panic!("ProfileVO should be created from BootstrapPayload, not directly from Profile")
     }
 }
 
@@ -124,27 +151,14 @@ pub struct ProfileSyncRequest {
     pub profiles: Vec<ProfileVO>,
 }
 
+// ProfileSyncRequest 现在需要同时创建/更新 Node 和 Profile
+// 这个转换需要访问 NodeRepository，所以我们在 UseCase 层处理
+// 这里保留一个标记类型，实际转换在 UseCase 中完成
 impl From<ProfileSyncRequest> for Vec<Profile> {
-    fn from(value: ProfileSyncRequest) -> Self {
-        value
-            .profiles
-            .into_iter()
-            .map(|p| Profile {
-                id: p.id,
-                game_id: p.game_id,
-                display_name: p.display_name,
-                process_name: p.process_name,
-                vmess_uuid: p.vmess_uuid,
-                vmess_server: p.vmess_server,
-                vmess_port: p.vmess_port,
-                vmess_email: p.vmess_email,
-                udp_proxy: p.udp_proxy,
-                mode: p.mode,
-                status: p.status,
-                region: p.region,
-                ping: p.ping,
-            })
-            .collect()
+    fn from(_value: ProfileSyncRequest) -> Self {
+        // 这个实现不应该被直接使用
+        // ProfileSyncRequest 的转换应该在 UseCase 层完成，因为需要同时处理 Node
+        panic!("ProfileSyncRequest conversion should be handled in UseCase layer")
     }
 }
 
@@ -199,6 +213,38 @@ impl From<AccountLoginResponse> for AccountLoginResponseVO {
             success: value.success,
             token: value.token,
             user: value.user.into(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeRegisterRequest {
+    pub id: String,
+    pub vmess_uuid: String,
+    pub vmess_server: String,
+    pub vmess_port: i32,
+    pub vmess_email: String,
+    pub udp_proxy: String,
+    pub mode: String,
+    pub ping: i32,
+    pub status: String,
+}
+
+impl From<NodeRegisterRequest> for crate::domain::accelerator::Node {
+    fn from(value: NodeRegisterRequest) -> Self {
+        use chrono::Utc;
+        Self {
+            id: value.id,
+            vmess_uuid: value.vmess_uuid,
+            vmess_server: value.vmess_server,
+            vmess_port: value.vmess_port,
+            vmess_email: value.vmess_email,
+            udp_proxy: value.udp_proxy,
+            mode: value.mode,
+            ping: value.ping,
+            status: value.status,
+            last_heartbeat: Utc::now(),
         }
     }
 }
