@@ -23,4 +23,6 @@ log = "0.4"
 moka = { version = "0.12", features = ["future"] }
 once_cell = "1.19"
 rand = "0.8"
+rumqttd = "0.20.0"
+toml = "0.8"
 
