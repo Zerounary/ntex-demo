@@ -6,9 +6,11 @@ mod interface;
 
 use dotenv::dotenv;
 use env_logger::Env;
-use infrastructure::{database, mqtt_broker, mqtt_client, seed};
-use interface::web::{self, AppState};
+use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
+use interface::{admin, web};
+use interface::web::AppState;
 use log::info;
+use std::sync::Arc;
 
 use crate::config::AppConfig;
 
@@ -43,18 +45,46 @@ async fn main() -> std::io::Result<()> {
 
     let state = AppState::new(db);
     
-    // 启动 web 服务器
-    info!("正在启动 Web 服务器...");
-    let server_result = web::serve(config.port, state).await;
+    // 创建管理配置存储
+    let admin_config = admin_config::AdminConfigStore::new();
     
-    // 当 web 服务器关闭时，关闭 MQTT 客户端和 Broker
+    // 创建 MQTT 客户端 Arc 引用
+    let mqtt_client_arc = Arc::new(mqtt_client);
+    
+    // 启动管理服务器（端口 667）和 web 服务器并行运行
+    let admin_config_clone = admin_config.clone();
+    let mqtt_client_clone = mqtt_client_arc.clone();
+    
+    info!("正在启动管理服务器 (端口 667)...");
+    info!("正在启动 Web 服务器 (端口 {})...", config.port);
+    
+    // 使用 tokio::join! 并行运行两个服务器
+    let (admin_result, web_result) = tokio::join!(
+        admin::serve(667, admin_config_clone, Some(mqtt_client_clone)),
+        web::serve(config.port, state)
+    );
+    
+    // 处理结果
+    if let Err(e) = admin_result {
+        eprintln!("管理服务器错误: {:?}", e);
+    } else {
+        info!("管理服务器已关闭");
+    }
+    
+    if let Err(e) = web_result {
+        eprintln!("Web 服务器错误: {:?}", e);
+    } else {
+        info!("Web 服务器已关闭");
+    }
+    
+    // 当服务器关闭时，关闭 MQTT 客户端和 Broker
     info!("正在关闭 MQTT 客户端...");
-    mqtt_client.shutdown().await;
+    mqtt_client_arc.shutdown().await;
     
     info!("正在关闭 MQTT Broker...");
     mqtt_broker.shutdown();
     
-    server_result
+    Ok(())
 }
 
 fn to_io_error(err: impl std::error::Error) -> std::io::Error {
