@@ -1,0 +1,9 @@
+# 设置默认行为
+* text=auto
+
+# 明确指定某些文件类型
+*.go text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
