@@ -10,7 +10,6 @@ use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
 use interface::{admin, web};
 use interface::web::AppState;
 use log::info;
-use std::sync::Arc;
 
 use crate::config::AppConfig;
 
@@ -49,7 +48,7 @@ async fn main() -> std::io::Result<()> {
     let admin_config = admin_config::AdminConfigStore::new();
     
     // 创建 MQTT 客户端 Arc 引用
-    let mqtt_client_arc = Arc::new(mqtt_client);
+    let mqtt_client_arc = std::sync::Arc::new(mqtt_client);
     
     // 启动管理服务器（端口 667）和 web 服务器并行运行
     let admin_config_clone = admin_config.clone();
@@ -58,23 +57,25 @@ async fn main() -> std::io::Result<()> {
     info!("正在启动管理服务器 (端口 667)...");
     info!("正在启动 Web 服务器 (端口 {})...", config.port);
     
-    // 使用 tokio::join! 并行运行两个服务器
-    let (admin_result, web_result) = tokio::join!(
-        admin::serve(667, admin_config_clone, Some(mqtt_client_clone)),
-        web::serve(config.port, state)
-    );
-    
-    // 处理结果
-    if let Err(e) = admin_result {
-        eprintln!("管理服务器错误: {:?}", e);
-    } else {
-        info!("管理服务器已关闭");
-    }
-    
-    if let Err(e) = web_result {
-        eprintln!("Web 服务器错误: {:?}", e);
-    } else {
-        info!("Web 服务器已关闭");
+    // 使用 tokio::select! 并行运行两个服务器，并监听关闭信号
+    tokio::select! {
+        result = admin::serve(667, admin_config_clone, Some(mqtt_client_clone)) => {
+            if let Err(e) = result {
+                eprintln!("管理服务器错误: {:?}", e);
+            } else {
+                info!("管理服务器已关闭");
+            }
+        }
+        result = web::serve(config.port, state) => {
+            if let Err(e) = result {
+                eprintln!("Web 服务器错误: {:?}", e);
+            } else {
+                info!("Web 服务器已关闭");
+            }
+        }
+        _ = tokio::signal::ctrl_c() => {
+            info!("收到 Ctrl+C 信号，正在关闭服务器...");
+        }
     }
     
     // 当服务器关闭时，关闭 MQTT 客户端和 Broker

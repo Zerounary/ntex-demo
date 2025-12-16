@@ -78,11 +78,16 @@ impl MqttClientManager {
         }
         
         // 订阅主题
+        info!("📡 正在订阅 MQTT 主题: {}", request_topic);
         client_arc.subscribe(request_topic, QoS::AtLeastOnce).await?;
-        info!("📡 已订阅 MQTT 主题: {}", request_topic);
+        info!("✅ 已订阅 MQTT 主题: {}", request_topic);
         
+        info!("📡 正在订阅 MQTT 主题: {}", response_topic);
         client_arc.subscribe(response_topic, QoS::AtLeastOnce).await?;
-        info!("📡 已订阅 MQTT 主题: {}", response_topic);
+        info!("✅ 已订阅 MQTT 主题: {}", response_topic);
+        
+        // 等待订阅确认（给 broker 一些时间处理订阅）
+        time::sleep(Duration::from_millis(100)).await;
         
         // 创建关闭信号
         let shutdown_flag = Arc::new(tokio::sync::Notify::new());
@@ -120,6 +125,7 @@ impl MqttClientManager {
                 event = eventloop.poll() => {
                     match event {
                         Ok(Event::Incoming(rumqttc::Packet::Publish(publish))) => {
+                            info!("📨 [MQTT EventLoop] 收到发布消息: topic={}, payload_len={}", publish.topic, publish.payload.len());
                             let client_clone = _client.clone();
                             let response_waiters_clone = response_waiters.clone();
                             Self::handle_message(client_clone, response_waiters_clone, publish.topic, publish.payload).await;
@@ -130,8 +136,14 @@ impl MqttClientManager {
                         Ok(Event::Incoming(rumqttc::Packet::Disconnect)) => {
                             warn!("⚠️  MQTT 连接已断开");
                         }
+                        Ok(Event::Incoming(rumqttc::Packet::SubAck(suback))) => {
+                            info!("✅ [MQTT EventLoop] 订阅确认: {:?}", suback);
+                        }
+                        Ok(Event::Incoming(rumqttc::Packet::PubAck(_))) => {
+                            debug!("✅ MQTT 发布确认");
+                        }
                         Ok(Event::Incoming(packet)) => {
-                            debug!("收到 MQTT 数据包: {:?}", packet);
+                            info!("📦 [MQTT EventLoop] 收到其他数据包: {:?}", packet);
                         }
                         Ok(Event::Outgoing(_)) => {
                             // 忽略出站消息
@@ -191,19 +203,32 @@ impl MqttClientManager {
         
         // 如果是响应消息
         if topic_type == "response" {
-            info!("📥 [MQTT Response] node_id={}, request_id={}", node_id, request_id);
+            info!("📥 [MQTT Response] 收到响应消息: topic={}, node_id={}, request_id={}", topic, node_id, request_id);
             debug!("📥 [MQTT Response] 完整消息内容: {}", serde_json::to_string_pretty(&data).unwrap_or_default());
             
             // 检查是否有等待此响应的等待器
             let mut waiters = response_waiters.lock().await;
+            
+            // 调试：打印所有等待的 request_id
+            if waiters.is_empty() {
+                warn!("⚠️  [MQTT Response] 没有等待中的请求 (request_id={})", request_id);
+            } else {
+                let waiting_ids: Vec<String> = waiters.keys().cloned().collect();
+                info!("🔍 [MQTT Response] 当前等待的 request_id 列表: {:?}, 收到的 request_id: {}", waiting_ids, request_id);
+            }
+            
+            // 尝试精确匹配
             if let Some(waiter) = waiters.remove(request_id) {
-                if waiter.send(data).is_err() {
+                info!("✅ [MQTT Response] 找到等待器，发送响应: request_id={}", request_id);
+                if waiter.send(data.clone()).is_err() {
                     warn!("⚠️  [MQTT Response] 发送响应到等待器失败: request_id={}", request_id);
                 } else {
-                    info!("✅ [MQTT Response] 响应已发送到等待器: request_id={}", request_id);
+                    info!("✅ [MQTT Response] 响应已成功发送到等待器: request_id={}", request_id);
                 }
             } else {
                 // 没有等待器，可能是节点主动发送的响应，打印完整内容
+                warn!("⚠️  [MQTT Response] 未找到对应的等待器: request_id={}", request_id);
+                warn!("⚠️  [MQTT Response] 可能的原因：1) 请求已超时 2) request_id 不匹配 3) 响应到达太晚");
                 println!("📥 [MQTT Response] 完整消息内容:");
                 println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
             }
@@ -214,6 +239,14 @@ impl MqttClientManager {
         let action = data.get("action")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
+        
+        // 检查是否是管理端自己发送的请求（通过 request_id 前缀判断）
+        // 管理端发送的请求使用特定前缀：log_query_, udp_probe_
+        if request_id.starts_with("log_query_") || request_id.starts_with("udp_probe_") {
+            // 这是管理端自己发送的请求，应该由节点处理，管理端忽略
+            debug!("⚠️  [MQTT] 收到管理端自己发送的请求，忽略: action={}, request_id={}", action, request_id);
+            return;
+        }
         
         info!("📨 [MQTT Request] node_id={}, action={}, request_id={}", node_id, action, request_id);
         
@@ -570,10 +603,9 @@ impl MqttClientManager {
             }
             "query_logs" => {
                 // 日志查询请求应该由节点处理
-                Some(serde_json::json!({
-                    "msg": "error",
-                    "error": "query_logs 应该由节点处理"
-                }))
+                // 注意：如果这个请求是管理端自己发送的，应该在 handle_message 中已经被过滤掉了
+                // 这里不应该收到管理端发送的 query_logs 请求
+                None  // 返回 None，让节点端处理
             }
             "udp_probe" => {
                 // UDP 探测请求应该由节点处理，管理端不发送响应
@@ -659,6 +691,7 @@ impl MqttClientManager {
         {
             let mut waiters = self.response_waiters.lock().await;
             waiters.insert(request_id.clone(), tx);
+            info!("📝 [MQTT] 已注册响应等待器: request_id={}", request_id);
         }
         
         // 发布请求
@@ -666,9 +699,11 @@ impl MqttClientManager {
         let request_json = serde_json::to_string(&request_data)
             .unwrap_or_else(|_| r#"{"msg":"error","error":"序列化请求失败"}"#.to_string());
         
+        info!("📤 [MQTT] 准备发送日志查询请求: topic={}, request_id={}", request_topic, request_id);
+        
         match self.client.publish(&request_topic, QoS::AtLeastOnce, false, request_json.as_bytes()).await {
             Ok(_) => {
-                info!("📤 [MQTT] 已发送日志查询请求: {}", request_topic);
+                info!("📤 [MQTT] 已发送日志查询请求: {}, 等待响应...", request_topic);
             }
             Err(e) => {
                 error!("❌ [MQTT] 发送日志查询请求失败: {}, 错误: {}", request_topic, e);
@@ -680,20 +715,30 @@ impl MqttClientManager {
         }
         
         // 等待响应（带超时）
+        let start_time = std::time::Instant::now();
         match time::timeout(Duration::from_secs(timeout), rx).await {
             Ok(Ok(response)) => {
-                info!("✅ [MQTT] 收到日志查询响应: request_id={}", request_id);
+                let elapsed = start_time.elapsed();
+                info!("✅ [MQTT] 收到日志查询响应: request_id={}, 耗时 {:.2}s", request_id, elapsed.as_secs_f64());
                 Some(response)
             }
             Ok(Err(_)) => {
                 warn!("⚠️  [MQTT] 日志查询响应通道已关闭: request_id={}", request_id);
-                None
-            }
-            Err(_) => {
-                warn!("⚠️  [MQTT] 日志查询超时: request_id={}, timeout={}s", request_id, timeout);
                 // 清理等待器
                 let mut waiters = self.response_waiters.lock().await;
                 waiters.remove(&request_id);
+                None
+            }
+            Err(_) => {
+                let elapsed = start_time.elapsed();
+                warn!("⚠️  [MQTT] 日志查询超时: request_id={}, timeout={}s, 已等待 {:.2}s", request_id, timeout, elapsed.as_secs_f64());
+                // 清理等待器
+                let mut waiters = self.response_waiters.lock().await;
+                if waiters.remove(&request_id).is_some() {
+                    warn!("⚠️  [MQTT] 已清理超时的等待器: request_id={}", request_id);
+                } else {
+                    warn!("⚠️  [MQTT] 等待器不存在（可能已被清理）: request_id={}", request_id);
+                }
                 None
             }
         }

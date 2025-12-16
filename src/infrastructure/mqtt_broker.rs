@@ -47,28 +47,33 @@ impl MqttBrokerManager {
         println!("{}", separator);
         
         // 在单独的线程中启动 broker
-        let broker_thread = thread::spawn(move || {
-            let mut broker = Broker::new(config);
-            
-            info!("✅ 正在启动 MQTT Broker...");
-            match broker.start() {
-                Ok(_) => {
-                    info!("✅ MQTT Broker 已启动，等待连接...");
-                    // 等待关闭信号
-                    while !shutdown_flag_clone.load(Ordering::Relaxed) {
-                        thread::sleep(std::time::Duration::from_millis(100));
+        let broker_thread = thread::Builder::new()
+            .name("mqtt-broker".to_string())
+            .spawn(move || {
+                let mut broker = Broker::new(config);
+                
+                info!("✅ 正在启动 MQTT Broker...");
+                match broker.start() {
+                    Ok(_) => {
+                        info!("✅ MQTT Broker 已启动，等待连接...");
+                        // 等待关闭信号
+                        while !shutdown_flag_clone.load(Ordering::Relaxed) {
+                            thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        info!("🛑 正在关闭 MQTT Broker...");
                     }
-                    info!("🛑 正在关闭 MQTT Broker...");
+                    Err(e) => {
+                        error!("❌ Broker 启动失败: {}", e);
+                        error!("\n提示：");
+                        error!("   1. 检查配置文件是否存在");
+                        error!("   2. 确保至少配置了 v4、v5 或 ws 中的一个");
+                        error!("   3. 检查端口 {} 是否被占用", port);
+                    }
                 }
-                Err(e) => {
-                    error!("❌ Broker 启动失败: {}", e);
-                    error!("\n提示：");
-                    error!("   1. 检查配置文件是否存在");
-                    error!("   2. 确保至少配置了 v4、v5 或 ws 中的一个");
-                    error!("   3. 检查端口 {} 是否被占用", port);
-                }
-            }
-        });
+            })?;
+        
+        // 注意：rumqttd 的 Broker::start() 是阻塞的，无法优雅关闭
+        // 将线程标记为非守护线程，但主程序退出时会强制结束
         
         // 等待一小段时间确保 broker 启动
         thread::sleep(std::time::Duration::from_millis(500));
@@ -84,17 +89,23 @@ impl MqttBrokerManager {
         info!("🛑 正在关闭 MQTT Broker...");
         self.shutdown_flag.store(true, Ordering::Relaxed);
         
+        // 注意：rumqttd 的 Broker::start() 是阻塞的，没有提供停止方法
+        // 我们只能设置关闭标志，但无法强制停止 broker
+        // 当主程序退出时，broker 线程会随着进程一起结束
+        
         if let Some(thread) = self.broker_thread.take() {
-            // 等待线程结束，最多等待 5 秒
-            let timeout = std::time::Duration::from_secs(5);
+            // 等待一小段时间，看线程是否能响应关闭信号
+            let timeout = std::time::Duration::from_secs(1);
             let start = std::time::Instant::now();
             
-            while thread.is_finished() == false && start.elapsed() < timeout {
-                thread::sleep(std::time::Duration::from_millis(100));
+            while !thread.is_finished() && start.elapsed() < timeout {
+                thread::sleep(std::time::Duration::from_millis(50));
             }
             
             if !thread.is_finished() {
                 warn!("⚠️  MQTT Broker 线程未能在超时时间内结束");
+                warn!("⚠️  注意：rumqttd 的 Broker::start() 是阻塞的，无法优雅关闭");
+                warn!("⚠️  程序退出时 broker 线程会随进程一起结束");
             } else {
                 info!("✅ MQTT Broker 已关闭");
             }
