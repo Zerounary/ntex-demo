@@ -8,12 +8,18 @@ use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
 use log::{info, error, warn, debug};
+
+/// 响应等待器
+type ResponseWaiter = tokio::sync::oneshot::Sender<Value>;
 
 /// MQTT 客户端管理器
 pub struct MqttClientManager {
     client: Arc<AsyncClient>,
     shutdown_flag: Arc<tokio::sync::Notify>,
+    response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
 }
 
 impl MqttClientManager {
@@ -81,16 +87,21 @@ impl MqttClientManager {
         // 创建关闭信号
         let shutdown_flag = Arc::new(tokio::sync::Notify::new());
         
+        // 创建响应等待器映射
+        let response_waiters = Arc::new(Mutex::new(HashMap::<String, ResponseWaiter>::new()));
+        
         // 启动事件循环任务
         let client_clone = client_arc.clone();
         let shutdown_clone = shutdown_flag.clone();
+        let response_waiters_clone = response_waiters.clone();
         tokio::spawn(async move {
-            Self::run_event_loop(eventloop, client_clone, shutdown_clone).await;
+            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone).await;
         });
         
         Ok(Self {
             client: client_arc,
             shutdown_flag,
+            response_waiters,
         })
     }
     
@@ -99,6 +110,7 @@ impl MqttClientManager {
         mut eventloop: EventLoop,
         _client: Arc<AsyncClient>,
         shutdown_flag: Arc<tokio::sync::Notify>,
+        response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
     ) {
         info!("🚀 MQTT 客户端事件循环已启动");
         
@@ -109,7 +121,8 @@ impl MqttClientManager {
                     match event {
                         Ok(Event::Incoming(rumqttc::Packet::Publish(publish))) => {
                             let client_clone = _client.clone();
-                            Self::handle_message(client_clone, publish.topic, publish.payload).await;
+                            let response_waiters_clone = response_waiters.clone();
+                            Self::handle_message(client_clone, response_waiters_clone, publish.topic, publish.payload).await;
                         }
                         Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
                             info!("✅ MQTT 连接已确认");
@@ -142,7 +155,12 @@ impl MqttClientManager {
     }
     
     /// 处理收到的消息
-    async fn handle_message(client: Arc<AsyncClient>, topic: String, payload: bytes::Bytes) {
+    async fn handle_message(
+        client: Arc<AsyncClient>,
+        response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        topic: String,
+        payload: bytes::Bytes,
+    ) {
         // 解析主题: xrayr/node/{node_id}/request/{request_id} 或 xrayr/node/{node_id}/response/{request_id}
         let topic_parts: Vec<&str> = topic.split('/').collect();
         if topic_parts.len() != 5 {
@@ -174,8 +192,21 @@ impl MqttClientManager {
         // 如果是响应消息
         if topic_type == "response" {
             info!("📥 [MQTT Response] node_id={}, request_id={}", node_id, request_id);
-            println!("📥 [MQTT Response] 完整消息内容:");
-            println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
+            debug!("📥 [MQTT Response] 完整消息内容: {}", serde_json::to_string_pretty(&data).unwrap_or_default());
+            
+            // 检查是否有等待此响应的等待器
+            let mut waiters = response_waiters.lock().await;
+            if let Some(waiter) = waiters.remove(request_id) {
+                if waiter.send(data).is_err() {
+                    warn!("⚠️  [MQTT Response] 发送响应到等待器失败: request_id={}", request_id);
+                } else {
+                    info!("✅ [MQTT Response] 响应已发送到等待器: request_id={}", request_id);
+                }
+            } else {
+                // 没有等待器，可能是节点主动发送的响应，打印完整内容
+                println!("📥 [MQTT Response] 完整消息内容:");
+                println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
+            }
             return;
         }
         
@@ -554,6 +585,210 @@ impl MqttClientManager {
                     "msg": "error",
                     "error": format!("未知的 action: {}", action)
                 }))
+            }
+        }
+    }
+    
+    /// 推送配置更新通知到节点
+    /// 
+    /// # 参数
+    /// - `node_id`: 节点 ID
+    /// - `update_type`: 更新类型 ('user', 'outbound', 'config', 'routing')
+    pub async fn publish_update_notification(
+        &self,
+        node_id: u64,
+        update_type: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let topic = format!("xrayr/node/{}/update/{}", node_id, update_type);
+        let message = serde_json::json!({
+            "type": update_type,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            "action": "update"
+        });
+        
+        let message_json = serde_json::to_string(&message)?;
+        
+        match self.client.publish(&topic, QoS::AtLeastOnce, false, message_json.as_bytes()).await {
+            Ok(_) => {
+                info!("📢 [MQTT] 已推送更新通知: {} (type={})", topic, update_type);
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ [MQTT] 推送更新通知失败: {}, 错误: {}", topic, e);
+                Err(format!("推送更新通知失败: {}", e).into())
+            }
+        }
+    }
+    
+    /// 通过 MQTT 查询节点日志
+    /// 
+    /// # 参数
+    /// - `node_id`: 节点 ID
+    /// - `query_params`: 查询参数，包含 uid, days, event, limit 等
+    /// - `timeout`: 超时时间（秒）
+    pub async fn query_node_logs(
+        &self,
+        node_id: u64,
+        query_params: Value,
+        timeout: u64,
+    ) -> Option<Value> {
+        // 生成请求 ID
+        let request_id = format!(
+            "log_query_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            node_id
+        );
+        
+        // 准备请求数据
+        let request_data = serde_json::json!({
+            "node_id": node_id,
+            "token": "123",  // 使用配置的 token
+            "action": "query_logs",
+            "data": query_params
+        });
+        
+        // 创建响应等待器
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        // 注册等待器
+        {
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.insert(request_id.clone(), tx);
+        }
+        
+        // 发布请求
+        let request_topic = format!("xrayr/node/{}/request/{}", node_id, request_id);
+        let request_json = serde_json::to_string(&request_data)
+            .unwrap_or_else(|_| r#"{"msg":"error","error":"序列化请求失败"}"#.to_string());
+        
+        match self.client.publish(&request_topic, QoS::AtLeastOnce, false, request_json.as_bytes()).await {
+            Ok(_) => {
+                info!("📤 [MQTT] 已发送日志查询请求: {}", request_topic);
+            }
+            Err(e) => {
+                error!("❌ [MQTT] 发送日志查询请求失败: {}, 错误: {}", request_topic, e);
+                // 清理等待器
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                return None;
+            }
+        }
+        
+        // 等待响应（带超时）
+        match time::timeout(Duration::from_secs(timeout), rx).await {
+            Ok(Ok(response)) => {
+                info!("✅ [MQTT] 收到日志查询响应: request_id={}", request_id);
+                Some(response)
+            }
+            Ok(Err(_)) => {
+                warn!("⚠️  [MQTT] 日志查询响应通道已关闭: request_id={}", request_id);
+                None
+            }
+            Err(_) => {
+                warn!("⚠️  [MQTT] 日志查询超时: request_id={}, timeout={}s", request_id, timeout);
+                // 清理等待器
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                None
+            }
+        }
+    }
+    
+    /// 主动查询指定 outbound 的 UDP 延迟
+    /// 
+    /// # 参数
+    /// - `node_id`: 节点 ID
+    /// - `outbound_tag`: Outbound 标签
+    /// - `timeout`: 超时时间（秒）
+    pub async fn query_udp_latency(
+        &self,
+        node_id: u64,
+        outbound_tag: &str,
+        timeout: u64,
+    ) -> Option<Value> {
+        info!("🔍 [UDP Probe API] 开始查询 UDP 延迟: node_id={}, outbound_tag={}, timeout={}s", 
+              node_id, outbound_tag, timeout);
+        
+        // 生成请求 ID
+        let request_id = format!(
+            "udp_probe_{}_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            node_id,
+            outbound_tag
+        );
+        
+        // 准备请求数据
+        let request_data = serde_json::json!({
+            "node_id": node_id,
+            "token": "123",
+            "action": "udp_probe",
+            "data": {
+                "outbound_tag": outbound_tag
+            }
+        });
+        
+        debug!("📤 [UDP Probe API] 准备发送 MQTT 请求: request_id={}, data={}", 
+               request_id, serde_json::to_string(&request_data).unwrap_or_default());
+        
+        // 创建响应等待器
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        
+        // 注册等待器
+        {
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.insert(request_id.clone(), tx);
+        }
+        
+        // 发布请求
+        let request_topic = format!("xrayr/node/{}/request/{}", node_id, request_id);
+        let request_json = serde_json::to_string(&request_data)
+            .unwrap_or_else(|_| r#"{"msg":"error","error":"序列化请求失败"}"#.to_string());
+        
+        debug!("📡 [UDP Probe API] 发布 MQTT 消息到主题: {}", request_topic);
+        
+        match self.client.publish(&request_topic, QoS::AtLeastOnce, false, request_json.as_bytes()).await {
+            Ok(_) => {
+                info!("✅ [UDP Probe API] MQTT 消息发布成功，等待响应 (timeout={}s)...", timeout);
+            }
+            Err(e) => {
+                error!("❌ [UDP Probe API] 发布 UDP 探测请求失败: {}, 错误: {}", request_topic, e);
+                // 清理等待器
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                return None;
+            }
+        }
+        
+        // 等待响应（带超时）
+        let start_time = std::time::Instant::now();
+        match time::timeout(Duration::from_secs(timeout), rx).await {
+            Ok(Ok(response)) => {
+                let elapsed = start_time.elapsed();
+                info!("✅ [UDP Probe API] 收到响应 (耗时 {:.2}s): {}", 
+                      elapsed.as_secs_f64(), 
+                      serde_json::to_string(&response).unwrap_or_default());
+                Some(response)
+            }
+            Ok(Err(_)) => {
+                warn!("⚠️  [UDP Probe API] UDP 探测响应通道已关闭: request_id={}", request_id);
+                None
+            }
+            Err(_) => {
+                let elapsed = start_time.elapsed();
+                warn!("⚠️  [UDP Probe API] UDP 探测超时 (等待了 {:.2}s)，未收到响应: request_id={}", 
+                      elapsed.as_secs_f64(), request_id);
+                // 清理等待器
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                None
             }
         }
     }
