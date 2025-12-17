@@ -69,9 +69,10 @@ class MQTTTester:
             print(f"  TCP 连接测试失败: {e}")
             return False
 
-    def test_plain_mqtt(self) -> Tuple[bool, str]:
+    def test_plain_mqtt(self, username: Optional[str] = None, password: Optional[str] = None) -> Tuple[bool, str]:
         """测试普通 MQTT 连接（非 TLS）"""
-        print(f"\n[测试 1] 普通 MQTT 连接 (tcp://{self.host}:{self.port})")
+        auth_info = f" (用户名: {username})" if username else " (无认证)"
+        print(f"\n[测试 1] 普通 MQTT 连接 (tcp://{self.host}:{self.port}){auth_info}")
         print("-" * 60)
         
         if not self.test_tcp_connection():
@@ -81,6 +82,11 @@ class MQTTTester:
         try:
             client = mqtt.Client(client_id="test_plain_mqtt")
             client._connect_timeout = 3
+            
+            # 如果提供了用户名和密码，设置认证
+            if username and password:
+                client.username_pw_set(username, password)
+                print(f"  {Fore.BLUE}[INFO]{Fore.RESET} 使用用户名密码认证: {Fore.CYAN}{username}{Fore.RESET}")
             
             # 设置回调
             connected = [False]
@@ -109,10 +115,10 @@ class MQTTTester:
             client.disconnect()
             
             if connected[0]:
-                print("  [OK] 普通 MQTT 连接成功")
+                print(f"  {Fore.GREEN}[OK]{Fore.RESET} 普通 MQTT 连接成功")
                 return True, "连接成功"
             else:
-                print(f"  [FAIL] 普通 MQTT 连接失败: {error_msg[0] or '未知错误'}")
+                print(f"  {Fore.RED}[FAIL]{Fore.RESET} 普通 MQTT 连接失败: {Fore.YELLOW}{error_msg[0] or '未知错误'}{Fore.RESET}")
                 return False, error_msg[0] or "未知错误"
                 
         except Exception as e:
@@ -121,12 +127,15 @@ class MQTTTester:
                     client.disconnect()
                 except:
                     pass
-            print(f"  [FAIL] 普通 MQTT 连接异常: {e}")
+            print(f"  {Fore.RED}[FAIL]{Fore.RESET} 普通 MQTT 连接异常: {Fore.RED}{e}{Fore.RESET}")
             return False, str(e)
 
-    def test_tls_mqtt_without_client_cert(self, ca_cert: Optional[str] = None) -> Tuple[bool, str]:
+    def test_tls_mqtt_without_client_cert(self, ca_cert: Optional[str] = None, 
+                                         username: Optional[str] = None, 
+                                         password: Optional[str] = None) -> Tuple[bool, str]:
         """测试 TLS MQTT 连接（不使用客户端证书）"""
-        print(f"\n[测试 2] TLS MQTT 连接（无客户端证书）(ssl://{self.host}:{self.port})")
+        auth_info = f" (用户名: {username})" if username else " (无认证)"
+        print(f"\n[测试 2] TLS MQTT 连接（无客户端证书）(ssl://{self.host}:{self.port}){auth_info}")
         print("-" * 60)
         
         if not self.test_tcp_connection():
@@ -136,6 +145,11 @@ class MQTTTester:
         try:
             client = mqtt.Client(client_id="test_tls_mqtt_no_client_cert")
             client._connect_timeout = 3
+            
+            # 如果提供了用户名和密码，设置认证
+            if username and password:
+                client.username_pw_set(username, password)
+                print(f"  {Fore.BLUE}[INFO]{Fore.RESET} 使用用户名密码认证: {Fore.CYAN}{username}{Fore.RESET}")
             
             # 配置 TLS（不使用客户端证书）
             allow_insecure = os.getenv("MQTT_TLS_INSECURE", "").lower() == "true"
@@ -229,9 +243,12 @@ class MQTTTester:
 
     def test_tls_mqtt(self, ca_cert: Optional[str] = None, 
                       client_cert: Optional[str] = None,
-                      client_key: Optional[str] = None) -> Tuple[bool, str]:
+                      client_key: Optional[str] = None,
+                      username: Optional[str] = None,
+                      password: Optional[str] = None) -> Tuple[bool, str]:
         """测试 TLS MQTT 连接（使用客户端证书）"""
-        print(f"\n[测试 3] TLS MQTT 连接（使用客户端证书）(ssl://{self.host}:{self.port})")
+        auth_info = f" (用户名: {username})" if username else " (无认证)"
+        print(f"\n[测试 3] TLS MQTT 连接（使用客户端证书）(ssl://{self.host}:{self.port}){auth_info}")
         print("-" * 60)
         
         if not self.test_tcp_connection():
@@ -241,6 +258,11 @@ class MQTTTester:
         try:
             client = mqtt.Client(client_id="test_tls_mqtt")
             client._connect_timeout = 3
+            
+            # 如果提供了用户名和密码，设置认证
+            if username and password:
+                client.username_pw_set(username, password)
+                print(f"  {Fore.BLUE}[INFO]{Fore.RESET} 使用用户名密码认证: {Fore.CYAN}{username}{Fore.RESET}")
             
             # 配置 TLS
             # 检查是否允许不安全的连接（用于自签名证书）
@@ -338,6 +360,10 @@ class MQTTTester:
                     client2 = mqtt.Client(client_id="test_tls_mqtt_retry")
                     client2._connect_timeout = 3
                     
+                    # 如果提供了用户名和密码，设置认证
+                    if username and password:
+                        client2.username_pw_set(username, password)
+                    
                     # 使用 insecure 模式
                     tls_context2 = ssl.create_default_context()
                     tls_context2.check_hostname = False
@@ -398,7 +424,9 @@ class MQTTTester:
 
     def run_tests(self, ca_cert: Optional[str] = None,
                   client_cert: Optional[str] = None,
-                  client_key: Optional[str] = None):
+                  client_key: Optional[str] = None,
+                  username: Optional[str] = None,
+                  password: Optional[str] = None):
         """运行所有测试"""
         print("=" * 60)
         print(f"{Fore.CYAN}MQTT 连接测试工具{Fore.RESET}")
@@ -407,29 +435,52 @@ class MQTTTester:
         print(f"CA 证书: {Fore.CYAN}{ca_cert or '未指定'}{Fore.RESET}")
         print(f"客户端证书: {Fore.CYAN}{client_cert or '未指定'}{Fore.RESET}")
         print(f"客户端密钥: {Fore.CYAN}{client_key or '未指定'}{Fore.RESET}")
+        print(f"用户名: {Fore.CYAN}{username or '未指定'}{Fore.RESET}")
+        print(f"密码: {Fore.CYAN}{'*' * len(password) if password else '未指定'}{Fore.RESET}")
         
-        # 测试普通连接
+        # 测试普通连接（无认证）
         print(f"\n{Fore.CYAN}{'='*60}{Fore.RESET}")
-        print(f"{Fore.CYAN}开始测试...{Fore.RESET}")
+        print(f"{Fore.CYAN}开始测试（无认证）...{Fore.RESET}")
         print(f"{Fore.CYAN}{'='*60}{Fore.RESET}")
         plain_success, plain_msg = self.test_plain_mqtt()
-        self.results['plain'] = {
+        self.results['plain_no_auth'] = {
             'success': plain_success,
             'message': plain_msg
         }
         
-        # 测试 TLS 连接（不使用客户端证书）
+        # 测试普通连接（有认证）
+        plain_auth_success, plain_auth_msg = self.test_plain_mqtt(username, password)
+        self.results['plain_auth'] = {
+            'success': plain_auth_success,
+            'message': plain_auth_msg
+        }
+        
+        # 测试 TLS 连接（不使用客户端证书，无认证）
         tls_no_cert_success, tls_no_cert_msg = self.test_tls_mqtt_without_client_cert(ca_cert)
-        self.results['tls_no_client_cert'] = {
+        self.results['tls_no_client_cert_no_auth'] = {
             'success': tls_no_cert_success,
             'message': tls_no_cert_msg
         }
         
-        # 测试 TLS 连接（使用客户端证书）
+        # 测试 TLS 连接（不使用客户端证书，有认证）
+        tls_no_cert_auth_success, tls_no_cert_auth_msg = self.test_tls_mqtt_without_client_cert(ca_cert, username, password)
+        self.results['tls_no_client_cert_auth'] = {
+            'success': tls_no_cert_auth_success,
+            'message': tls_no_cert_auth_msg
+        }
+        
+        # 测试 TLS 连接（使用客户端证书，无认证）
         tls_success, tls_msg = self.test_tls_mqtt(ca_cert, client_cert, client_key)
-        self.results['tls'] = {
+        self.results['tls_no_auth'] = {
             'success': tls_success,
             'message': tls_msg
+        }
+        
+        # 测试 TLS 连接（使用客户端证书，有认证）
+        tls_auth_success, tls_auth_msg = self.test_tls_mqtt(ca_cert, client_cert, client_key, username, password)
+        self.results['tls_auth'] = {
+            'success': tls_auth_success,
+            'message': tls_auth_msg
         }
         
         # 输出总结
@@ -437,19 +488,36 @@ class MQTTTester:
         print(f"{Fore.CYAN}测试结果总结{Fore.RESET}")
         print("=" * 60)
         # 使用颜色显示结果
-        plain_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if plain_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
-        tls_no_cert_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_no_cert_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
-        tls_cert_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        plain_no_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if plain_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        plain_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if plain_auth_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        tls_no_cert_no_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_no_cert_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        tls_no_cert_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_no_cert_auth_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        tls_no_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
+        tls_auth_status = f"{Fore.GREEN}[OK] 成功{Fore.RESET}" if tls_auth_success else f"{Fore.RED}[FAIL] 失败{Fore.RESET}"
         
-        print(f"普通 MQTT 连接: {plain_status}")
+        print(f"\n{Fore.CYAN}普通 MQTT 连接:{Fore.RESET}")
+        print(f"  无认证: {plain_no_auth_status}")
         if not plain_success:
-            print(f"  原因: {Fore.YELLOW}{plain_msg}{Fore.RESET}")
-        print(f"TLS MQTT 连接（无客户端证书）: {tls_no_cert_status}")
+            print(f"    原因: {Fore.YELLOW}{plain_msg}{Fore.RESET}")
+        print(f"  有认证: {plain_auth_status}")
+        if not plain_auth_success:
+            print(f"    原因: {Fore.YELLOW}{plain_auth_msg}{Fore.RESET}")
+        
+        print(f"\n{Fore.CYAN}TLS MQTT 连接（无客户端证书）:{Fore.RESET}")
+        print(f"  无认证: {tls_no_cert_no_auth_status}")
         if not tls_no_cert_success:
-            print(f"  原因: {Fore.YELLOW}{tls_no_cert_msg}{Fore.RESET}")
-        print(f"TLS MQTT 连接（使用客户端证书）: {tls_cert_status}")
+            print(f"    原因: {Fore.YELLOW}{tls_no_cert_msg}{Fore.RESET}")
+        print(f"  有认证: {tls_no_cert_auth_status}")
+        if not tls_no_cert_auth_success:
+            print(f"    原因: {Fore.YELLOW}{tls_no_cert_auth_msg}{Fore.RESET}")
+        
+        print(f"\n{Fore.CYAN}TLS MQTT 连接（使用客户端证书）:{Fore.RESET}")
+        print(f"  无认证: {tls_no_auth_status}")
         if not tls_success:
-            print(f"  原因: {Fore.YELLOW}{tls_msg}{Fore.RESET}")
+            print(f"    原因: {Fore.YELLOW}{tls_msg}{Fore.RESET}")
+        print(f"  有认证: {tls_auth_status}")
+        if not tls_auth_success:
+            print(f"    原因: {Fore.YELLOW}{tls_auth_msg}{Fore.RESET}")
         
         print("\n" + "=" * 60)
         print(f"{Fore.CYAN}分析结果{Fore.RESET}")
@@ -505,13 +573,18 @@ class MQTTTester:
 
 def main():
     import argparse
+    import os
+    
+    # 默认用户名和密码（从环境变量读取，或使用默认值）
+    default_username = os.getenv('MQTT_USERNAME', 'node')
+    default_password = os.getenv('MQTT_PASSWORD', 'node_password_123')
     
     parser = argparse.ArgumentParser(
-        description='测试 MQTT Broker 的普通连接和 TLS 连接',
+        description='测试 MQTT Broker 的普通连接和 TLS 连接（支持用户名密码认证）',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 测试默认配置 (127.0.0.1:1883)
+  # 测试默认配置 (127.0.0.1:1883)，包含无认证和有认证测试
   python test_mqtt_tls.py
   
   # 测试指定主机和端口
@@ -524,6 +597,12 @@ def main():
   python test_mqtt_tls.py --ca-cert certs/ca.cert.pem \\
                           --client-cert certs/client.cert.pem \\
                           --client-key certs/client.key
+  
+  # 指定用户名和密码
+  python test_mqtt_tls.py --username node --password node_password_123
+  
+  # 仅测试无认证连接（不测试用户名密码认证）
+  python test_mqtt_tls.py --no-auth
   
   # 禁用证书验证（用于自签名证书或开发测试）
   python test_mqtt_tls.py --insecure
@@ -544,16 +623,20 @@ def main():
                        help='客户端密钥路径 (用于客户端证书认证)')
     parser.add_argument('--insecure', action='store_true',
                        help='禁用 TLS 证书验证（仅用于开发测试，不安全）')
+    parser.add_argument('--username', default=default_username,
+                       help=f'MQTT 用户名 (默认: {default_username})')
+    parser.add_argument('--password', default=default_password,
+                       help=f'MQTT 密码 (默认: {default_password})')
+    parser.add_argument('--no-auth', action='store_true',
+                       help='不测试用户名密码认证（仅测试无认证连接）')
     
     args = parser.parse_args()
     
     # 如果指定了 --insecure，设置环境变量
     if args.insecure:
-        import os
         os.environ['MQTT_TLS_INSECURE'] = 'true'
     
     # 自动查找证书文件（如果未指定）
-    import os
     if not args.ca_cert:
         possible_ca_certs = [
             'certs/ca.cert.pem',
@@ -595,7 +678,9 @@ def main():
     tester.run_tests(
         ca_cert=args.ca_cert,
         client_cert=args.client_cert,
-        client_key=args.client_key
+        client_key=args.client_key,
+        username=None if args.no_auth else args.username,
+        password=None if args.no_auth else args.password
     )
 
 

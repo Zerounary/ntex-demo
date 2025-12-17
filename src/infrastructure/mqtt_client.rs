@@ -41,6 +41,14 @@ impl MqttClientManager {
         mqttoptions.set_keep_alive(Duration::from_secs(60));
         mqttoptions.set_clean_session(true);
         
+        // 设置用户名和密码认证（从环境变量读取，默认使用 manage 账号）
+        let mqtt_username = env::var("MQTT_USERNAME")
+            .unwrap_or_else(|_| "manage".to_string());
+        let mqtt_password = env::var("MQTT_PASSWORD")
+            .unwrap_or_else(|_| "manage_password_123".to_string());
+        mqttoptions.set_credentials(&mqtt_username, &mqtt_password);
+        info!("🔐 [MQTT] 已设置用户名密码认证: username={}", mqtt_username);
+        
         // 设置最大包大小（rumqttc 默认可能是 16KB，我们需要支持更大的消息，如 100MB）
         // 注意：rumqttc 0.25.1 使用 set_max_packet_size 方法设置最大包大小
         // 参数：incoming (接收消息的最大包大小), outgoing (发送消息的最大包大小)

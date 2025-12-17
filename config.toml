@@ -29,3 +29,5 @@ connection_timeout_ms = 60000
 max_payload_size = 104857600
 max_inflight_count = 100
 dynamic_filters = true
+# 用户名密码认证配置
+auth = { manage = "manage_password_123", node = "node_password_123" }
