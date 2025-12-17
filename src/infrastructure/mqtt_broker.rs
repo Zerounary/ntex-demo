@@ -149,6 +149,12 @@ fn load_config_from_toml(port: u16) -> Result<Config, Box<dyn std::error::Error>
     let config_toml = format!(
         r#"id = 0
 
+[router]
+max_connections = 1000
+max_outgoing_packet_count = 100
+max_segment_size = 104857600
+max_segment_count = 10
+
 [v4.v4-1]
 name = "v4-1"
 listen = "0.0.0.0:{}"
@@ -156,7 +162,7 @@ next_connection_delay_ms = 1
 
 [v4.v4-1.connections]
 connection_timeout_ms = 60000
-max_payload_size = 20480
+max_payload_size = 104857600
 max_inflight_count = 100
 dynamic_filters = true
 "#,

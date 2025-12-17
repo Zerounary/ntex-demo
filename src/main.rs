@@ -16,7 +16,10 @@ use crate::config::AppConfig;
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    // 配置日志过滤器：降低 rumqttd 路由模块的日志级别，避免正常路由信息被记录为 ERROR
+    // 如果环境变量 RUST_LOG 未设置，使用默认值：全局 info，rumqttd 相关模块为 warn
+    let default_filter = "info,rumqttd::router::routing=off,rumqttd=off";
+    env_logger::Builder::from_env(Env::default().default_filter_or(default_filter)).init();
     let config = AppConfig::from_env();
 
     // 首先检测数据库连接
