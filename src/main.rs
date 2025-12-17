@@ -9,7 +9,7 @@ use env_logger::Env;
 use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
 use interface::{admin, web};
 use interface::web::AppState;
-use log::info;
+use log::{error, info};
 
 use crate::config::AppConfig;
 
@@ -18,6 +18,39 @@ async fn main() -> std::io::Result<()> {
     dotenv().ok();
     env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
     let config = AppConfig::from_env();
+
+    // 首先检测数据库连接
+    info!("正在检测数据库连接...");
+    let db = match database::connect(&config.database_url).await {
+        Ok(db) => {
+            info!("数据库连接成功");
+            db
+        }
+        Err(e) => {
+            error!("数据库连接失败: {}", e);
+            error!("数据库 URL: {}", config.database_url);
+            error!("请检查数据库配置和连接信息，程序将退出");
+            std::process::exit(1);
+        }
+    };
+
+    // 初始化数据库表结构
+    info!("正在初始化数据库表结构...");
+    if let Err(e) = database::init(&db).await {
+        error!("数据库初始化失败: {}", e);
+        error!("请检查数据库权限和配置，程序将退出");
+        std::process::exit(1);
+    }
+    info!("数据库表结构初始化成功");
+
+    // 执行数据库种子数据
+    info!("正在执行数据库种子数据...");
+    if let Err(e) = seed::seed(&db).await {
+        error!("数据库种子数据执行失败: {}", e);
+        error!("程序将退出");
+        std::process::exit(1);
+    }
+    info!("数据库种子数据执行成功");
 
     // 启动 MQTT Broker
     info!("正在启动 MQTT Broker...");
@@ -34,13 +67,6 @@ async fn main() -> std::io::Result<()> {
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT 客户端启动失败: {}", e)))?;
     info!("MQTT 客户端启动成功");
-
-    // 初始化数据库
-    let db = database::connect(&config.database_url)
-        .await
-        .map_err(to_io_error)?;
-    database::init(&db).await.map_err(to_io_error)?;
-    seed::seed(&db).await.map_err(to_io_error)?;
 
     let state = AppState::new(db);
     
