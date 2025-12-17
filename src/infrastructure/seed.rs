@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
+    admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
     config_entry,
 };
 
@@ -12,6 +13,7 @@ pub async fn seed(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
     seed_accelerator(db).await?;
     seed_config_entries(db).await?;
     seed_accounts(db).await?;
+    seed_admin_config(db).await?;
     Ok(())
 }
 
@@ -191,4 +193,181 @@ fn hash_password(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr> {
+    // 初始化节点配置
+    let node_id = 41u64;
+    let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
+        .one(db)
+        .await?;
+    
+    if node_config_exists.is_none() {
+        let inbounds = json!([{
+            "port": 10086,
+            "protocol": "vmess",
+            "settings": {},
+            "streamSettings": {
+                "network": "tcp"
+            }
+        }]);
+        
+        admin_node_config::ActiveModel {
+            node_id: Set(node_id),
+            node_type: Set("Vmess".to_string()),
+            node_speed_limit: Set(0),
+            traffic_rate: Set(1.0),
+            sort: Set(1),
+            inbounds: Set(inbounds),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?;
+        
+        // 初始化用户
+        let users = vec![
+            (1u64, "a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(), 5u64, 0u64),
+            (2u64, "b2c3d4e5-f6a7-8901-bcde-f12345678901".to_string(), 1u64, 0u64),
+            (3u64, "c3d4e5f6-a7b8-9012-cdef-123456789012".to_string(), 1u64, 0u64),
+            (4u64, "d4e5f6a7-b8c9-0123-def0-234567890123".to_string(), 1u64, 0u64),
+            (5u64, "e5f6a7b8-c9d0-1234-ef01-345678901234".to_string(), 1u64, 0u64),
+            (6u64, "f6a7b8c9-d0e1-2345-f012-456789012345".to_string(), 1u64, 0u64),
+        ];
+        
+        for (id, uuid, st, dt) in users {
+            admin_user::ActiveModel {
+                id: Set(id),
+                node_id: Set(node_id),
+                uuid: Set(uuid),
+                st: Set(st),
+                dt: Set(dt),
+                ..Default::default()
+            }
+            .insert(db)
+            .await?;
+        }
+        
+        // 初始化上游代理
+        let outbounds = vec![
+            (
+                "block".to_string(),
+                "blackhole".to_string(),
+                json!({
+                    "response": {
+                        "type": "http"
+                    }
+                }),
+                None,
+            ),
+            (
+                "direct".to_string(),
+                "freedom".to_string(),
+                json!({}),
+                None,
+            ),
+            (
+                "ss_1".to_string(),
+                "shadowsocks".to_string(),
+                json!({
+                    "servers": [{
+                        "address": "67.209.176.181",
+                        "port": 19166,
+                        "method": "aes-256-gcm",
+                        "password": "bxaeWJ4Kf9ZL59R3"
+                    }]
+                }),
+                None,
+            ),
+            (
+                "ss_2".to_string(),
+                "shadowsocks".to_string(),
+                json!({
+                    "servers": [{
+                        "address": "65.49.212.165",
+                        "port": 19166,
+                        "method": "aes-256-gcm",
+                        "password": "bxaeWJ4Kf9ZL59R3"
+                    }]
+                }),
+                None,
+            ),
+            (
+                "ss_3".to_string(),
+                "shadowsocks".to_string(),
+                json!({
+                    "servers": [{
+                        "address": "65.49.212.165",
+                        "port": 19166,
+                        "method": "aes-256-gcm",
+                        "password": "bxaeWJ4Kf9ZL59R3"
+                    }]
+                }),
+                None,
+            ),
+            (
+                "vmess_loopback".to_string(),
+                "vmess".to_string(),
+                json!({
+                    "vnext": [{
+                        "address": "127.0.0.1",
+                        "port": 10086,
+                        "users": [{
+                            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                            "alterId": 0,
+                            "email": "t@t.tt",
+                            "security": "auto"
+                        }]
+                    }]
+                }),
+                Some(json!({
+                    "network": "tcp"
+                })),
+            ),
+        ];
+        
+        for (tag, protocol, settings, stream_settings) in outbounds {
+            admin_outbound::ActiveModel {
+                node_id: Set(node_id),
+                tag: Set(tag),
+                protocol: Set(protocol),
+                settings: Set(settings),
+                stream_settings: Set(stream_settings),
+                ..Default::default()
+            }
+            .insert(db)
+            .await?;
+        }
+        
+        // 初始化用户映射
+        let mappings = vec![
+            ("a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(), "ss_1".to_string()),
+            ("b2c3d4e5-f6a7-8901-bcde-f12345678901".to_string(), "ss_2".to_string()),
+            ("c3d4e5f6-a7b8-9012-cdef-123456789012".to_string(), "ss_3".to_string()),
+            ("d4e5f6a7-b8c9-0123-def0-234567890123".to_string(), "ss_1".to_string()),
+            ("e5f6a7b8-c9d0-1234-ef01-345678901234".to_string(), "ss_2".to_string()),
+        ];
+        
+        for (uuid, outbound_tag) in mappings {
+            admin_user_mapping::ActiveModel {
+                node_id: Set(node_id),
+                uuid: Set(uuid),
+                outbound_tag: Set(outbound_tag),
+                ..Default::default()
+            }
+            .insert(db)
+            .await?;
+        }
+        
+        // 初始化路由配置
+        admin_routing::ActiveModel {
+            node_id: Set(node_id),
+            domain_strategy: Set("AsIs".to_string()),
+            rules: Set(json!([])),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?;
+    }
+    
+    Ok(())
 }
