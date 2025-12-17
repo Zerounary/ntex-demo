@@ -71,8 +71,6 @@ async fn main() -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT 客户端启动失败: {}", e)))?;
     info!("MQTT 客户端启动成功");
 
-    let state = AppState::new(db);
-    
     // 创建管理配置存储
     let admin_config = admin_config::AdminConfigStore::new();
     
@@ -81,14 +79,17 @@ async fn main() -> std::io::Result<()> {
     
     // 启动管理服务器（端口 667）和 web 服务器并行运行
     let admin_config_clone = admin_config.clone();
+    let db_clone = db.clone();
     let mqtt_client_clone = mqtt_client_arc.clone();
+    
+    let state = AppState::new(db);
     
     info!("正在启动管理服务器 (端口 667)...");
     info!("正在启动 Web 服务器 (端口 {})...", config.port);
     
     // 使用 tokio::select! 并行运行两个服务器，并监听关闭信号
     tokio::select! {
-        result = admin::serve(667, admin_config_clone, Some(mqtt_client_clone)) => {
+        result = admin::serve(667, admin_config_clone, db_clone, Some(mqtt_client_clone)) => {
             if let Err(e) = result {
                 eprintln!("管理服务器错误: {:?}", e);
             } else {

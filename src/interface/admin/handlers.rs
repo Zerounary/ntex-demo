@@ -7,12 +7,17 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule};
+use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule, NodeConfig, User};
 use crate::infrastructure::mqtt_client::MqttClientManager;
+use crate::infrastructure::persistence::{
+    admin_node_config, admin_user, admin_outbound, admin_routing, admin_user_mapping,
+};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set};
 
 #[derive(Clone)]
 pub struct AdminState {
     pub config: AdminConfigStore,
+    pub db: DatabaseConnection,
     pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
 }
 
@@ -25,40 +30,215 @@ pub async fn query_handler(
 ) -> HttpResponse {
     let act = params.get("act").map(|s| s.as_str()).unwrap_or("");
     
+    // 获取 node_id，优先从查询参数获取，否则从配置获取
+    let node_id = if let Some(node_id_str) = params.get("node_id") {
+        node_id_str.parse::<u64>().unwrap_or_else(|_| {
+            // 从配置获取默认 node_id（同步方式，因为我们在异步上下文中）
+            let node_config = state.config.get_node_config();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    node_config.await.node_id
+                })
+            })
+        })
+    } else {
+        // 从配置获取默认 node_id
+        let node_config = state.config.get_node_config().await;
+        node_config.node_id
+    };
+    
     match act {
         "user" => {
-            let users = state.config.get_users().await;
+            // 先检查 node_config 是否存在
+            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
+                .one(&state.db)
+                .await
+                .unwrap_or(None)
+                .is_some();
+            
+            if !node_config_exists {
+                return HttpResponse::Ok().json(&serde_json::json!({
+                    "msg": "ok",
+                    "data": []
+                }));
+            }
+            
+            // 查询用户数据
+            let users = admin_user::Entity::find()
+                .filter(admin_user::Column::NodeId.eq(node_id))
+                .all(&state.db)
+                .await
+                .unwrap_or_default();
+            
+            let users_data: Vec<User> = users.into_iter().map(|u| User {
+                id: u.id,
+                uuid: u.uuid,
+                st: u.st,
+                dt: u.dt,
+            }).collect();
+            
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
-                "data": users
+                "data": users_data
             }))
         }
         "config" => {
-            let node_config = state.config.get_node_config().await;
-            HttpResponse::Ok().json(&serde_json::json!({
-                "msg": "ok",
-                "data": node_config
-            }))
+            // 查询或创建 node_config
+            let node_config_result = admin_node_config::Entity::find_by_id(node_id)
+                .one(&state.db)
+                .await;
+            
+            match node_config_result {
+                Ok(Some(config_model)) => {
+                    // 配置已存在，直接返回
+                    let node_config = NodeConfig {
+                        node_id: config_model.node_id,
+                        node_type: config_model.node_type,
+                        node_speed_limit: config_model.node_speed_limit,
+                        traffic_rate: config_model.traffic_rate,
+                        sort: config_model.sort,
+                        inbounds: serde_json::from_value(config_model.inbounds.clone()).unwrap_or_default(),
+                    };
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": node_config
+                    }))
+                }
+                Ok(None) => {
+                    // 配置不存在，从内存配置获取并创建
+                    let mem_config = state.config.get_node_config().await;
+                    let inbounds_json = serde_json::to_value(mem_config.inbounds.clone()).unwrap_or(serde_json::json!([]));
+                    
+                    let node_type = mem_config.node_type.clone();
+                    let node_speed_limit = mem_config.node_speed_limit;
+                    let traffic_rate = mem_config.traffic_rate;
+                    let sort = mem_config.sort;
+                    
+                    let new_config = admin_node_config::ActiveModel {
+                        node_id: Set(node_id),
+                        node_type: Set(node_type),
+                        node_speed_limit: Set(node_speed_limit),
+                        traffic_rate: Set(traffic_rate),
+                        sort: Set(sort),
+                        inbounds: Set(inbounds_json),
+                        ..Default::default()
+                    };
+                    
+                    if let Err(e) = new_config.insert(&state.db).await {
+                        return HttpResponse::InternalServerError().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": format!("创建节点配置失败: {}", e)
+                        }));
+                    }
+                    
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": mem_config
+                    }))
+                }
+                Err(e) => {
+                    HttpResponse::InternalServerError().json(&serde_json::json!({
+                        "msg": "error",
+                        "error": format!("查询节点配置失败: {}", e)
+                    }))
+                }
+            }
         }
         "outbound" => {
-            let (outbounds, mapping) = state.config.get_outbounds().await;
+            // 先检查 node_config 是否存在
+            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
+                .one(&state.db)
+                .await
+                .unwrap_or(None)
+                .is_some();
+            
+            if !node_config_exists {
+                return HttpResponse::Ok().json(&serde_json::json!({
+                    "msg": "ok",
+                    "data": {
+                        "outbounds": [],
+                        "user_mapping": {}
+                    }
+                }));
+            }
+            
+            // 查询 outbound 数据
+            let outbounds = admin_outbound::Entity::find()
+                .filter(admin_outbound::Column::NodeId.eq(node_id))
+                .all(&state.db)
+                .await
+                .unwrap_or_default();
+            
+            let outbounds_data: Vec<OutboundConfig> = outbounds.into_iter().map(|o| OutboundConfig {
+                tag: o.tag,
+                protocol: o.protocol,
+                settings: o.settings,
+                stream_settings: o.stream_settings,
+            }).collect();
+            
+            // 查询用户映射
+            let mappings = admin_user_mapping::Entity::find()
+                .filter(admin_user_mapping::Column::NodeId.eq(node_id))
+                .all(&state.db)
+                .await
+                .unwrap_or_default();
+            
+            let mut user_mapping = HashMap::new();
+            for m in mappings {
+                user_mapping.insert(m.uuid, m.outbound_tag);
+            }
+            
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
                 "data": {
-                    "outbounds": outbounds,
-                    "user_mapping": mapping
+                    "outbounds": outbounds_data,
+                    "user_mapping": user_mapping
                 }
             }))
         }
         "routing" => {
-            let routing = state.config.get_routing().await;
-            HttpResponse::Ok().json(&serde_json::json!({
-                "msg": "ok",
-                "data": {
-                    "domainStrategy": routing.domain_strategy,
-                    "rules": routing.rules
-                }
-            }))
+            // 先检查 node_config 是否存在
+            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
+                .one(&state.db)
+                .await
+                .unwrap_or(None)
+                .is_some();
+            
+            if !node_config_exists {
+                return HttpResponse::Ok().json(&serde_json::json!({
+                    "msg": "ok",
+                    "data": {
+                        "domainStrategy": "AsIs",
+                        "rules": []
+                    }
+                }));
+            }
+            
+            // 查询路由配置
+            let routing = admin_routing::Entity::find_by_id(node_id)
+                .one(&state.db)
+                .await
+                .unwrap_or(None);
+            
+            if let Some(r) = routing {
+                let rules: Vec<RoutingRule> = serde_json::from_value(r.rules.clone()).unwrap_or_default();
+                HttpResponse::Ok().json(&serde_json::json!({
+                    "msg": "ok",
+                    "data": {
+                        "domainStrategy": r.domain_strategy,
+                        "rules": rules
+                    }
+                }))
+            } else {
+                // 路由配置不存在，返回默认值
+                HttpResponse::Ok().json(&serde_json::json!({
+                    "msg": "ok",
+                    "data": {
+                        "domainStrategy": "AsIs",
+                        "rules": []
+                    }
+                }))
+            }
         }
         "maintenance" => {
             let mode = state.config.get_maintenance_mode().await;
@@ -91,8 +271,7 @@ pub async fn query_handler(
             });
             
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let result = mqtt_client.query_node_logs(node_config.node_id, query_params, 15).await;
+                let result = mqtt_client.query_node_logs(node_id, query_params, 15).await;
                 
                 if let Some(result) = result {
                     HttpResponse::Ok().json(&result)
