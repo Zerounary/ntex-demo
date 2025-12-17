@@ -18,6 +18,12 @@ name = "v4-1"
 listen = "0.0.0.0:1883"
 next_connection_delay_ms = 1
 
+# TLS 配置（已注释，如需启用 TLS，请取消注释并配置客户端 TLS）
+[v4.v4-1.tls]
+certpath = "certs/server.cert.pem"
+keypath = "certs/server.key"
+capath = "certs/ca.cert.pem"
+
 [v4.v4-1.connections]
 connection_timeout_ms = 60000
 max_payload_size = 104857600

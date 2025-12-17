@@ -27,8 +27,13 @@ impl MqttBrokerManager {
             .parse::<u16>()
             .unwrap_or(1883);
         
+        // 从环境变量获取 TLS 证书路径（可选）
+        let tls_cert_path = env::var("MQTT_TLS_CERT").ok();
+        let tls_key_path = env::var("MQTT_TLS_KEY").ok();
+        let tls_ca_path = env::var("MQTT_TLS_CA").ok();
+        
         // 加载配置
-        let config = load_config_from_toml(port)?;
+        let config = load_config_from_toml(port, &tls_cert_path, &tls_key_path, &tls_ca_path)?;
         
         let separator = "=".repeat(70);
         println!("{}", separator);
@@ -37,13 +42,29 @@ impl MqttBrokerManager {
         println!("   监听地址: 0.0.0.0:{}", port);
         println!("");
         println!("📡 支持的协议:");
-        println!("   - MQTT 3.1.1 (端口 {})", port);
+        if tls_cert_path.is_some() && tls_key_path.is_some() {
+            println!("   - MQTT 3.1.1 over TLS (端口 {}) 🔒", port);
+        } else {
+            println!("   - MQTT 3.1.1 (端口 {})", port);
+        }
         println!("");
         println!("✨ 特性:");
         println!("   - 消息持久化");
         println!("   - QoS 0/1/2 支持");
         println!("   - Retained 消息");
         println!("   - Last Will 遗嘱消息");
+        if tls_cert_path.is_some() && tls_key_path.is_some() {
+            println!("   - TLS/SSL 加密 🔒");
+            if let Some(ref cert) = tls_cert_path {
+                println!("   - 证书: {}", cert);
+            }
+            if let Some(ref key) = tls_key_path {
+                println!("   - 密钥: {}", key);
+            }
+            if let Some(ref ca) = tls_ca_path {
+                println!("   - CA 证书: {}", ca);
+            }
+        }
         println!("{}", separator);
         
         // 在单独的线程中启动 broker
@@ -120,7 +141,12 @@ impl Drop for MqttBrokerManager {
 }
 
 /// 从 TOML 文件加载配置，如果文件不存在则创建默认配置
-fn load_config_from_toml(port: u16) -> Result<Config, Box<dyn std::error::Error>> {
+fn load_config_from_toml(
+    port: u16,
+    tls_cert_path: &Option<String>,
+    tls_key_path: &Option<String>,
+    tls_ca_path: &Option<String>,
+) -> Result<Config, Box<dyn std::error::Error>> {
     use std::fs;
     
     // 配置文件路径：优先使用项目根目录的 config.toml，如果不存在则使用 mqtt-borcker/config.toml
@@ -131,7 +157,37 @@ fn load_config_from_toml(port: u16) -> Result<Config, Box<dyn std::error::Error>
     
     // 尝试从现有配置文件加载
     for config_path in &config_paths {
-        if let Ok(content) = fs::read_to_string(config_path) {
+        if let Ok(mut content) = fs::read_to_string(config_path) {
+            // 检查配置文件中是否已有 TLS 配置
+            let has_tls_config = content.contains("[v4.v4-1.tls]") || 
+                                 content.contains("[v4.\"v4-1\".tls]");
+            
+            // 如果配置文件中没有 TLS 配置，但用户提供了 TLS 环境变量，则添加 TLS 配置
+            if !has_tls_config && tls_cert_path.is_some() && tls_key_path.is_some() {
+                // 在 [v4.v4-1.connections] 之前插入 TLS 配置
+                if let Some(connections_pos) = content.find("[v4.v4-1.connections]") {
+                    let mut tls_config = String::new();
+                    tls_config.push_str("\n[v4.v4-1.tls]\n");
+                    if let Some(cert_path) = tls_cert_path {
+                        tls_config.push_str(&format!("certpath = \"{}\"\n", cert_path));
+                    }
+                    if let Some(key_path) = tls_key_path {
+                        tls_config.push_str(&format!("keypath = \"{}\"\n", key_path));
+                    }
+                    if let Some(ca_path) = tls_ca_path {
+                        tls_config.push_str(&format!("capath = \"{}\"\n", ca_path));
+                    }
+                    content.insert_str(connections_pos, &tls_config);
+                    
+                    // 尝试更新配置文件
+                    if let Err(e) = fs::write(config_path, &content) {
+                        warn!("⚠️  无法更新配置文件以添加 TLS 配置: {}", e);
+                    } else {
+                        info!("✅ 已在配置文件中添加 TLS 配置");
+                    }
+                }
+            }
+            
             match toml::from_str::<Config>(&content) {
                 Ok(config) => {
                     info!("✅ 从 {} 加载 MQTT Broker 配置", config_path);
@@ -146,6 +202,18 @@ fn load_config_from_toml(port: u16) -> Result<Config, Box<dyn std::error::Error>
     
     // 如果配置文件不存在或解析失败，创建默认配置
     warn!("⚠️  未找到有效的 MQTT Broker 配置文件，使用默认配置");
+    
+    // 构建 TLS 配置部分（如果提供了证书路径）
+    let mut tls_section = String::new();
+    if let (Some(cert_path), Some(key_path)) = (tls_cert_path, tls_key_path) {
+        tls_section.push_str("\n[v4.v4-1.tls]\n");
+        tls_section.push_str(&format!("certpath = \"{}\"\n", cert_path));
+        tls_section.push_str(&format!("keypath = \"{}\"\n", key_path));
+        if let Some(ca_path) = tls_ca_path {
+            tls_section.push_str(&format!("capath = \"{}\"\n", ca_path));
+        }
+    }
+    
     let config_toml = format!(
         r#"id = 0
 
@@ -159,14 +227,13 @@ max_segment_count = 10
 name = "v4-1"
 listen = "0.0.0.0:{}"
 next_connection_delay_ms = 1
-
-[v4.v4-1.connections]
+{}[v4.v4-1.connections]
 connection_timeout_ms = 60000
 max_payload_size = 104857600
 max_inflight_count = 100
 dynamic_filters = true
 "#,
-        port
+        port, tls_section
     );
     
     // 尝试写入默认配置文件
