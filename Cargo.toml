@@ -28,4 +28,5 @@ rumqttd = "0.20.0"
 rumqttc = "0.25.1"
 toml = "0.8"
 bytes = "1.5"
+tokio-native-tls = "0.3"
 

@@ -28,9 +28,39 @@ impl MqttBrokerManager {
             .unwrap_or(1883);
         
         // 从环境变量获取 TLS 证书路径（可选）
-        let tls_cert_path = env::var("MQTT_TLS_CERT").ok();
-        let tls_key_path = env::var("MQTT_TLS_KEY").ok();
-        let tls_ca_path = env::var("MQTT_TLS_CA").ok();
+        let mut tls_cert_path = env::var("MQTT_TLS_CERT").ok();
+        let mut tls_key_path = env::var("MQTT_TLS_KEY").ok();
+        let mut tls_ca_path = env::var("MQTT_TLS_CA").ok();
+        
+        // 如果环境变量中没有，尝试从 config.toml 读取
+        if tls_cert_path.is_none() || tls_key_path.is_none() || tls_ca_path.is_none() {
+            use std::fs;
+            if let Ok(content) = fs::read_to_string("config.toml") {
+                if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                    if let Some(tls_config) = config
+                        .get("v4")
+                        .and_then(|v4| v4.get("v4-1"))
+                        .and_then(|v4_1| v4_1.get("tls"))
+                    {
+                        if tls_cert_path.is_none() {
+                            tls_cert_path = tls_config.get("certpath")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                        }
+                        if tls_key_path.is_none() {
+                            tls_key_path = tls_config.get("keypath")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                        }
+                        if tls_ca_path.is_none() {
+                            tls_ca_path = tls_config.get("capath")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                        }
+                    }
+                }
+            }
+        }
         
         // 加载配置
         let config = load_config_from_toml(port, &tls_cert_path, &tls_key_path, &tls_ca_path)?;

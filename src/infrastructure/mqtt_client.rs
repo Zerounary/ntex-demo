@@ -2,7 +2,7 @@
 //! 
 //! 用于连接 MQTT broker 并接收节点上报的数据
 
-use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, QoS};
+use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, QoS, Transport};
 use serde_json::Value;
 use std::env;
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::time;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
+use std::fs;
 use log::{info, error, warn, debug};
 
 /// 响应等待器
@@ -47,6 +48,102 @@ impl MqttClientManager {
         let max_packet_size = 100 * 1024 * 1024; // 100MB，与 broker 配置一致
         mqttoptions.set_max_packet_size(max_packet_size, max_packet_size);
         info!("✅ [MQTT] 已设置最大包大小: incoming={} bytes, outgoing={} bytes", max_packet_size, max_packet_size);
+        
+        // 配置 TLS（如果提供了证书路径）
+        let tls_ca_path = env::var("MQTT_TLS_CA")
+            .or_else(|_| {
+                // 尝试从 config.toml 读取 CA 证书路径
+                if let Ok(content) = fs::read_to_string("config.toml") {
+                    if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                        if let Some(capath) = config
+                            .get("v4")
+                            .and_then(|v4| v4.get("v4-1"))
+                            .and_then(|v4_1| v4_1.get("tls"))
+                            .and_then(|tls| tls.get("capath"))
+                            .and_then(|v| v.as_str())
+                        {
+                            return Ok(capath.to_string());
+                        }
+                    }
+                }
+                Err(env::VarError::NotPresent)
+            })
+            .ok();
+        
+        if let Some(ca_path) = &tls_ca_path {
+            info!("🔒 [MQTT] 配置 TLS 连接，CA 证书: {}", ca_path);
+            
+            // 可选：如果提供了客户端证书和密钥，配置客户端证书认证
+            let tls_cert_path = env::var("MQTT_TLS_CERT")
+                .or_else(|_| {
+                    if let Ok(content) = fs::read_to_string("config.toml") {
+                        if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                            if let Some(certpath) = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("v4-1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("certpath"))
+                                .and_then(|v| v.as_str())
+                            {
+                                return Ok(certpath.to_string());
+                            }
+                        }
+                    }
+                    Err(env::VarError::NotPresent)
+                })
+                .ok();
+            
+            let tls_key_path = env::var("MQTT_TLS_KEY")
+                .or_else(|_| {
+                    if let Ok(content) = fs::read_to_string("config.toml") {
+                        if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                            if let Some(keypath) = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("v4-1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("keypath"))
+                                .and_then(|v| v.as_str())
+                            {
+                                return Ok(keypath.to_string());
+                            }
+                        }
+                    }
+                    Err(env::VarError::NotPresent)
+                })
+                .ok();
+            
+            // 根据 rumqttc 0.25.1 的文档，TlsConfiguration 有两个变体：
+            // 1. Simple { ca, alpn, client_auth }
+            // 2. Rustls(Arc<ClientConfig>)
+            // 我们使用 Simple 变体，它接受 CA 证书的字节
+            let ca_cert_bytes = fs::read(ca_path)?;
+            
+            // 可选：如果提供了客户端证书和密钥，配置客户端证书认证
+            let client_auth = if let (Some(cert_path), Some(key_path)) = (&tls_cert_path, &tls_key_path) {
+                let cert_bytes = fs::read(cert_path)?;
+                let key_bytes = fs::read(key_path)?;
+                Some((cert_bytes, key_bytes))
+            } else {
+                None
+            };
+            
+            // 创建 TlsConfiguration::Simple
+            let has_client_auth = client_auth.is_some();
+            let tls_config = rumqttc::TlsConfiguration::Simple {
+                ca: ca_cert_bytes,
+                alpn: None,
+                client_auth,
+            };
+            
+            mqttoptions.set_transport(Transport::tls_with_config(tls_config));
+            if has_client_auth {
+                info!("🔒 [MQTT] TLS 已启用（包含客户端证书认证）");
+            } else {
+                info!("🔒 [MQTT] TLS 已启用（仅 CA 证书验证）");
+            }
+        } else {
+            info!("📡 [MQTT] 使用普通 TCP 连接（未启用 TLS）");
+        }
         
         // 创建客户端和事件循环
         // 第二个参数是 channel capacity，增加它有助于处理更多的并发消息
