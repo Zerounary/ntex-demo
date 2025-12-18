@@ -14,12 +14,7 @@ use std::fs;
 use log::{info, error, warn, debug};
 
 use crate::infrastructure::admin_config::AdminConfigStore;
-use crate::infrastructure::persistence::{
-    admin_node_config,
-    node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
-    node_outbound_event_log, node_outbound_latency_log,
-};
-use sea_orm::{DatabaseConnection, EntityTrait, ActiveModelTrait, Set, JsonValue};
+use sea_orm::DatabaseConnection;
 
 /// 响应等待器
 type ResponseWaiter = tokio::sync::oneshot::Sender<Value>;
@@ -380,7 +375,7 @@ impl MqttClientManager {
         client: Arc<AsyncClient>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
         admin_config: AdminConfigStore,
-        db: DatabaseConnection,
+        _db: DatabaseConnection,
         topic: String,
         payload: bytes::Bytes,
     ) {
@@ -551,45 +546,76 @@ impl MqttClientManager {
                 // 流量上报
                 if let Some(data_array) = data.get("data").and_then(|v| v.as_array()) {
                     info!("📈 [流量上报] node_id={}, 记录数={}", node_id, data_array.len());
-                    Self::handle_traffic_report(node_id_u64, data_array, &db).await;
+                    if let Err(e) = admin_config.handle_traffic_report(node_id_u64, data_array).await {
+                        error!("❌ [流量上报] 处理失败: {}", e);
+                    }
                 }
             }
             "nodestatus" => {
                 // 节点状态上报
                 if let Some(status_data) = data.get("data") {
-                    Self::handle_node_status_report(node_id_u64, status_data, &db).await;
+                    if let Err(e) = admin_config.handle_node_status_report(node_id_u64, status_data).await {
+                        error!("❌ [节点状态] 处理失败: {}", e);
+                    } else {
+                        let cpu = status_data.get("cpu").and_then(|v| v.as_str()).unwrap_or("N/A");
+                        let mem = status_data.get("mem").and_then(|v| v.as_str()).unwrap_or("N/A");
+                        let disk = status_data.get("disk").and_then(|v| v.as_str()).unwrap_or("N/A");
+                        let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
+                        info!("✅ [节点状态] 已更新: node_id={}, CPU={}, 内存={}, 磁盘={}, 运行时间={}秒", 
+                              node_id, cpu, mem, disk, uptime);
+                    }
                 }
             }
             "onlineusers" => {
                 // 在线用户上报
                 if let Some(users_array) = data.get("data").and_then(|v| v.as_array()) {
                     info!("👥 [在线用户上报] node_id={}, 在线用户数={}", node_id, users_array.len());
-                    Self::handle_online_users_report(node_id_u64, users_array, &db).await;
+                    if let Err(e) = admin_config.handle_online_users_report(node_id_u64, users_array).await {
+                        error!("❌ [在线用户] 处理失败: {}", e);
+                    }
                 }
             }
             "illegal" => {
                 // 非法行为上报
                 if let Some(illegal_array) = data.get("data").and_then(|v| v.as_array()) {
                     info!("⚠️  [非法行为上报] node_id={}, 记录数={}", node_id, illegal_array.len());
-                    Self::handle_illegal_report(node_id_u64, illegal_array, &db).await;
+                    if let Err(e) = admin_config.handle_illegal_report(node_id_u64, illegal_array).await {
+                        error!("❌ [非法行为] 处理失败: {}", e);
+                    }
                 }
             }
             "outbound_failure" => {
                 // Outbound 连接失败上报
                 if let Some(failure_data) = data.get("data") {
-                    Self::handle_outbound_event(node_id_u64, "failure", failure_data, &db).await;
+                    if let Err(e) = admin_config.handle_outbound_event(node_id_u64, "failure", failure_data).await {
+                        error!("❌ [Outbound失败] 处理失败: {}", e);
+                    } else {
+                        let outbound_tag = failure_data.get("outbound_tag")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("N/A");
+                        error!("🔴 [Outbound 连接失败] node_id={}, outbound_tag={}", node_id, outbound_tag);
+                    }
                 }
             }
             "outbound_recovery" => {
                 // Outbound 连接恢复上报
                 if let Some(recovery_data) = data.get("data") {
-                    Self::handle_outbound_event(node_id_u64, "recovery", recovery_data, &db).await;
+                    if let Err(e) = admin_config.handle_outbound_event(node_id_u64, "recovery", recovery_data).await {
+                        error!("❌ [Outbound恢复] 处理失败: {}", e);
+                    } else {
+                        let outbound_tag = recovery_data.get("outbound_tag")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("N/A");
+                        info!("🟢 [Outbound 连接恢复] node_id={}, outbound_tag={}", node_id, outbound_tag);
+                    }
                 }
             }
             "outbound_latency" => {
                 // 单个 Outbound 延迟上报
                 if let Some(latency_data) = data.get("data") {
-                    Self::handle_outbound_latency(node_id_u64, latency_data, "tcp", &db).await;
+                    if let Err(e) = admin_config.handle_outbound_latency(node_id_u64, latency_data, "tcp").await {
+                        error!("❌ [Outbound延迟] 处理失败: {}", e);
+                    }
                 }
             }
             "outbound_latencies" => {
@@ -599,7 +625,9 @@ impl MqttClientManager {
                         info!("📊 [批量 Outbound 延迟] node_id={}, 数量={}", 
                               node_id, latencies_array.len());
                         for latency_item in latencies_array {
-                            Self::handle_outbound_latency(node_id_u64, latency_item, "tcp", &db).await;
+                            if let Err(e) = admin_config.handle_outbound_latency(node_id_u64, latency_item, "tcp").await {
+                                error!("❌ [Outbound延迟] 处理失败: {}", e);
+                            }
                         }
                     }
                 }
@@ -607,7 +635,9 @@ impl MqttClientManager {
             "outbound_udp_latency" => {
                 // UDP Outbound 延迟上报
                 if let Some(latency_data) = data.get("data") {
-                    Self::handle_outbound_latency(node_id_u64, latency_data, "udp", &db).await;
+                    if let Err(e) = admin_config.handle_outbound_latency(node_id_u64, latency_data, "udp").await {
+                        error!("❌ [Outbound延迟] 处理失败: {}", e);
+                    }
                 }
             }
             "outbound_udp_latencies" => {
@@ -617,7 +647,9 @@ impl MqttClientManager {
                         info!("📊 [批量 UDP Outbound 延迟] node_id={}, 数量={}", 
                               node_id, latencies_array.len());
                         for latency_item in latencies_array {
-                            Self::handle_outbound_latency(node_id_u64, latency_item, "udp", &db).await;
+                            if let Err(e) = admin_config.handle_outbound_latency(node_id_u64, latency_item, "udp").await {
+                                error!("❌ [Outbound延迟] 处理失败: {}", e);
+                            }
                         }
                     }
                 }
@@ -985,217 +1017,5 @@ impl MqttClientManager {
         self.shutdown_flag.notify_one();
         let _ = self.client.disconnect().await;
         info!("✅ MQTT 客户端已关闭");
-    }
-    
-    // ========== 上报数据处理函数 ==========
-    
-    /// 处理流量上报
-    async fn handle_traffic_report(node_id: u64, data_array: &Vec<Value>, db: &DatabaseConnection) {
-        for item in data_array {
-            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
-            let upload = item.get("upload").and_then(|v| v.as_u64()).unwrap_or(0);
-            let download = item.get("download").and_then(|v| v.as_u64()).unwrap_or(0);
-            
-            if user_id == 0 {
-                continue;
-            }
-            
-            let log = node_traffic_log::ActiveModel {
-                node_id: Set(node_id),
-                user_id: Set(user_id),
-                upload: Set(upload),
-                download: Set(download),
-                ..Default::default()
-            };
-            
-            if let Err(e) = node_traffic_log::Entity::insert(log).exec(db).await {
-                error!("❌ [流量上报] 存储失败: node_id={}, user_id={}, error={}", node_id, user_id, e);
-            } else {
-                debug!("✅ [流量上报] 已存储: node_id={}, user_id={}, upload={}, download={}", 
-                      node_id, user_id, upload, download);
-            }
-        }
-    }
-    
-    /// 处理节点状态上报
-    async fn handle_node_status_report(node_id: u64, status_data: &Value, db: &DatabaseConnection) {
-        let cpu = status_data.get("cpu").and_then(|v| v.as_str()).unwrap_or("0%");
-        let mem = status_data.get("mem").and_then(|v| v.as_str()).unwrap_or("0%");
-        let disk = status_data.get("disk").and_then(|v| v.as_str()).unwrap_or("0%");
-        let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
-        
-        // 更新节点配置表的实时状态
-        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
-            .one(db)
-            .await
-        {
-            let mut active_model: admin_node_config::ActiveModel = node_config.into();
-            active_model.cpu_usage = Set(Some(cpu.to_string()));
-            active_model.mem_usage = Set(Some(mem.to_string()));
-            active_model.disk_usage = Set(Some(disk.to_string()));
-            active_model.uptime = Set(Some(uptime));
-            
-            if let Err(e) = active_model.update(db).await {
-                error!("❌ [节点状态] 更新实时状态失败: node_id={}, error={}", node_id, e);
-            } else {
-                info!("✅ [节点状态] 已更新实时状态: node_id={}, CPU={}, 内存={}, 磁盘={}, 运行时间={}秒", 
-                      node_id, cpu, mem, disk, uptime);
-            }
-        }
-        
-        // 插入历史记录
-        let log = node_status_log::ActiveModel {
-            node_id: Set(node_id),
-            cpu: Set(cpu.to_string()),
-            mem: Set(mem.to_string()),
-            disk: Set(disk.to_string()),
-            uptime: Set(uptime),
-            ..Default::default()
-        };
-        
-        if let Err(e) = node_status_log::Entity::insert(log).exec(db).await {
-            error!("❌ [节点状态] 存储历史记录失败: node_id={}, error={}", node_id, e);
-        }
-    }
-    
-    /// 处理在线用户上报
-    async fn handle_online_users_report(node_id: u64, users_array: &Vec<Value>, db: &DatabaseConnection) {
-        let mut online_count = 0;
-        
-        for item in users_array {
-            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
-            let user_ip = item.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            
-            if user_id == 0 {
-                continue;
-            }
-            
-            online_count += 1;
-            
-            let log = node_online_user_log::ActiveModel {
-                node_id: Set(node_id),
-                user_id: Set(user_id),
-                user_ip: Set(user_ip),
-                ..Default::default()
-            };
-            
-            if let Err(e) = node_online_user_log::Entity::insert(log).exec(db).await {
-                error!("❌ [在线用户] 存储失败: node_id={}, user_id={}, error={}", node_id, user_id, e);
-            }
-        }
-        
-        // 更新节点配置表的在线用户数
-        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
-            .one(db)
-            .await
-        {
-            let mut active_model: admin_node_config::ActiveModel = node_config.into();
-            active_model.online_user_count = Set(Some(online_count));
-            
-            if let Err(e) = active_model.update(db).await {
-                error!("❌ [在线用户] 更新实时状态失败: node_id={}, error={}", node_id, e);
-            } else {
-                debug!("✅ [在线用户] 已更新实时状态: node_id={}, count={}", node_id, online_count);
-            }
-        }
-    }
-    
-    /// 处理非法行为上报
-    async fn handle_illegal_report(node_id: u64, illegal_array: &Vec<Value>, db: &DatabaseConnection) {
-        for item in illegal_array {
-            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
-            
-            if user_id == 0 {
-                continue;
-            }
-            
-            let log = node_illegal_log::ActiveModel {
-                node_id: Set(node_id),
-                user_id: Set(user_id),
-                ..Default::default()
-            };
-            
-            if let Err(e) = node_illegal_log::Entity::insert(log).exec(db).await {
-                error!("❌ [非法行为] 存储失败: node_id={}, user_id={}, error={}", node_id, user_id, e);
-            } else {
-                warn!("⚠️  [非法行为] 已记录: node_id={}, user_id={}", node_id, user_id);
-            }
-        }
-    }
-    
-    /// 处理 Outbound 事件（失败/恢复）
-    async fn handle_outbound_event(node_id: u64, event_type: &str, event_data: &Value, db: &DatabaseConnection) {
-        let outbound_tag = event_data.get("outbound_tag")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        if outbound_tag.is_empty() {
-            return;
-        }
-        
-        let error_message = event_data.get("error")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        
-        let config = event_data.get("config")
-            .map(|v| JsonValue::from(v.clone()));
-        
-        let log = node_outbound_event_log::ActiveModel {
-            node_id: Set(node_id),
-            outbound_tag: Set(outbound_tag.clone()),
-            event_type: Set(event_type.to_string()),
-            error_message: Set(error_message),
-            config: Set(config),
-            ..Default::default()
-        };
-        
-        if let Err(e) = node_outbound_event_log::Entity::insert(log).exec(db).await {
-            error!("❌ [Outbound事件] 存储失败: node_id={}, tag={}, type={}, error={}", 
-                   node_id, outbound_tag, event_type, e);
-        } else {
-            if event_type == "failure" {
-                error!("🔴 [Outbound 连接失败] node_id={}, outbound_tag={}", node_id, outbound_tag);
-            } else {
-                info!("🟢 [Outbound 连接恢复] node_id={}, outbound_tag={}", node_id, outbound_tag);
-            }
-        }
-    }
-    
-    /// 处理 Outbound 延迟上报
-    async fn handle_outbound_latency(node_id: u64, latency_data: &Value, probe_type: &str, db: &DatabaseConnection) {
-        let outbound_tag = latency_data.get("outbound_tag")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        
-        if outbound_tag.is_empty() {
-            return;
-        }
-        
-        let latency_ms = latency_data.get("latency_ms")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        
-        let error_message = latency_data.get("error")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        
-        let log = node_outbound_latency_log::ActiveModel {
-            node_id: Set(node_id),
-            outbound_tag: Set(outbound_tag.clone()),
-            latency_ms: Set(latency_ms),
-            probe_type: Set(probe_type.to_string()),
-            error_message: Set(error_message),
-            ..Default::default()
-        };
-        
-        if let Err(e) = node_outbound_latency_log::Entity::insert(log).exec(db).await {
-            error!("❌ [Outbound延迟] 存储失败: node_id={}, tag={}, error={}", 
-                   node_id, outbound_tag, e);
-        } else {
-            debug!("⏱️  [Outbound延迟] 已存储: node_id={}, tag={}, latency={:.2}ms, type={}", 
-                  node_id, outbound_tag, latency_ms, probe_type);
-        }
     }
 }

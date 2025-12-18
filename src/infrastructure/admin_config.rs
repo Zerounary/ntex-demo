@@ -5,9 +5,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect};
 use crate::infrastructure::persistence::{
     admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config,
+    node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
+    node_outbound_event_log, node_outbound_latency_log,
 };
 
 /// 用户配置
@@ -503,6 +505,280 @@ impl AdminConfigStore {
             .map_err(|e| format!("更新维护模式失败: {}", e))?;
         
         Ok(old)
+    }
+
+    // ========== 节点上报数据处理 ==========
+    
+    /// 处理流量上报
+    pub async fn handle_traffic_report(&self, node_id: u64, data_array: &Vec<Value>) -> Result<(), String> {
+        for item in data_array {
+            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let upload = item.get("upload").and_then(|v| v.as_u64()).unwrap_or(0);
+            let download = item.get("download").and_then(|v| v.as_u64()).unwrap_or(0);
+            
+            if user_id == 0 {
+                continue;
+            }
+            
+            // 检查上一条记录是否有变化
+            let should_insert = if let Ok(Some(last_log)) = node_traffic_log::Entity::find()
+                .filter(node_traffic_log::Column::NodeId.eq(node_id))
+                .filter(node_traffic_log::Column::UserId.eq(user_id))
+                .order_by_desc(node_traffic_log::Column::CreatedAt)
+                .limit(1)
+                .one(&self.db)
+                .await
+            {
+                // 如果上一条记录的 upload 和 download 相同，则不插入
+                last_log.upload != upload || last_log.download != download
+            } else {
+                // 没有上一条记录，需要插入
+                true
+            };
+            
+            if !should_insert {
+                continue;
+            }
+            
+            let log = node_traffic_log::ActiveModel {
+                node_id: Set(node_id),
+                user_id: Set(user_id),
+                upload: Set(upload),
+                download: Set(download),
+                ..Default::default()
+            };
+            
+            node_traffic_log::Entity::insert(log).exec(&self.db).await
+                .map_err(|e| format!("存储流量上报失败: {}", e))?;
+        }
+        Ok(())
+    }
+    
+    /// 处理节点状态上报
+    pub async fn handle_node_status_report(&self, node_id: u64, status_data: &Value) -> Result<(), String> {
+        let cpu = status_data.get("cpu").and_then(|v| v.as_str()).unwrap_or("0%");
+        let mem = status_data.get("mem").and_then(|v| v.as_str()).unwrap_or("0%");
+        let disk = status_data.get("disk").and_then(|v| v.as_str()).unwrap_or("0%");
+        let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
+        
+        // 更新节点配置表的实时状态
+        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+        {
+            let mut active_model: admin_node_config::ActiveModel = node_config.into();
+            active_model.cpu_usage = Set(Some(cpu.to_string()));
+            active_model.mem_usage = Set(Some(mem.to_string()));
+            active_model.disk_usage = Set(Some(disk.to_string()));
+            active_model.uptime = Set(Some(uptime));
+            
+            active_model.update(&self.db).await
+                .map_err(|e| format!("更新节点实时状态失败: {}", e))?;
+        }
+        
+        // 检查上一条记录是否有变化
+        let should_insert = if let Ok(Some(last_log)) = node_status_log::Entity::find()
+            .filter(node_status_log::Column::NodeId.eq(node_id))
+            .order_by_desc(node_status_log::Column::CreatedAt)
+            .limit(1)
+            .one(&self.db)
+            .await
+        {
+            // 如果所有字段都相同，则不插入
+            last_log.cpu != cpu || last_log.mem != mem || last_log.disk != disk || last_log.uptime != uptime
+        } else {
+            // 没有上一条记录，需要插入
+            true
+        };
+        
+        if !should_insert {
+            return Ok(());
+        }
+        
+        // 插入历史记录
+        let log = node_status_log::ActiveModel {
+            node_id: Set(node_id),
+            cpu: Set(cpu.to_string()),
+            mem: Set(mem.to_string()),
+            disk: Set(disk.to_string()),
+            uptime: Set(uptime),
+            ..Default::default()
+        };
+        
+        node_status_log::Entity::insert(log).exec(&self.db).await
+            .map_err(|e| format!("存储节点状态历史记录失败: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// 处理在线用户上报
+    pub async fn handle_online_users_report(&self, node_id: u64, users_array: &Vec<Value>) -> Result<(), String> {
+        let mut online_count = 0;
+        
+        for item in users_array {
+            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
+            let user_ip = item.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            
+            if user_id == 0 {
+                continue;
+            }
+            
+            online_count += 1;
+            
+            // 检查上一条记录是否有变化（比较 user_id 和 user_ip）
+            let should_insert = if let Ok(Some(last_log)) = node_online_user_log::Entity::find()
+                .filter(node_online_user_log::Column::NodeId.eq(node_id))
+                .filter(node_online_user_log::Column::UserId.eq(user_id))
+                .order_by_desc(node_online_user_log::Column::CreatedAt)
+                .limit(1)
+                .one(&self.db)
+                .await
+            {
+                // 如果 user_ip 不同，则需要插入
+                last_log.user_ip != user_ip
+            } else {
+                // 没有上一条记录，需要插入
+                true
+            };
+            
+            if !should_insert {
+                continue;
+            }
+            
+            let log = node_online_user_log::ActiveModel {
+                node_id: Set(node_id),
+                user_id: Set(user_id),
+                user_ip: Set(user_ip),
+                ..Default::default()
+            };
+            
+            node_online_user_log::Entity::insert(log).exec(&self.db).await
+                .map_err(|e| format!("存储在线用户记录失败: {}", e))?;
+        }
+        
+        // 更新节点配置表的在线用户数
+        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+        {
+            let mut active_model: admin_node_config::ActiveModel = node_config.into();
+            active_model.online_user_count = Set(Some(online_count));
+            
+            active_model.update(&self.db).await
+                .map_err(|e| format!("更新在线用户数失败: {}", e))?;
+        }
+        
+        Ok(())
+    }
+    
+    /// 处理非法行为上报
+    pub async fn handle_illegal_report(&self, node_id: u64, illegal_array: &Vec<Value>) -> Result<(), String> {
+        for item in illegal_array {
+            let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
+            
+            if user_id == 0 {
+                continue;
+            }
+            
+            let log = node_illegal_log::ActiveModel {
+                node_id: Set(node_id),
+                user_id: Set(user_id),
+                ..Default::default()
+            };
+            
+            node_illegal_log::Entity::insert(log).exec(&self.db).await
+                .map_err(|e| format!("存储非法行为记录失败: {}", e))?;
+        }
+        Ok(())
+    }
+    
+    /// 处理 Outbound 事件（失败/恢复）
+    pub async fn handle_outbound_event(&self, node_id: u64, event_type: &str, event_data: &Value) -> Result<(), String> {
+        let outbound_tag = event_data.get("outbound_tag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        if outbound_tag.is_empty() {
+            return Ok(());
+        }
+        
+        let error_message = event_data.get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        
+        let config = event_data.get("config")
+            .map(|v| JsonValue::from(v.clone()));
+        
+        let log = node_outbound_event_log::ActiveModel {
+            node_id: Set(node_id),
+            outbound_tag: Set(outbound_tag),
+            event_type: Set(event_type.to_string()),
+            error_message: Set(error_message),
+            config: Set(config),
+            ..Default::default()
+        };
+        
+        node_outbound_event_log::Entity::insert(log).exec(&self.db).await
+            .map_err(|e| format!("存储 Outbound 事件失败: {}", e))?;
+        
+        Ok(())
+    }
+    
+    /// 处理 Outbound 延迟上报
+    pub async fn handle_outbound_latency(&self, node_id: u64, latency_data: &Value, probe_type: &str) -> Result<(), String> {
+        let outbound_tag = latency_data.get("outbound_tag")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        
+        if outbound_tag.is_empty() {
+            return Ok(());
+        }
+        
+        let latency_ms = latency_data.get("latency_ms")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        
+        let error_message = latency_data.get("error")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        
+        // 检查上一条记录是否有变化（比较 outbound_tag, probe_type, latency_ms, error_message）
+        let should_insert = if let Ok(Some(last_log)) = node_outbound_latency_log::Entity::find()
+            .filter(node_outbound_latency_log::Column::NodeId.eq(node_id))
+            .filter(node_outbound_latency_log::Column::OutboundTag.eq(&outbound_tag))
+            .filter(node_outbound_latency_log::Column::ProbeType.eq(probe_type))
+            .order_by_desc(node_outbound_latency_log::Column::CreatedAt)
+            .limit(1)
+            .one(&self.db)
+            .await
+        {
+            // 如果 latency_ms 或 error_message 不同，则需要插入
+            // 使用浮点数比较，允许小的误差（0.1ms）
+            (last_log.latency_ms - latency_ms).abs() > 0.1 || last_log.error_message != error_message
+        } else {
+            // 没有上一条记录，需要插入
+            true
+        };
+        
+        if !should_insert {
+            return Ok(());
+        }
+        
+        let log = node_outbound_latency_log::ActiveModel {
+            node_id: Set(node_id),
+            outbound_tag: Set(outbound_tag),
+            latency_ms: Set(latency_ms),
+            probe_type: Set(probe_type.to_string()),
+            error_message: Set(error_message),
+            ..Default::default()
+        };
+        
+        node_outbound_latency_log::Entity::insert(log).exec(&self.db).await
+            .map_err(|e| format!("存储 Outbound 延迟记录失败: {}", e))?;
+        
+        Ok(())
     }
 }
 
