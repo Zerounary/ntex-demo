@@ -7,18 +7,30 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule, NodeConfig, User};
+use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule, User};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 use crate::infrastructure::persistence::{
     admin_node_config, admin_user, admin_outbound, admin_routing, admin_user_mapping,
 };
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait};
 
 #[derive(Clone)]
 pub struct AdminState {
     pub config: AdminConfigStore,
     pub db: DatabaseConnection,
     pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
+}
+
+// ========== 辅助函数 ==========
+
+/// 从查询参数获取 node_id，如果没有提供则返回错误
+fn get_node_id_from_query(params: &HashMap<String, String>) -> Result<u64, HttpResponse> {
+    params.get("node_id")
+        .and_then(|s| s.parse::<u64>().ok())
+        .ok_or_else(|| HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "node_id 参数是必需的"
+        })))
 }
 
 // ========== 查询接口 ==========
@@ -30,21 +42,10 @@ pub async fn query_handler(
 ) -> HttpResponse {
     let act = params.get("act").map(|s| s.as_str()).unwrap_or("");
     
-    // 获取 node_id，优先从查询参数获取，否则从配置获取
-    let node_id = if let Some(node_id_str) = params.get("node_id") {
-        node_id_str.parse::<u64>().unwrap_or_else(|_| {
-            // 从配置获取默认 node_id（同步方式，因为我们在异步上下文中）
-            let node_config = state.config.get_node_config();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    node_config.await.node_id
-                })
-            })
-        })
-    } else {
-        // 从配置获取默认 node_id
-        let node_config = state.config.get_node_config().await;
-        node_config.node_id
+    // 获取 node_id，优先从查询参数获取，否则返回错误
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
     };
     
     match act {
@@ -83,63 +84,18 @@ pub async fn query_handler(
             }))
         }
         "config" => {
-            // 查询或创建 node_config
-            let node_config_result = admin_node_config::Entity::find_by_id(node_id)
-                .one(&state.db)
-                .await;
-            
-            match node_config_result {
-                Ok(Some(config_model)) => {
-                    // 配置已存在，直接返回
-                    let node_config = NodeConfig {
-                        node_id: config_model.node_id,
-                        node_type: config_model.node_type,
-                        node_speed_limit: config_model.node_speed_limit,
-                        traffic_rate: config_model.traffic_rate,
-                        sort: config_model.sort,
-                        inbounds: serde_json::from_value(config_model.inbounds.clone()).unwrap_or_default(),
-                    };
+            // 查询 node_config
+            match state.config.get_node_config(node_id).await {
+                Ok(node_config) => {
                     HttpResponse::Ok().json(&serde_json::json!({
                         "msg": "ok",
                         "data": node_config
                     }))
                 }
-                Ok(None) => {
-                    // 配置不存在，从内存配置获取并创建
-                    let mem_config = state.config.get_node_config().await;
-                    let inbounds_json = serde_json::to_value(mem_config.inbounds.clone()).unwrap_or(serde_json::json!([]));
-                    
-                    let node_type = mem_config.node_type.clone();
-                    let node_speed_limit = mem_config.node_speed_limit;
-                    let traffic_rate = mem_config.traffic_rate;
-                    let sort = mem_config.sort;
-                    
-                    let new_config = admin_node_config::ActiveModel {
-                        node_id: Set(node_id),
-                        node_type: Set(node_type),
-                        node_speed_limit: Set(node_speed_limit),
-                        traffic_rate: Set(traffic_rate),
-                        sort: Set(sort),
-                        inbounds: Set(inbounds_json),
-                        ..Default::default()
-                    };
-                    
-                    if let Err(e) = new_config.insert(&state.db).await {
-                        return HttpResponse::InternalServerError().json(&serde_json::json!({
-                            "msg": "error",
-                            "error": format!("创建节点配置失败: {}", e)
-                        }));
-                    }
-                    
-                    HttpResponse::Ok().json(&serde_json::json!({
-                        "msg": "ok",
-                        "data": mem_config
-                    }))
-                }
                 Err(e) => {
                     HttpResponse::InternalServerError().json(&serde_json::json!({
                         "msg": "error",
-                        "error": format!("查询节点配置失败: {}", e)
+                        "error": e
                     }))
                 }
             }
@@ -241,14 +197,23 @@ pub async fn query_handler(
             }
         }
         "maintenance" => {
-            let mode = state.config.get_maintenance_mode().await;
-            HttpResponse::Ok().json(&serde_json::json!({
-                "msg": "ok",
-                "data": {
-                    "maintenance_mode": mode,
-                    "description": "维护模式：开启时跳过新用户添加，仅允许已存在用户"
+            match state.config.get_maintenance_mode(node_id).await {
+                Ok(mode) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "maintenance_mode": mode,
+                            "description": "维护模式：开启时跳过新用户添加，仅允许已存在用户"
+                        }
+                    }))
                 }
-            }))
+                Err(e) => {
+                    HttpResponse::InternalServerError().json(&serde_json::json!({
+                        "msg": "error",
+                        "error": e
+                    }))
+                }
+            }
         }
         "user_logs" => {
             let uid = params.get("uid").and_then(|s| s.parse::<u64>().ok());
@@ -314,13 +279,36 @@ fn default_dt() -> u64 { 0 }
 #[web::post("/api/admin/user")]
 pub async fn add_user(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<AddUserRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    
     // 检查维护模式
-    let maintenance_mode = state.config.get_maintenance_mode().await;
+    let maintenance_mode = match state.config.get_maintenance_mode(node_id).await {
+        Ok(mode) => mode,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }));
+        }
+    };
+    
     if maintenance_mode {
         // 检查用户是否已存在
-        let users = state.config.get_users().await;
+        let users = match state.config.get_users(node_id).await {
+            Ok(users) => users,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": e
+                }));
+            }
+        };
         if !users.iter().any(|u| u.uuid == body.uuid) {
             return HttpResponse::build(StatusCode::SERVICE_UNAVAILABLE).json(&serde_json::json!({
                 "msg": "error",
@@ -330,12 +318,11 @@ pub async fn add_user(
         }
     }
     
-    match state.config.add_user(body.uuid.clone(), body.st, body.dt).await {
-            Ok(user) => {
+    match state.config.add_user(node_id, body.uuid.clone(), body.st, body.dt).await {
+        Ok(user) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "user").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -345,9 +332,18 @@ pub async fn add_user(
             }))
         }
         Err(_e) => {
+            // 用户已存在，尝试查找并返回
+            if let Ok(users) = state.config.get_users(node_id).await {
+                if let Some(user) = users.iter().find(|u| u.uuid == body.uuid).cloned() {
+                    return HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": user,
+                        "message": "用户已存在，未添加"
+                    }));
+                }
+            }
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
-                "data": state.config.get_users().await.iter().find(|u| u.uuid == body.uuid).cloned(),
                 "message": "用户已存在，未添加"
             }))
         }
@@ -364,17 +360,21 @@ pub struct UpdateUserRequest {
 #[web::put("/api/admin/user/{id}")]
 pub async fn update_user(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<u64>,
     Json(body): Json<UpdateUserRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let id = path.into_inner();
     
-    match state.config.update_user(id, body.uuid, body.st, body.dt).await {
+    match state.config.update_user(node_id, id, body.uuid, body.st, body.dt).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "user").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -393,17 +393,21 @@ pub async fn update_user(
 #[web::delete("/api/admin/user/{id}")]
 pub async fn delete_user(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<u64>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let id = path.into_inner();
     
-    match state.config.delete_user(id).await {
+    match state.config.delete_user(node_id, id).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "user").await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -435,8 +439,14 @@ fn default_protocol() -> String { "shadowsocks".to_string() }
 #[web::post("/api/admin/outbound")]
 pub async fn add_outbound(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<AddOutboundRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    
     let outbound = OutboundConfig {
         tag: body.tag.clone(),
         protocol: body.protocol,
@@ -444,12 +454,11 @@ pub async fn add_outbound(
         stream_settings: None,
     };
     
-    match state.config.add_outbound(outbound.clone()).await {
+    match state.config.add_outbound(node_id, outbound.clone()).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -475,17 +484,21 @@ pub struct UpdateOutboundRequest {
 #[web::put("/api/admin/outbound/{tag}")]
 pub async fn update_outbound(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<String>,
     Json(body): Json<UpdateOutboundRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let tag = path.into_inner();
     
-    match state.config.update_outbound(&tag, body.protocol, body.settings).await {
+    match state.config.update_outbound(node_id, &tag, body.protocol, body.settings).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -504,16 +517,20 @@ pub async fn update_outbound(
 #[web::delete("/api/admin/outbound/{tag}")]
 pub async fn delete_outbound(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<String>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let tag = path.into_inner();
     
-    match state.config.delete_outbound(&tag).await {
+    match state.config.delete_outbound(node_id, &tag).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -542,21 +559,9 @@ pub async fn query_udp_latency(
         }));
     }
     
-    let node_id = if let Some(node_id_str) = params.get("node_id") {
-        node_id_str.parse::<u64>().ok().unwrap_or_else(|| {
-            // 从配置获取默认 node_id（同步方式）
-            let node_config = state.config.get_node_config();
-            // 使用 tokio::task::block_in_place 在异步上下文中执行同步操作
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    node_config.await.node_id
-                })
-            })
-        })
-    } else {
-        // 从配置获取默认 node_id
-        let node_config = state.config.get_node_config().await;
-        node_config.node_id
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
     };
     
     if let Some(ref mqtt_client) = state.mqtt_client {
@@ -597,10 +602,16 @@ pub struct UpdateRoutingRequest {
 #[web::post("/api/admin/routing")]
 pub async fn update_routing(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<UpdateRoutingRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    
     // 如果提供了完整的 routing 配置，直接替换
-    if let Some(routing) = body.routing {
+    let result = if let Some(routing) = body.routing {
         if let Ok(routing_config) = serde_json::from_value::<serde_json::Map<String, Value>>(routing) {
             let domain_strategy = routing_config.get("domainStrategy")
                 .and_then(|v| v.as_str())
@@ -617,65 +628,108 @@ pub async fn update_routing(
                 })
                 .unwrap_or_default();
             
-            state.config.update_routing(Some(domain_strategy), Some(rules)).await;
+            state.config.update_routing(node_id, Some(domain_strategy), Some(rules)).await
+        } else {
+            Ok(())
         }
     } else {
-        state.config.update_routing(body.domain_strategy, body.rules).await;
+        state.config.update_routing(node_id, body.domain_strategy, body.rules).await
+    };
+    
+    if let Err(e) = result {
+        return HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        }));
     }
     
     // 推送更新通知
     if let Some(ref mqtt_client) = state.mqtt_client {
-        let node_config = state.config.get_node_config().await;
-        let _ = mqtt_client.publish_update_notification(node_config.node_id, "routing").await;
+        let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
     }
     
-    let routing = state.config.get_routing().await;
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": {
-            "domainStrategy": routing.domain_strategy,
-            "rules": routing.rules
+    match state.config.get_routing(node_id).await {
+        Ok(routing) => {
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": {
+                    "domainStrategy": routing.domain_strategy,
+                    "rules": routing.rules
+                }
+            }))
         }
-    }))
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    }
 }
 
 #[web::post("/api/admin/routing/rule")]
 pub async fn add_routing_rule(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<RoutingRule>,
 ) -> HttpResponse {
-    state.config.add_routing_rule(body).await;
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     
-    // 推送更新通知
-    if let Some(ref mqtt_client) = state.mqtt_client {
-        let node_config = state.config.get_node_config().await;
-        let _ = mqtt_client.publish_update_notification(node_config.node_id, "routing").await;
-    }
-    
-    let routing = state.config.get_routing().await;
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": {
-            "domainStrategy": routing.domain_strategy,
-            "rules": routing.rules
+    match state.config.add_routing_rule(node_id, body.clone()).await {
+        Ok(_) => {
+            // 推送更新通知
+            if let Some(ref mqtt_client) = state.mqtt_client {
+                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
+            }
+            
+            match state.config.get_routing(node_id).await {
+                Ok(routing) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "domainStrategy": routing.domain_strategy,
+                            "rules": routing.rules
+                        }
+                    }))
+                }
+                Err(e) => {
+                    HttpResponse::InternalServerError().json(&serde_json::json!({
+                        "msg": "error",
+                        "error": e
+                    }))
+                }
+            }
         }
-    }))
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    }
 }
 
 #[web::put("/api/admin/routing/rule/{index}")]
 pub async fn update_routing_rule(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<usize>,
     Json(body): Json<RoutingRule>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let index = path.into_inner();
     
-    match state.config.update_routing_rule(index, body.clone()).await {
+    match state.config.update_routing_rule(node_id, index, body.clone()).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "routing").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -695,16 +749,20 @@ pub async fn update_routing_rule(
 #[web::delete("/api/admin/routing/rule/{index}")]
 pub async fn delete_routing_rule(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<usize>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let index = path.into_inner();
     
-    match state.config.delete_routing_rule(index).await {
+    match state.config.delete_routing_rule(node_id, index).await {
         Ok(deleted_rule) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "routing").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -734,23 +792,36 @@ pub struct AddMappingRequest {
 #[web::post("/api/admin/mapping")]
 pub async fn add_mapping(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<AddMappingRequest>,
 ) -> HttpResponse {
-    state.config.add_mapping(body.uuid.clone(), body.outbound_tag.clone()).await;
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     
-    // 推送更新通知
-    if let Some(ref mqtt_client) = state.mqtt_client {
-        let node_config = state.config.get_node_config().await;
-        let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+    match state.config.add_mapping(node_id, body.uuid.clone(), body.outbound_tag.clone()).await {
+        Ok(_) => {
+            // 推送更新通知
+            if let Some(ref mqtt_client) = state.mqtt_client {
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            }
+            
+            let mut data = serde_json::Map::new();
+            data.insert(body.uuid.clone(), serde_json::Value::String(body.outbound_tag.clone()));
+            
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": data
+            }))
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
     }
-    
-    let mut data = serde_json::Map::new();
-    data.insert(body.uuid.clone(), serde_json::Value::String(body.outbound_tag.clone()));
-    
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": data
-    }))
 }
 
 #[derive(Deserialize)]
@@ -761,17 +832,21 @@ pub struct UpdateMappingRequest {
 #[web::put("/api/admin/mapping/{uuid}")]
 pub async fn update_mapping(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<String>,
     Json(body): Json<UpdateMappingRequest>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let uuid = path.into_inner();
     
-    match state.config.update_mapping(&uuid, body.outbound_tag.clone()).await {
+    match state.config.update_mapping(node_id, &uuid, body.outbound_tag.clone()).await {
         Ok(old_tag) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -795,16 +870,20 @@ pub async fn update_mapping(
 #[web::delete("/api/admin/mapping/{uuid}")]
 pub async fn delete_mapping(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<String>,
 ) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let uuid = path.into_inner();
     
-    match state.config.delete_mapping(&uuid).await {
+    match state.config.delete_mapping(node_id, &uuid).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
-                let node_config = state.config.get_node_config().await;
-                let _ = mqtt_client.publish_update_notification(node_config.node_id, "outbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -825,15 +904,30 @@ pub async fn delete_mapping(
 #[web::get("/api/admin/maintenance")]
 pub async fn get_maintenance_mode(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> HttpResponse {
-    let mode = state.config.get_maintenance_mode().await;
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": {
-            "maintenance_mode": mode,
-            "description": "维护模式：开启时跳过新用户添加，仅允许已存在用户"
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    
+    match state.config.get_maintenance_mode(node_id).await {
+        Ok(mode) => {
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": {
+                    "maintenance_mode": mode,
+                    "description": "维护模式：开启时跳过新用户添加，仅允许已存在用户"
+                }
+            }))
         }
-    }))
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -844,17 +938,31 @@ pub struct SetMaintenanceRequest {
 #[web::post("/api/admin/maintenance")]
 pub async fn set_maintenance_mode(
     state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
     Json(body): Json<SetMaintenanceRequest>,
 ) -> HttpResponse {
-    let old_mode = state.config.set_maintenance_mode(body.enabled).await;
-    let mode_str = if body.enabled { "启用" } else { "禁用" };
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": {
-            "maintenance_mode": body.enabled,
-            "previous_mode": old_mode,
-            "message": format!("维护模式已{}", mode_str)
+    match state.config.set_maintenance_mode(node_id, body.enabled).await {
+        Ok(old_mode) => {
+            let mode_str = if body.enabled { "启用" } else { "禁用" };
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": {
+                    "maintenance_mode": body.enabled,
+                    "previous_mode": old_mode,
+                    "message": format!("维护模式已{}", mode_str)
+                }
+            }))
         }
-    }))
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    }
 }

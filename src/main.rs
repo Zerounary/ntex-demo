@@ -72,7 +72,7 @@ async fn main() -> std::io::Result<()> {
     info!("MQTT 客户端启动成功");
 
     // 创建管理配置存储
-    let admin_config = admin_config::AdminConfigStore::new();
+    let admin_config = admin_config::AdminConfigStore::new(db.clone());
     
     // 创建 MQTT 客户端 Arc 引用
     let mqtt_client_arc = std::sync::Arc::new(mqtt_client);

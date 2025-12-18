@@ -10,6 +10,8 @@ pub struct Model {
     pub traffic_rate: f64,
     pub sort: u64,
     pub inbounds: JsonValue,
+    #[sea_orm(default_value = "0")]
+    pub maintenance_mode: bool,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
