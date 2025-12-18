@@ -9,10 +9,7 @@ use std::collections::HashMap;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule, User};
 use crate::infrastructure::mqtt_client::MqttClientManager;
-use crate::infrastructure::persistence::{
-    admin_node_config, admin_user, admin_outbound, admin_routing, admin_user_mapping,
-};
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait};
+use sea_orm::DatabaseConnection;
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -50,38 +47,22 @@ pub async fn query_handler(
     
     match act {
         "user" => {
-            // 先检查 node_config 是否存在
-            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
-                .one(&state.db)
-                .await
-                .unwrap_or(None)
-                .is_some();
-            
-            if !node_config_exists {
-                return HttpResponse::Ok().json(&serde_json::json!({
-                    "msg": "ok",
-                    "data": []
-                }));
+            // 使用 AdminConfigStore 查询用户数据
+            match state.config.get_users(node_id).await {
+                Ok(users) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": users
+                    }))
+                }
+                Err(_) => {
+                    // 节点配置不存在时返回空数组
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": []
+                    }))
+                }
             }
-            
-            // 查询用户数据
-            let users = admin_user::Entity::find()
-                .filter(admin_user::Column::NodeId.eq(node_id))
-                .all(&state.db)
-                .await
-                .unwrap_or_default();
-            
-            let users_data: Vec<User> = users.into_iter().map(|u| User {
-                id: u.id,
-                uuid: u.uuid,
-                st: u.st,
-                dt: u.dt,
-            }).collect();
-            
-            HttpResponse::Ok().json(&serde_json::json!({
-                "msg": "ok",
-                "data": users_data
-            }))
         }
         "config" => {
             // 查询 node_config
@@ -101,99 +82,51 @@ pub async fn query_handler(
             }
         }
         "outbound" => {
-            // 先检查 node_config 是否存在
-            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
-                .one(&state.db)
-                .await
-                .unwrap_or(None)
-                .is_some();
-            
-            if !node_config_exists {
-                return HttpResponse::Ok().json(&serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "outbounds": [],
-                        "user_mapping": {}
-                    }
-                }));
-            }
-            
-            // 查询 outbound 数据
-            let outbounds = admin_outbound::Entity::find()
-                .filter(admin_outbound::Column::NodeId.eq(node_id))
-                .all(&state.db)
-                .await
-                .unwrap_or_default();
-            
-            let outbounds_data: Vec<OutboundConfig> = outbounds.into_iter().map(|o| OutboundConfig {
-                tag: o.tag,
-                protocol: o.protocol,
-                settings: o.settings,
-                stream_settings: o.stream_settings,
-            }).collect();
-            
-            // 查询用户映射
-            let mappings = admin_user_mapping::Entity::find()
-                .filter(admin_user_mapping::Column::NodeId.eq(node_id))
-                .all(&state.db)
-                .await
-                .unwrap_or_default();
-            
-            let mut user_mapping = HashMap::new();
-            for m in mappings {
-                user_mapping.insert(m.uuid, m.outbound_tag);
-            }
-            
-            HttpResponse::Ok().json(&serde_json::json!({
-                "msg": "ok",
-                "data": {
-                    "outbounds": outbounds_data,
-                    "user_mapping": user_mapping
+            // 使用 AdminConfigStore 查询 outbound 数据
+            match state.config.get_outbounds(node_id).await {
+                Ok((outbounds, user_mapping)) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "outbounds": outbounds,
+                            "user_mapping": user_mapping
+                        }
+                    }))
                 }
-            }))
+                Err(_) => {
+                    // 节点配置不存在时返回空数据
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "outbounds": [],
+                            "user_mapping": {}
+                        }
+                    }))
+                }
+            }
         }
         "routing" => {
-            // 先检查 node_config 是否存在
-            let node_config_exists = admin_node_config::Entity::find_by_id(node_id)
-                .one(&state.db)
-                .await
-                .unwrap_or(None)
-                .is_some();
-            
-            if !node_config_exists {
-                return HttpResponse::Ok().json(&serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "domainStrategy": "AsIs",
-                        "rules": []
-                    }
-                }));
-            }
-            
-            // 查询路由配置
-            let routing = admin_routing::Entity::find_by_id(node_id)
-                .one(&state.db)
-                .await
-                .unwrap_or(None);
-            
-            if let Some(r) = routing {
-                let rules: Vec<RoutingRule> = serde_json::from_value(r.rules.clone()).unwrap_or_default();
-                HttpResponse::Ok().json(&serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "domainStrategy": r.domain_strategy,
-                        "rules": rules
-                    }
-                }))
-            } else {
-                // 路由配置不存在，返回默认值
-                HttpResponse::Ok().json(&serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "domainStrategy": "AsIs",
-                        "rules": []
-                    }
-                }))
+            // 使用 AdminConfigStore 查询路由配置
+            match state.config.get_routing(node_id).await {
+                Ok(routing) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "domainStrategy": routing.domain_strategy,
+                            "rules": routing.rules
+                        }
+                    }))
+                }
+                Err(_) => {
+                    // 节点配置不存在时返回默认值
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "domainStrategy": "AsIs",
+                            "rules": []
+                        }
+                    }))
+                }
             }
         }
         "maintenance" => {

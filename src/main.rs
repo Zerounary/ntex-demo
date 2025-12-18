@@ -82,7 +82,7 @@ async fn main() -> std::io::Result<()> {
     let db_clone = db.clone();
     let mqtt_client_clone = mqtt_client_arc.clone();
     
-    let state = AppState::new(db);
+    let state = AppState::new(db.clone(), admin_config.clone());
     
     info!("正在启动管理服务器 (端口 667)...");
     info!("正在启动 Web 服务器 (端口 {})...", config.port);

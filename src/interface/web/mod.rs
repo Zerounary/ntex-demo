@@ -7,16 +7,19 @@ use ntex::web::{self, App};
 use ntex_files as fs;
 use sea_orm::DatabaseConnection;
 
+use crate::infrastructure::admin_config::AdminConfigStore;
+
 use self::routes::configure;
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: DatabaseConnection,
+    pub admin_config: AdminConfigStore,
 }
 
 impl AppState {
-    pub fn new(db: DatabaseConnection) -> Self {
-        Self { db }
+    pub fn new(db: DatabaseConnection, admin_config: AdminConfigStore) -> Self {
+        Self { db, admin_config }
     }
 }
 
