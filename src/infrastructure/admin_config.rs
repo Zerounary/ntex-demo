@@ -551,6 +551,39 @@ impl AdminConfigStore {
         })
     }
 
+    pub async fn list_nodes(&self) -> Result<Vec<serde_json::Value>, String> {
+        let node_configs = admin_node_config::Entity::find()
+            .order_by_asc(admin_node_config::Column::Sort)
+            .all(&self.db)
+            .await
+            .map_err(|e| format!("查询节点列表失败: {}", e))?;
+        
+        let mut result = Vec::new();
+        for node_config in node_configs {
+            result.push(serde_json::json!({
+                "node_id": node_config.node_id,
+                "node_type": node_config.node_type,
+                "node_speed_limit": node_config.node_speed_limit,
+                "traffic_rate": node_config.traffic_rate,
+                "sort": node_config.sort,
+                "maintenance_mode": node_config.maintenance_mode,
+                "cpu_usage": node_config.cpu_usage,
+                "mem_usage": node_config.mem_usage,
+                "disk_usage": node_config.disk_usage,
+                "uptime": node_config.uptime,
+                "online_user_count": node_config.online_user_count,
+                "cpu_threads": node_config.cpu_threads,
+                "mem_total": node_config.mem_total,
+                "disk_total": node_config.disk_total,
+                "network_interfaces": node_config.network_interfaces,
+                "created_at": node_config.created_at.to_rfc3339(),
+                "updated_at": node_config.updated_at.to_rfc3339(),
+            }));
+        }
+        
+        Ok(result)
+    }
+
     // ========== 维护模式 ==========
     pub async fn get_maintenance_mode(&self, node_id: u64) -> Result<bool, String> {
         let node_config = admin_node_config::Entity::find_by_id(node_id)

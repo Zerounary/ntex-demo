@@ -16,6 +16,11 @@ export default defineConfig({
   base: './',
   server: {
     port: 4000,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:667'
+      }
+    }
   },
   build: {
     outDir: './../admin'

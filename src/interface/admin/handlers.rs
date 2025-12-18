@@ -32,7 +32,27 @@ fn get_node_id_from_query(params: &HashMap<String, String>) -> Result<u64, HttpR
 
 // ========== 查询接口 ==========
 
-#[web::get("/")]
+#[web::get("/api/admin/nodes")]
+pub async fn list_nodes(
+    state: State<AdminState>,
+) -> HttpResponse {
+    match state.config.list_nodes().await {
+        Ok(nodes) => {
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": nodes
+            }))
+        }
+        Err(e) => {
+            HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    }
+}
+
+#[web::get("/api/admin/query")]
 pub async fn query_handler(
     state: State<AdminState>,
     Query(params): Query<HashMap<String, String>>,
