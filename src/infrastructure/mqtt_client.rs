@@ -571,8 +571,20 @@ impl MqttClientManager {
                         let mem = status_data.get("mem").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let disk = status_data.get("disk").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
-                        info!("✅ [节点状态] 已更新: node_id={}, CPU={:.1}%, 内存={:.1}%, 磁盘={:.1}%, 运行时间={}秒", 
-                              node_id, cpu * 100.0, mem * 100.0, disk * 100.0, uptime);
+                        
+                        // 检查是否有网络接口信息
+                        let network_count = status_data.get("network")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.len())
+                            .unwrap_or(0);
+                        
+                        if network_count > 0 {
+                            info!("✅ [节点状态] 已更新: node_id={}, CPU={:.1}%, 内存={:.1}%, 磁盘={:.1}%, 运行时间={}秒, 网络接口数={}", 
+                                  node_id, cpu * 100.0, mem * 100.0, disk * 100.0, uptime, network_count);
+                        } else {
+                            info!("✅ [节点状态] 已更新: node_id={}, CPU={:.1}%, 内存={:.1}%, 磁盘={:.1}%, 运行时间={}秒", 
+                                  node_id, cpu * 100.0, mem * 100.0, disk * 100.0, uptime);
+                        }
                     }
                 }
             }

@@ -635,6 +635,10 @@ impl AdminConfigStore {
         let disk = Self::parse_percentage(status_data.get("disk")).unwrap_or(0.0).clamp(0.0, 1.0);
         let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
         
+        // 解析网络接口信息（如果提供）
+        let network_interfaces = status_data.get("network")
+            .map(|v| JsonValue::from(v.clone()));
+        
         // 更新节点配置表的实时状态
         if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
             .one(&self.db)
@@ -645,6 +649,11 @@ impl AdminConfigStore {
             active_model.mem_usage = Set(Some(mem));
             active_model.disk_usage = Set(Some(disk));
             active_model.uptime = Set(Some(uptime));
+            
+            // 更新网络接口信息（如果提供）
+            if let Some(network_interfaces) = network_interfaces {
+                active_model.network_interfaces = Set(Some(network_interfaces));
+            }
             
             active_model.update(&self.db).await
                 .map_err(|e| format!("更新节点实时状态失败: {}", e))?;

@@ -30,6 +30,9 @@ pub struct Model {
     pub mem_total: Option<u64>,    // 内存总容量（字节）
     #[sea_orm(nullable)]
     pub disk_total: Option<u64>,   // 磁盘总容量（字节）
+    // 网络接口信息（JSON 格式，存储各网卡的带宽使用情况）
+    #[sea_orm(nullable, column_type = "Json")]
+    pub network_interfaces: Option<JsonValue>,  // 网络接口信息数组
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
