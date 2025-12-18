@@ -3,6 +3,8 @@ import App from './App.vue';
 import '@purge-icons/generated';
 import { createI18n } from 'vue-i18n';
 
+import './styles/design-tokens.css';
+import './styles/animations.css';
 import './styles/base.css';
 
 // Router

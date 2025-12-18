@@ -13,10 +13,15 @@ declare module 'vue' {
     RoutingManagement: typeof import('./components/RoutingManagement.vue')['default']
     RoutingRuleForm: typeof import('./components/RoutingRuleForm.vue')['default']
     Select: typeof import('./components/Select.vue')['default']
+    ShadowsocksForm: typeof import('./components/ProtocolForm/ShadowsocksForm.vue')['default']
+    StreamSettingsForm: typeof import('./components/ProtocolForm/StreamSettingsForm.vue')['default']
     TopologyCanvas: typeof import('./components/TopologyCanvas.vue')['default']
+    TrojanForm: typeof import('./components/ProtocolForm/TrojanForm.vue')['default']
     UserForm: typeof import('./components/UserForm.vue')['default']
     UserManagement: typeof import('./components/UserManagement.vue')['default']
     UserMapping: typeof import('./components/UserMapping.vue')['default']
+    VLESSForm: typeof import('./components/ProtocolForm/VLESSForm.vue')['default']
+    VMessForm: typeof import('./components/ProtocolForm/VMessForm.vue')['default']
   }
 }
 

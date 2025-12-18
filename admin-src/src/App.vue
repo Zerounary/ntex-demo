@@ -6,21 +6,34 @@ export default defineComponent({
 });
 </script>
 <template>
-  <div class="app min-h-screen bg-gray-100">
-    <router-view />
+  <div class="app min-h-screen">
+    <router-view v-slot="{ Component, route }">
+      <transition
+        name="page"
+        mode="out-in"
+        appear
+      >
+        <component :is="Component" :key="route.path" />
+      </transition>
+    </router-view>
   </div>
 </template>
 
 <style>
-* {
-  box-sizing: border-box;
+/* 页面过渡动画 */
+.page-enter-active,
+.page-leave-active {
+  transition: opacity var(--transition-base) var(--ease-in-out),
+              transform var(--transition-base) var(--ease-in-out);
 }
 
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
 }
 </style>
