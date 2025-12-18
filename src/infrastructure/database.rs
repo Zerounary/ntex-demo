@@ -43,6 +43,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     // 迁移：检查并添加缺失的字段
     migrate_add_process_name_field(db).await?;
+    migrate_node_config_fields(db).await?;
 
     Ok(())
 }
@@ -98,5 +99,104 @@ async fn migrate_add_process_name_field(db: &DatabaseConnection) -> Result<(), D
         }
     }
 
+    Ok(())
+}
+
+/// 迁移：为 admin_node_configs 表添加/修改字段
+async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+    
+    // MySQL 迁移
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        // 添加新字段（如果不存在）
+        let alter_sqls = vec![
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INT UNSIGNED NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT UNSIGNED NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT UNSIGNED NULL",
+        ];
+        
+        for sql in alter_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("执行迁移 SQL 失败（可能字段已存在）: {} - {}", sql, e);
+            }
+        }
+        
+        // 修改使用率字段类型（从 VARCHAR 改为 DOUBLE）
+        // 注意：如果字段已存在且是 VARCHAR，需要先转换数据，这里简化处理
+        // 实际使用时，如果字段已存在且类型不同，可能需要手动迁移数据
+        let alter_type_sqls = vec![
+            "ALTER TABLE admin_node_configs MODIFY COLUMN cpu_usage DOUBLE NULL",
+            "ALTER TABLE admin_node_configs MODIFY COLUMN mem_usage DOUBLE NULL",
+            "ALTER TABLE admin_node_configs MODIFY COLUMN disk_usage DOUBLE NULL",
+        ];
+        
+        for sql in alter_type_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("修改字段类型失败（可能类型已正确或字段不存在）: {} - {}", sql, e);
+            }
+        }
+        
+        // 修改 node_status_logs 表的字段类型
+        let alter_log_type_sqls = vec![
+            "ALTER TABLE node_status_logs MODIFY COLUMN cpu DOUBLE NOT NULL",
+            "ALTER TABLE node_status_logs MODIFY COLUMN mem DOUBLE NOT NULL",
+            "ALTER TABLE node_status_logs MODIFY COLUMN disk DOUBLE NOT NULL",
+        ];
+        
+        for sql in alter_log_type_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("修改 node_status_logs 字段类型失败: {} - {}", sql, e);
+            }
+        }
+    }
+    
+    // PostgreSQL 迁移
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let alter_sqls = vec![
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INTEGER",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT",
+        ];
+        
+        for sql in alter_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("执行迁移 SQL 失败（可能字段已存在）: {} - {}", sql, e);
+            }
+        }
+        
+        // PostgreSQL 修改字段类型
+        let alter_type_sqls = vec![
+            "ALTER TABLE admin_node_configs ALTER COLUMN cpu_usage TYPE DOUBLE PRECISION USING CASE WHEN cpu_usage ~ '^[0-9.]+$' THEN cpu_usage::DOUBLE PRECISION ELSE NULL END",
+            "ALTER TABLE admin_node_configs ALTER COLUMN mem_usage TYPE DOUBLE PRECISION USING CASE WHEN mem_usage ~ '^[0-9.]+$' THEN mem_usage::DOUBLE PRECISION ELSE NULL END",
+            "ALTER TABLE admin_node_configs ALTER COLUMN disk_usage TYPE DOUBLE PRECISION USING CASE WHEN disk_usage ~ '^[0-9.]+$' THEN disk_usage::DOUBLE PRECISION ELSE NULL END",
+        ];
+        
+        for sql in alter_type_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("修改字段类型失败: {} - {}", sql, e);
+            }
+        }
+        
+        // 修改 node_status_logs 表的字段类型
+        let alter_log_type_sqls = vec![
+            "ALTER TABLE node_status_logs ALTER COLUMN cpu TYPE DOUBLE PRECISION USING CASE WHEN cpu ~ '^[0-9.]+$' THEN cpu::DOUBLE PRECISION ELSE 0.0 END",
+            "ALTER TABLE node_status_logs ALTER COLUMN mem TYPE DOUBLE PRECISION USING CASE WHEN mem ~ '^[0-9.]+$' THEN mem::DOUBLE PRECISION ELSE 0.0 END",
+            "ALTER TABLE node_status_logs ALTER COLUMN disk TYPE DOUBLE PRECISION USING CASE WHEN disk ~ '^[0-9.]+$' THEN disk::DOUBLE PRECISION ELSE 0.0 END",
+        ];
+        
+        for sql in alter_log_type_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("修改 node_status_logs 字段类型失败: {} - {}", sql, e);
+            }
+        }
+    }
+    
+    // SQLite 迁移（SQLite 不支持 ALTER COLUMN，需要重建表，这里简化处理）
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        // SQLite 不支持 IF NOT EXISTS 和 ALTER COLUMN，这里跳过
+        // 如果需要支持 SQLite，需要重建表
+        log::warn!("SQLite 不支持 ALTER COLUMN，需要手动迁移数据");
+    }
+    
     Ok(())
 }

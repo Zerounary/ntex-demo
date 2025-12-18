@@ -1,15 +1,15 @@
 use sea_orm::{entity::prelude::*, sea_query::Expr};
 
 /// 节点状态上报历史记录
-#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
 #[sea_orm(table_name = "node_status_logs")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     pub id: u64,
     pub node_id: u64,
-    pub cpu: String,       // CPU 使用率，如 "50%"
-    pub mem: String,       // 内存使用率，如 "60%"
-    pub disk: String,      // 磁盘使用率，如 "40%"
+    pub cpu: f64,       // CPU 使用率，0.0-1.0（0.5 表示 50%）
+    pub mem: f64,       // 内存使用率，0.0-1.0（0.6 表示 60%）
+    pub disk: f64,      // 磁盘使用率，0.0-1.0（0.4 表示 40%）
     pub uptime: u64,       // 运行时间（秒）
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,

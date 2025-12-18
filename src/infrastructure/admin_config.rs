@@ -69,6 +69,12 @@ pub struct NodeConfig {
     pub traffic_rate: f64,
     pub sort: u64,
     pub inbounds: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_threads: Option<u32>,  // CPU 线程数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mem_total: Option<u64>,    // 内存总容量（字节）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disk_total: Option<u64>,   // 磁盘总容量（字节）
 }
 
 /// 管理配置存储
@@ -80,6 +86,32 @@ pub struct AdminConfigStore {
 impl AdminConfigStore {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
+    }
+    
+    /// 解析百分比值（兼容字符串格式 "50%" 和数值格式 0.5）
+    fn parse_percentage(value: Option<&Value>) -> Option<f64> {
+        let v = value?;
+        
+        // 先尝试作为数值解析（0.0-1.0）
+        if let Some(num) = v.as_f64() {
+            return Some(num);
+        }
+        
+        // 再尝试作为字符串解析（"50%"）
+        if let Some(str_val) = v.as_str() {
+            // 移除 % 符号并解析
+            let cleaned = str_val.trim_end_matches('%').trim();
+            if let Ok(num) = cleaned.parse::<f64>() {
+                // 如果是百分比格式（0-100），转换为 0.0-1.0
+                if num > 1.0 {
+                    return Some(num / 100.0);
+                } else {
+                    return Some(num);
+                }
+            }
+        }
+        
+        None
     }
 
     // ========== 用户管理 ==========
@@ -458,6 +490,44 @@ impl AdminConfigStore {
     }
 
     // ========== 节点配置 ==========
+    
+    /// 更新节点硬件信息（从 config 请求中提取）
+    pub async fn update_node_hardware_info(&self, node_id: u64, request_data: &Value) -> Result<(), String> {
+        // 解析硬件信息（如果提供）
+        let cpu_threads = request_data.get("cpu_threads").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let mem_total = request_data.get("mem_total").and_then(|v| v.as_u64());
+        let disk_total = request_data.get("disk_total").and_then(|v| v.as_u64());
+        
+        // 如果没有任何硬件信息，直接返回
+        if cpu_threads.is_none() && mem_total.is_none() && disk_total.is_none() {
+            return Ok(());
+        }
+        
+        // 更新节点配置表的硬件信息
+        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+        {
+            let mut active_model: admin_node_config::ActiveModel = node_config.into();
+            
+            // 更新硬件信息（如果提供）
+            if let Some(cpu_threads) = cpu_threads {
+                active_model.cpu_threads = Set(Some(cpu_threads));
+            }
+            if let Some(mem_total) = mem_total {
+                active_model.mem_total = Set(Some(mem_total));
+            }
+            if let Some(disk_total) = disk_total {
+                active_model.disk_total = Set(Some(disk_total));
+            }
+            
+            active_model.update(&self.db).await
+                .map_err(|e| format!("更新节点硬件信息失败: {}", e))?;
+        }
+        
+        Ok(())
+    }
+    
     pub async fn get_node_config(&self, node_id: u64) -> Result<NodeConfig, String> {
         let node_config = admin_node_config::Entity::find_by_id(node_id)
             .one(&self.db)
@@ -475,6 +545,9 @@ impl AdminConfigStore {
             traffic_rate: node_config.traffic_rate,
             sort: node_config.sort,
             inbounds,
+            cpu_threads: node_config.cpu_threads,
+            mem_total: node_config.mem_total,
+            disk_total: node_config.disk_total,
         })
     }
 
@@ -556,9 +629,10 @@ impl AdminConfigStore {
     
     /// 处理节点状态上报
     pub async fn handle_node_status_report(&self, node_id: u64, status_data: &Value) -> Result<(), String> {
-        let cpu = status_data.get("cpu").and_then(|v| v.as_str()).unwrap_or("0%");
-        let mem = status_data.get("mem").and_then(|v| v.as_str()).unwrap_or("0%");
-        let disk = status_data.get("disk").and_then(|v| v.as_str()).unwrap_or("0%");
+        // 解析使用率（兼容字符串格式 "50%" 和数值格式 0.5）
+        let cpu = Self::parse_percentage(status_data.get("cpu")).unwrap_or(0.0).clamp(0.0, 1.0);
+        let mem = Self::parse_percentage(status_data.get("mem")).unwrap_or(0.0).clamp(0.0, 1.0);
+        let disk = Self::parse_percentage(status_data.get("disk")).unwrap_or(0.0).clamp(0.0, 1.0);
         let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
         
         // 更新节点配置表的实时状态
@@ -567,9 +641,9 @@ impl AdminConfigStore {
             .await
         {
             let mut active_model: admin_node_config::ActiveModel = node_config.into();
-            active_model.cpu_usage = Set(Some(cpu.to_string()));
-            active_model.mem_usage = Set(Some(mem.to_string()));
-            active_model.disk_usage = Set(Some(disk.to_string()));
+            active_model.cpu_usage = Set(Some(cpu));
+            active_model.mem_usage = Set(Some(mem));
+            active_model.disk_usage = Set(Some(disk));
             active_model.uptime = Set(Some(uptime));
             
             active_model.update(&self.db).await
@@ -584,8 +658,11 @@ impl AdminConfigStore {
             .one(&self.db)
             .await
         {
-            // 如果所有字段都相同，则不插入
-            last_log.cpu != cpu || last_log.mem != mem || last_log.disk != disk || last_log.uptime != uptime
+            // 如果所有字段都相同，则不插入（使用浮点数比较，允许小的误差）
+            (last_log.cpu - cpu).abs() > 0.001 
+                || (last_log.mem - mem).abs() > 0.001 
+                || (last_log.disk - disk).abs() > 0.001 
+                || last_log.uptime != uptime
         } else {
             // 没有上一条记录，需要插入
             true
@@ -598,9 +675,9 @@ impl AdminConfigStore {
         // 插入历史记录
         let log = node_status_log::ActiveModel {
             node_id: Set(node_id),
-            cpu: Set(cpu.to_string()),
-            mem: Set(mem.to_string()),
-            disk: Set(disk.to_string()),
+            cpu: Set(cpu),
+            mem: Set(mem),
+            disk: Set(disk),
             uptime: Set(uptime),
             ..Default::default()
         };

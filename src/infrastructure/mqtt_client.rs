@@ -513,6 +513,16 @@ impl MqttClientManager {
         };
         
         // 生成响应（异步方法）
+        // 对于 config 请求，需要检查是否包含硬件信息
+        if action == "config" {
+            // 检查请求数据中是否包含硬件信息
+            if let Some(request_data) = data.get("data") {
+                if let Err(e) = admin_config.update_node_hardware_info(node_id_u64, request_data).await {
+                    warn!("⚠️  [MQTT Request] 更新节点硬件信息失败: {}", e);
+                }
+            }
+        }
+        
         let response = Self::handle_request(action, node_id_u64, &admin_config).await;
         
         // 如果返回 None，表示应该由节点端处理，管理端不发送响应
@@ -557,12 +567,12 @@ impl MqttClientManager {
                     if let Err(e) = admin_config.handle_node_status_report(node_id_u64, status_data).await {
                         error!("❌ [节点状态] 处理失败: {}", e);
                     } else {
-                        let cpu = status_data.get("cpu").and_then(|v| v.as_str()).unwrap_or("N/A");
-                        let mem = status_data.get("mem").and_then(|v| v.as_str()).unwrap_or("N/A");
-                        let disk = status_data.get("disk").and_then(|v| v.as_str()).unwrap_or("N/A");
+                        let cpu = status_data.get("cpu").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let mem = status_data.get("mem").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let disk = status_data.get("disk").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
-                        info!("✅ [节点状态] 已更新: node_id={}, CPU={}, 内存={}, 磁盘={}, 运行时间={}秒", 
-                              node_id, cpu, mem, disk, uptime);
+                        info!("✅ [节点状态] 已更新: node_id={}, CPU={:.1}%, 内存={:.1}%, 磁盘={:.1}%, 运行时间={}秒", 
+                              node_id, cpu * 100.0, mem * 100.0, disk * 100.0, uptime);
                     }
                 }
             }
@@ -699,6 +709,9 @@ impl MqttClientManager {
                 // 从数据库获取节点配置
                 match admin_config.get_node_config(node_id).await {
                     Ok(node_config) => {
+                        // 检查请求数据中是否包含硬件信息
+                        // 注意：这里需要从原始请求数据中获取，但 handle_request 只接收 action 和 node_id
+                        // 我们需要修改函数签名来接收完整的请求数据
                         Some(serde_json::json!({
                             "msg": "ok",
                             "data": node_config
