@@ -1,17 +1,17 @@
 <template>
   <div class="maintenance-mode">
-    <div class="bg-white rounded-2xl p-8 border border-gray-100 shadow-lg">
+    <div class="card-base p-8">
       <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
         <div class="flex-1">
-          <h2 class="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-            维护模式
+          <h2 class="text-2xl font-bold text-gray-900 tracking-tight mb-2">
+            Maintenance Mode
           </h2>
-          <p class="text-sm text-gray-500">
+          <p class="text-gray-500">
             {{ description }}
           </p>
         </div>
         <div class="flex items-center gap-4">
-          <div v-if="loading" class="w-6 h-6 border-2 border-indigo-200 border-t-indigo-500 rounded-full animate-spin"></div>
+          <div v-if="loading" class="loading-ring w-6 h-6"></div>
           <label class="relative inline-flex items-center cursor-pointer group">
             <input
               type="checkbox"
@@ -21,33 +21,38 @@
               class="sr-only peer"
             />
             <div
-              class="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-yellow-400 peer-checked:to-orange-500 shadow-inner"
+              class="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-100 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary-500 shadow-inner transition-colors"
             ></div>
             <span
               class="ml-4 text-base font-semibold transition-colors"
-              :class="enabled ? 'text-orange-600' : 'text-gray-600'"
+              :class="enabled ? 'text-primary-600' : 'text-gray-500'"
             >
-              {{ enabled ? '已启用' : '已禁用' }}
+              {{ enabled ? 'Enabled' : 'Disabled' }}
             </span>
           </label>
         </div>
       </div>
 
-      <div v-if="error" class="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+      <div v-if="error" class="mt-4 p-3 bg-red-50/80 border border-red-100 text-red-600 rounded-xl text-sm flex items-center gap-2">
+        <div class="i-carbon-warning-filled"></div>
         {{ error }}
       </div>
 
-      <div v-if="enabled" class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
-        <div class="flex items-start gap-3">
-          <span class="text-xl">⚠️</span>
-          <div>
-            <p class="text-sm font-medium text-yellow-800 mb-1">维护模式已启用</p>
-            <p class="text-xs text-yellow-700">
-              在此模式下，系统将跳过新用户添加，仅允许已存在的用户连接。这有助于在维护期间保护系统稳定性。
-            </p>
+      <transition name="fade">
+        <div v-if="enabled" class="mt-8 p-6 bg-yellow-50/50 border border-yellow-100 rounded-2xl">
+          <div class="flex items-start gap-4">
+            <div class="p-2 bg-yellow-100 text-yellow-600 rounded-lg">
+              <div class="i-carbon-warning-alt text-xl"></div>
+            </div>
+            <div>
+              <p class="text-base font-bold text-yellow-800 mb-1">System in Maintenance</p>
+              <p class="text-sm text-yellow-700/80 leading-relaxed">
+                While maintenance mode is active, the system will skip adding new users. Only existing users will be allowed to connect. This helps protect system stability during maintenance operations.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      </transition>
     </div>
   </div>
 </template>
@@ -69,7 +74,7 @@ const enabled = computed(() => {
 const description = computed(() => {
   return (
     adminStore.maintenanceMode?.description ||
-    '维护模式：开启时跳过新用户添加，仅允许已存在用户'
+    'Maintenance Mode: Skips adding new users when enabled, allowing only existing users.'
   );
 });
 
@@ -93,8 +98,8 @@ const handleToggle = async (event: Event) => {
   try {
     await adminStore.setMaintenanceMode(nodeStore.currentNodeId, newValue);
   } catch (err: any) {
-    alert(err.message || '设置维护模式失败');
-    // 恢复原状态
+    alert(err.message || 'Failed to set maintenance mode');
+    // Revert state
     target.checked = !newValue;
   } finally {
     loading.value = false;
@@ -102,4 +107,15 @@ const handleToggle = async (event: Event) => {
 };
 </script>
 
-<style scoped></style>
+<style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s var(--ease-smooth), transform 0.3s var(--ease-smooth);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+</style>

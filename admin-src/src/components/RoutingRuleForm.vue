@@ -1,9 +1,9 @@
 <template>
-  <form @submit.prevent="handleSubmit" class="space-y-5">
+  <form @submit.prevent="handleSubmit" class="space-y-6">
     <!-- 规则类型 -->
-    <div class="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl p-5 border border-indigo-100 shadow-sm">
-      <label class="block text-sm font-semibold text-gray-700 mb-3">
-        规则类型 <span class="text-red-400">*</span>
+    <div class="bg-gray-50/50 rounded-2xl p-5 border border-gray-100">
+      <label class="block text-sm font-bold text-gray-700 mb-3">
+        Rule Type <span class="text-red-400">*</span>
       </label>
       <div class="grid grid-cols-3 gap-3">
         <button
@@ -12,10 +12,10 @@
           type="button"
           @click="form.type = type.value"
           :class="[
-            'px-4 py-3 rounded-xl text-sm font-medium transition-all active-scale',
+            'px-4 py-3 rounded-xl text-sm font-medium transition-all active:scale-95',
             form.type === type.value
-              ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white shadow-lg'
-              : 'bg-white text-gray-700 border border-gray-200 hover:border-indigo-300 hover:shadow-md'
+              ? 'bg-primary-600 text-white shadow-lg shadow-primary-500/20'
+              : 'bg-white text-gray-600 border border-gray-200 hover:border-primary-300 hover:text-primary-600'
           ]"
         >
           {{ type.label }}
@@ -25,29 +25,34 @@
 
     <!-- Field 规则配置 -->
     <transition name="fade">
-      <div v-if="form.type === 'field'" class="space-y-4 animate-fade-in">
-        <div class="bg-white rounded-xl p-5 border border-gray-200 shadow-sm">
-          <h4 class="text-sm font-semibold text-gray-700 mb-4 flex items-center gap-2">
-            <span class="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
-            匹配条件
+      <div v-if="form.type === 'field'" class="space-y-5 animate-fade-in">
+        <div class="card-base p-5">
+          <h4 class="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2 pb-3 border-b border-gray-100">
+            <div class="w-1.5 h-1.5 rounded-full bg-primary-500"></div>
+            Matching Conditions
           </h4>
           
-          <div class="space-y-4">
+          <div class="space-y-5">
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-2">
-                出站标签
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                Outbound Tag
               </label>
-              <input
-                v-model="form.outbound_tag"
-                type="text"
-                placeholder="outbound_tag"
-                class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-              />
+              <div class="relative">
+                <input
+                  v-model="form.outbound_tag"
+                  type="text"
+                  placeholder="e.g., proxy-us"
+                  class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all pl-10"
+                />
+                <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                  <div class="i-carbon-tag text-lg"></div>
+                </div>
+              </div>
             </div>
 
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-2">
-                域名匹配
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                Domains
               </label>
               <div class="space-y-2">
                 <div
@@ -55,35 +60,40 @@
                   :key="index"
                   class="flex items-center gap-2"
                 >
-                  <input
-                    v-model="domainList[index]"
-                    type="text"
-                    placeholder="example.com 或 *.example.com"
-                    class="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-                  />
+                  <div class="relative flex-1">
+                    <input
+                      v-model="domainList[index]"
+                      type="text"
+                      placeholder="example.com or *.example.com"
+                      class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all pl-10"
+                    />
+                    <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                      <div class="i-carbon-wikis text-lg"></div>
+                    </div>
+                  </div>
                   <button
                     v-if="domainList.length > 1"
                     type="button"
                     @click="domainList.splice(index, 1)"
-                    class="px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                    class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                   >
-                    ✕
+                    <div class="i-carbon-close text-lg"></div>
                   </button>
                 </div>
                 <button
                   type="button"
                   @click="domainList.push('')"
-                  class="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                  class="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-primary-50 transition-colors w-fit"
                 >
-                  <span>+</span>
-                  <span>添加域名</span>
+                  <div class="i-carbon-add"></div>
+                  <span>Add Domain</span>
                 </button>
               </div>
             </div>
 
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-2">
-                IP 匹配
+              <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                IPs / CIDRs
               </label>
               <div class="space-y-2">
                 <div
@@ -91,58 +101,76 @@
                   :key="index"
                   class="flex items-center gap-2"
                 >
-                  <input
-                    v-model="ipList[index]"
-                    type="text"
-                    placeholder="192.168.1.1 或 10.0.0.0/8"
-                    class="flex-1 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-                  />
+                  <div class="relative flex-1">
+                    <input
+                      v-model="ipList[index]"
+                      type="text"
+                      placeholder="192.168.1.1 or 10.0.0.0/8"
+                      class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all pl-10 font-mono"
+                    />
+                    <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                      <div class="i-carbon-network-1 text-lg"></div>
+                    </div>
+                  </div>
                   <button
                     v-if="ipList.length > 1"
                     type="button"
                     @click="ipList.splice(index, 1)"
-                    class="px-3 py-2 text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                    class="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                   >
-                    ✕
+                    <div class="i-carbon-close text-lg"></div>
                   </button>
                 </div>
                 <button
                   type="button"
                   @click="ipList.push('')"
-                  class="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                  class="text-xs font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1 px-2 py-1 rounded hover:bg-primary-50 transition-colors w-fit"
                 >
-                  <span>+</span>
-                  <span>添加 IP</span>
+                  <div class="i-carbon-add"></div>
+                  <span>Add IP</span>
                 </button>
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-4">
+            <div class="grid grid-cols-2 gap-5">
               <div>
-                <label class="block text-xs font-medium text-gray-600 mb-2">
-                  端口
+                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Port
                 </label>
-                <input
-                  v-model="form.port"
-                  type="text"
-                  placeholder="80,443 或 1000-2000"
-                  class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-                />
+                <div class="relative">
+                  <input
+                    v-model="form.port"
+                    type="text"
+                    placeholder="80,443 or 1000-2000"
+                    class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all pl-10"
+                  />
+                  <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <div class="i-carbon-port-input text-lg"></div>
+                  </div>
+                </div>
               </div>
 
               <div>
-                <label class="block text-xs font-medium text-gray-600 mb-2">
-                  网络类型
+                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                  Network
                 </label>
-                <select
-                  v-model="form.network"
-                  class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-                >
-                  <option value="">全部</option>
-                  <option value="tcp">TCP</option>
-                  <option value="udp">UDP</option>
-                  <option value="tcp,udp">TCP+UDP</option>
-                </select>
+                <div class="relative">
+                  <select
+                    v-model="form.network"
+                    class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all appearance-none pl-10"
+                  >
+                    <option value="">All Networks</option>
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                    <option value="tcp,udp">TCP + UDP</option>
+                  </select>
+                  <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                    <div class="i-carbon-network-overlay text-lg"></div>
+                  </div>
+                  <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+                    <div class="i-carbon-chevron-down"></div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -151,25 +179,28 @@
     </transition>
 
     <!-- 规则预览 -->
-    <div class="bg-gray-50 rounded-xl p-4 border border-gray-200">
-      <h4 class="text-xs font-semibold text-gray-600 mb-2">规则预览</h4>
-      <pre class="text-xs text-gray-700 font-mono bg-white p-3 rounded-lg overflow-x-auto">{{ JSON.stringify(previewRule, null, 2) }}</pre>
+    <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 shadow-inner">
+      <h4 class="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+        <div class="i-carbon-code"></div>
+        Preview
+      </h4>
+      <pre class="text-xs text-gray-300 font-mono overflow-x-auto custom-scrollbar">{{ JSON.stringify(previewRule, null, 2) }}</pre>
     </div>
 
     <!-- 操作按钮 -->
-    <div class="flex justify-end gap-3 pt-4 border-t border-gray-200">
+    <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
       <button
         type="button"
         @click="$emit('cancel')"
-        class="px-6 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50 hover:shadow-md transition-all active-scale"
+        class="btn-ghost"
       >
-        取消
+        Cancel
       </button>
       <button
         type="submit"
-        class="px-6 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl hover:shadow-lg transition-all active-scale"
+        class="btn-primary shadow-lg shadow-primary-500/20"
       >
-        {{ isEdit ? '更新规则' : '添加规则' }}
+        {{ isEdit ? 'Update Rule' : 'Add Rule' }}
       </button>
     </div>
   </form>
@@ -296,5 +327,13 @@ const handleSubmit = () => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 4px;
 }
 </style>

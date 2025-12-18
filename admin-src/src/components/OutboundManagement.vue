@@ -3,110 +3,119 @@
     <!-- 头部 -->
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
       <div>
-        <h2 class="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-          上游代理管理
+        <h2 class="text-2xl font-bold text-gray-900 tracking-tight">
+          Outbound Proxies
         </h2>
-        <p class="text-sm text-gray-500 mt-1">配置和管理上游代理服务器</p>
+        <p class="text-sm text-gray-500 mt-1">Manage upstream proxy servers</p>
       </div>
       <button
         @click="showAddForm = true"
-        class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all active-scale flex items-center gap-2"
+        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
       >
-        <span>+</span>
-        <span>添加代理</span>
+        <div class="i-carbon-add text-lg"></div>
+        <span>Add Proxy</span>
       </button>
     </div>
 
     <!-- 加载状态 -->
-    <div v-if="adminStore.outboundsLoading" class="flex items-center justify-center py-12">
+    <div v-if="adminStore.outboundsLoading" class="flex items-center justify-center py-20">
       <div class="text-center">
-        <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3"></div>
-        <p class="text-gray-500 text-sm">加载中...</p>
+        <div class="loading-ring w-10 h-10 relative mx-auto mb-4"></div>
+        <p class="text-gray-400 text-sm font-medium tracking-wide">LOADING...</p>
       </div>
     </div>
 
     <!-- 错误状态 -->
     <div
       v-else-if="adminStore.outboundsError"
-      class="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl"
+      class="p-4 bg-red-50/80 border border-red-100 text-red-600 rounded-xl flex items-center gap-3"
     >
-      {{ adminStore.outboundsError }}
+      <div class="i-carbon-warning-alt text-lg"></div>
+      <span class="font-medium">{{ adminStore.outboundsError }}</span>
     </div>
 
     <!-- 空状态 -->
     <div
       v-else-if="adminStore.outbounds.length === 0"
-      class="text-center py-16 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl border border-gray-200"
+      class="flex flex-col items-center justify-center py-20 bg-gray-50/50 rounded-2xl border border-gray-100 border-dashed"
     >
-      <div class="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <span class="text-3xl">🔗</span>
+      <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
+        <div class="i-carbon-link text-3xl"></div>
       </div>
-      <p class="text-gray-500">暂无上游代理</p>
+      <h3 class="text-lg font-bold text-gray-700 mb-1">No Proxies Found</h3>
+      <p class="text-gray-400 text-sm">Add an outbound proxy to get started</p>
     </div>
 
     <!-- 代理卡片列表 -->
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-5">
       <transition-group name="list" tag="div" class="contents">
         <div
           v-for="(outbound, index) in adminStore.outbounds"
           :key="outbound.tag"
           :style="{ 'animation-delay': `${index * 50}ms` }"
-          class="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-lg transition-all animate-slide-up"
+          class="card-base p-6 hover:shadow-md transition-all animate-slide-up group"
         >
-          <div class="flex justify-between items-start mb-3">
+          <div class="flex justify-between items-start mb-4">
             <div class="flex-1">
-              <h3 class="text-lg font-bold text-gray-800 mb-1">{{ outbound.tag }}</h3>
-              <p class="text-xs text-gray-500">
-                协议: <span class="font-medium text-gray-700">{{ outbound.protocol }}</span>
-              </p>
+              <h3 class="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
+                {{ outbound.tag }}
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-500 uppercase tracking-wider">
+                  {{ outbound.protocol }}
+                </span>
+              </h3>
             </div>
-            <div class="flex gap-2">
-              <button
+            <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+               <button
                 @click="testLatency(outbound.tag)"
                 :disabled="testingLatency === outbound.tag"
-                class="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 disabled:opacity-50 transition-all"
+                class="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                :title="testingLatency === outbound.tag ? 'Testing...' : 'Test Latency'"
               >
-                {{ testingLatency === outbound.tag ? '测试中...' : '测试延迟' }}
+                <div :class="testingLatency === outbound.tag ? 'animate-spin' : ''" class="i-carbon-activity text-lg"></div>
               </button>
               <button
                 @click="editOutbound(outbound)"
-                class="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-all"
+                class="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                title="Edit"
               >
-                编辑
+                <div class="i-carbon-edit text-lg"></div>
               </button>
               <button
                 @click="deleteOutbound(outbound.tag)"
-                class="px-3 py-1.5 text-xs font-medium bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-all"
+                class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                title="Delete"
               >
-                删除
+                <div class="i-carbon-trash-can text-lg"></div>
               </button>
             </div>
           </div>
           
-          <div v-if="latencyResults[outbound.tag]" class="mb-3 p-2 bg-gray-50 rounded-lg">
-            <span class="text-xs text-gray-600">UDP 延迟: </span>
+          <div v-if="latencyResults[outbound.tag]" class="mb-4 p-2.5 bg-gray-50/50 rounded-lg border border-gray-100 flex items-center justify-between">
+            <span class="text-xs font-medium text-gray-500">UDP Latency</span>
             <span
               :class="
                 latencyResults[outbound.tag].latency
-                  ? 'text-green-600 font-semibold'
-                  : 'text-red-600'
+                  ? 'text-green-600 font-bold'
+                  : 'text-red-500 font-medium'
               "
+              class="text-sm"
             >
               {{
                 latencyResults[outbound.tag].latency
-                  ? `${latencyResults[outbound.tag].latency}ms`
-                  : latencyResults[outbound.tag].error || '未知'
+                  ? `${latencyResults[outbound.tag].latency} ms`
+                  : latencyResults[outbound.tag].error || 'Failed'
               }}
             </span>
           </div>
           
-          <details class="cursor-pointer group">
-            <summary class="text-xs text-gray-500 group-hover:text-gray-700 transition-colors">
-              查看配置
+          <details class="cursor-pointer group/details">
+            <summary class="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors flex items-center gap-1 select-none">
+              <div class="i-carbon-chevron-right group-open/details:rotate-90 transition-transform"></div>
+              View Configuration
             </summary>
-            <pre
-              class="mt-2 p-3 bg-gray-50 rounded-lg text-xs overflow-x-auto border border-gray-200"
-            >{{ JSON.stringify(outbound.settings, null, 2) }}</pre>
+            <div class="mt-3 p-3 bg-gray-900 rounded-xl overflow-hidden shadow-inner">
+               <pre class="text-[10px] text-gray-300 font-mono overflow-x-auto custom-scrollbar">{{ JSON.stringify(outbound.settings, null, 2) }}</pre>
+            </div>
           </details>
         </div>
       </transition-group>
@@ -116,14 +125,17 @@
     <transition name="modal">
       <div
         v-if="showAddForm || editingOutbound"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all"
         @click.self="closeForm"
       >
-        <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto animate-scale-in">
-          <div class="p-6 border-b border-gray-200">
-            <h3 class="text-xl font-bold text-gray-800">
-              {{ editingOutbound ? '编辑代理' : '添加代理' }}
+        <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto animate-scale-in border border-gray-100">
+          <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <h3 class="text-lg font-bold text-gray-900">
+              {{ editingOutbound ? 'Edit Proxy' : 'Add New Proxy' }}
             </h3>
+            <button @click="closeForm" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <div class="i-carbon-close text-xl"></div>
+            </button>
           </div>
           <div class="p-6">
             <OutboundForm
@@ -168,12 +180,12 @@ const editOutbound = (outbound: OutboundConfig) => {
 
 const deleteOutbound = async (tag: string) => {
   if (!nodeStore.currentNodeId) return;
-  if (!confirm('确定要删除这个代理吗？')) return;
+  if (!confirm('Are you sure you want to delete this proxy?')) return;
 
   try {
     await adminStore.deleteOutbound(nodeStore.currentNodeId, tag);
   } catch (err: any) {
-    alert(err.message || '删除代理失败');
+    alert(err.message || 'Failed to delete proxy');
   }
 };
 
@@ -185,7 +197,7 @@ const testLatency = async (tag: string) => {
     const result = await adminApi.queryUdpLatency(nodeStore.currentNodeId, tag);
     latencyResults.value[tag] = result;
   } catch (err: any) {
-    latencyResults.value[tag] = { error: err.message || '测试失败' };
+    latencyResults.value[tag] = { error: err.message || 'Test failed' };
   } finally {
     testingLatency.value = null;
   }
@@ -214,7 +226,7 @@ const handleSubmit = async (outboundData: {
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || '操作失败');
+    alert(err.message || 'Operation failed');
   }
 };
 
@@ -227,7 +239,7 @@ const closeForm = () => {
 <style scoped>
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-smooth);
 }
 
 .list-enter-from {
@@ -242,11 +254,19 @@ const closeForm = () => {
 
 .modal-enter-active,
 .modal-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.3s var(--ease-smooth);
 }
 
 .modal-enter-from,
 .modal-leave-to {
   opacity: 0;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #4b5563;
+  border-radius: 4px;
 }
 </style>

@@ -6,7 +6,7 @@ export default defineComponent({
 });
 </script>
 <template>
-  <div class="app min-h-screen">
+  <div class="app min-h-screen text-body selection:bg-primary-100 selection:text-primary-700">
     <router-view v-slot="{ Component, route }">
       <transition
         name="page"
@@ -23,8 +23,8 @@ export default defineComponent({
 /* 页面过渡动画 */
 .page-enter-active,
 .page-leave-active {
-  transition: opacity var(--transition-base) var(--ease-in-out),
-              transform var(--transition-base) var(--ease-in-out);
+  transition: opacity var(--transition-base) var(--ease-smooth),
+              transform var(--transition-base) var(--ease-smooth);
 }
 
 .page-enter-from {

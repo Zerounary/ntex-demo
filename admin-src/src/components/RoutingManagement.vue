@@ -3,107 +3,128 @@
     <!-- 头部 -->
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
       <div>
-        <h2 class="text-2xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-          路由配置管理
+        <h2 class="text-2xl font-bold text-gray-900 tracking-tight">
+          Routing Rules
         </h2>
-        <p class="text-sm text-gray-500 mt-1">配置流量路由规则</p>
+        <p class="text-sm text-gray-500 mt-1">Configure traffic routing rules</p>
       </div>
       <button
         @click="showAddRuleForm = true"
-        class="px-6 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all active-scale flex items-center gap-2"
+        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
       >
-        <span>+</span>
-        <span>添加规则</span>
+        <div class="i-carbon-add text-lg"></div>
+        <span>Add Rule</span>
       </button>
     </div>
 
     <!-- 加载状态 -->
-    <div v-if="adminStore.routingLoading" class="flex items-center justify-center py-12">
+    <div v-if="adminStore.routingLoading" class="flex items-center justify-center py-20">
       <div class="text-center">
-        <div class="w-12 h-12 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3"></div>
-        <p class="text-gray-500 text-sm">加载中...</p>
+        <div class="loading-ring w-10 h-10 relative mx-auto mb-4"></div>
+        <p class="text-gray-400 text-sm font-medium tracking-wide">LOADING...</p>
       </div>
     </div>
 
     <!-- 错误状态 -->
     <div
       v-else-if="adminStore.routingError"
-      class="p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl"
+      class="p-4 bg-red-50/80 border border-red-100 text-red-600 rounded-xl flex items-center gap-3"
     >
-      {{ adminStore.routingError }}
+      <div class="i-carbon-warning-alt text-lg"></div>
+      <span class="font-medium">{{ adminStore.routingError }}</span>
     </div>
 
     <!-- 路由配置 -->
-    <div v-else-if="!adminStore.routing" class="text-center py-16 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl border border-gray-200">
-      <div class="w-20 h-20 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <span class="text-3xl">🛣️</span>
+    <div v-else-if="!adminStore.routing" class="flex flex-col items-center justify-center py-20 bg-gray-50/50 rounded-2xl border border-gray-100 border-dashed">
+      <div class="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 text-gray-400">
+        <div class="i-carbon-direction-fork text-3xl"></div>
       </div>
-      <p class="text-gray-500">暂无路由配置</p>
+      <h3 class="text-lg font-bold text-gray-700 mb-1">No Routing Configured</h3>
+      <p class="text-gray-400 text-sm">Initialize routing configuration to proceed</p>
     </div>
 
     <div v-else class="space-y-6">
       <!-- Domain Strategy -->
-      <div class="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm">
-        <label class="block text-sm font-semibold text-gray-700 mb-3">
+      <div class="card-base p-6">
+        <label class="block text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+          <div class="i-carbon-settings text-gray-500"></div>
           Domain Strategy
         </label>
-        <select
-          v-model="domainStrategy"
-          @change="updateDomainStrategy"
-          class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent transition-all"
-        >
-          <option value="AsIs">AsIs</option>
-          <option value="UseIP">UseIP</option>
-          <option value="UseIPv4">UseIPv4</option>
-          <option value="UseIPv6">UseIPv6</option>
-        </select>
-        <p class="mt-2 text-xs text-gray-500">域名解析策略</p>
+        <div class="relative max-w-md">
+          <select
+            v-model="domainStrategy"
+            @change="updateDomainStrategy"
+            class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all appearance-none"
+          >
+            <option value="AsIs">AsIs</option>
+            <option value="UseIP">UseIP</option>
+            <option value="UseIPv4">UseIPv4</option>
+            <option value="UseIPv6">UseIPv6</option>
+          </select>
+          <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+            <div class="i-carbon-chevron-down"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-gray-400">Controls how domains are resolved in routing decisions</p>
       </div>
 
       <!-- 路由规则列表 -->
       <div>
-        <h3 class="text-lg font-semibold text-gray-800 mb-4">路由规则</h3>
-        <div v-if="adminStore.routing.rules.length === 0" class="text-center py-12 bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl border border-gray-200">
-          <p class="text-gray-500">暂无路由规则</p>
+        <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <div class="w-1 h-6 bg-primary-500 rounded-full"></div>
+          Rules
+          <span class="text-sm font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{{ adminStore.routing.rules.length }}</span>
+        </h3>
+        
+        <div v-if="adminStore.routing.rules.length === 0" class="text-center py-12 bg-gray-50/50 rounded-2xl border border-gray-100 border-dashed">
+          <p class="text-gray-400">No routing rules defined</p>
         </div>
+        
         <div v-else class="space-y-3">
           <transition-group name="list" tag="div">
             <div
               v-for="(rule, index) in adminStore.routing.rules"
               :key="index"
-              class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all animate-slide-up"
+              class="card-base p-5 hover:shadow-md hover:-translate-x-[-4px] transition-all animate-slide-up group border-l-4 border-l-transparent hover:border-l-primary-500"
             >
               <div class="flex justify-between items-start mb-3">
                 <div class="flex-1">
-                  <h4 class="font-semibold text-gray-800 mb-1">
-                    规则 #{{ index + 1 }} - {{ rule.type }}
-                  </h4>
-                  <p v-if="rule.outbound_tag" class="text-sm text-gray-600">
-                    出站: <span class="font-mono text-indigo-600">{{ rule.outbound_tag }}</span>
-                  </p>
+                  <div class="flex items-center gap-3 mb-1">
+                    <span class="text-xs font-mono text-gray-400">#{{ index + 1 }}</span>
+                    <h4 class="font-bold text-gray-800">
+                      {{ rule.type }}
+                    </h4>
+                    <span v-if="rule.outbound_tag" class="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-mono font-medium border border-indigo-100">
+                      ➜ {{ rule.outbound_tag }}
+                    </span>
+                  </div>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     @click="editRule(index, rule)"
-                    class="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-700 rounded-lg hover:bg-indigo-100 transition-all"
+                    class="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                    title="Edit"
                   >
-                    编辑
+                    <div class="i-carbon-edit text-lg"></div>
                   </button>
                   <button
                     @click="deleteRule(index)"
-                    class="px-3 py-1.5 text-xs font-medium bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-all"
+                    class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    title="Delete"
                   >
-                    删除
+                    <div class="i-carbon-trash-can text-lg"></div>
                   </button>
                 </div>
               </div>
-              <details class="cursor-pointer group">
-                <summary class="text-xs text-gray-500 group-hover:text-gray-700 transition-colors">
-                  查看详情
+              
+              <details class="cursor-pointer group/details">
+                <summary class="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors flex items-center gap-1 select-none">
+                  <div class="i-carbon-chevron-right group-open/details:rotate-90 transition-transform"></div>
+                  View Details
                 </summary>
-                <pre
-                  class="mt-2 p-3 bg-gray-50 rounded-lg text-xs overflow-x-auto border border-gray-200"
-                >{{ JSON.stringify(rule, null, 2) }}</pre>
+                <div class="mt-2 p-3 bg-gray-50/80 rounded-lg border border-gray-100">
+                  <pre class="text-[10px] text-gray-600 font-mono overflow-x-auto whitespace-pre-wrap">{{ JSON.stringify(rule, null, 2) }}</pre>
+                </div>
               </details>
             </div>
           </transition-group>
@@ -115,14 +136,17 @@
     <transition name="modal">
       <div
         v-if="showAddRuleForm || editingRuleIndex !== null"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+        class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all"
         @click.self="closeForm"
       >
-        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-scale-in">
-          <div class="p-6 border-b border-gray-200">
-            <h3 class="text-xl font-bold text-gray-800">
-              {{ editingRuleIndex !== null ? '编辑规则' : '添加规则' }}
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-scale-in border border-gray-100">
+          <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <h3 class="text-lg font-bold text-gray-900">
+              {{ editingRuleIndex !== null ? 'Edit Rule' : 'Add Rule' }}
             </h3>
+            <button @click="closeForm" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <div class="i-carbon-close text-xl"></div>
+            </button>
           </div>
           <div class="p-6">
             <RoutingRuleForm
@@ -180,7 +204,7 @@ const updateDomainStrategy = async () => {
       domain_strategy: domainStrategy.value,
     });
   } catch (err: any) {
-    alert(err.message || '更新 Domain Strategy 失败');
+    alert(err.message || 'Failed to update Domain Strategy');
   }
 };
 
@@ -191,12 +215,12 @@ const editRule = (index: number, rule: RoutingRule) => {
 
 const deleteRule = async (index: number) => {
   if (!nodeStore.currentNodeId) return;
-  if (!confirm('确定要删除这个规则吗？')) return;
+  if (!confirm('Are you sure you want to delete this rule?')) return;
 
   try {
     await adminStore.deleteRoutingRule(nodeStore.currentNodeId, index);
   } catch (err: any) {
-    alert(err.message || '删除规则失败');
+    alert(err.message || 'Failed to delete rule');
   }
 };
 
@@ -215,7 +239,7 @@ const handleSubmit = async (rule: RoutingRule) => {
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || '操作失败');
+    alert(err.message || 'Operation failed');
   }
 };
 
@@ -228,22 +252,22 @@ const closeForm = () => {
 <style scoped>
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--ease-smooth);
 }
 
 .list-enter-from {
   opacity: 0;
-  transform: translateX(-20px);
+  transform: translateX(-10px);
 }
 
 .list-leave-to {
   opacity: 0;
-  transform: translateX(20px);
+  transform: translateX(10px);
 }
 
 .modal-enter-active,
 .modal-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity 0.3s var(--ease-smooth);
 }
 
 .modal-enter-from,

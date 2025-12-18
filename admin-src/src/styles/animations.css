@@ -1,25 +1,17 @@
 /* 动画定义 */
 
-/* 淡入淡出 */
+/* 核心动画关键帧 */
+
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes fadeOut {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
-/* 滑入滑出 */
 @keyframes slideInUp {
   from {
     transform: translateY(20px);
@@ -42,29 +34,6 @@
   }
 }
 
-@keyframes slideInLeft {
-  from {
-    transform: translateX(-20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-@keyframes slideInRight {
-  from {
-    transform: translateX(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-/* 缩放 */
 @keyframes scaleIn {
   from {
     transform: scale(0.95);
@@ -76,114 +45,97 @@
   }
 }
 
-@keyframes scaleOut {
-  from {
-    transform: scale(1);
-    opacity: 1;
-  }
-  to {
-    transform: scale(0.95);
-    opacity: 0;
-  }
-}
-
-/* 脉冲 */
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
-/* 旋转 */
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* 弹跳 */
-@keyframes bounce {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-10px);
-  }
-}
-
-/* 闪烁 */
+/* 玻璃拟态光效 */
 @keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-/* 工具类 */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* 工具类 - 使用新版设计令牌 */
+
 .animate-fade-in {
-  animation: fadeIn var(--transition-base) var(--ease-out);
+  animation: fadeIn var(--transition-base) forwards;
 }
 
 .animate-slide-up {
-  animation: slideInUp var(--transition-base) var(--ease-out);
+  animation: slideInUp var(--transition-base) forwards;
 }
 
 .animate-scale-in {
-  animation: scaleIn var(--transition-base) var(--ease-spring);
+  animation: scaleIn var(--transition-base) forwards;
+}
+
+.animate-float {
+  animation: float 4s var(--ease-smooth) infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
 }
 
 /* 过渡类 */
 .transition-all {
-  transition: all var(--transition-base) var(--ease-in-out);
+  transition: all var(--transition-base);
 }
 
 .transition-fast {
-  transition: all var(--transition-fast) var(--ease-in-out);
+  transition: all var(--transition-fast);
 }
 
 .transition-slow {
-  transition: all var(--transition-slow) var(--ease-in-out);
+  transition: all var(--transition-slow);
 }
 
-/* 悬浮效果 */
+/* 交互效果 */
 .hover-lift {
-  transition: transform var(--transition-base) var(--ease-out), 
-              box-shadow var(--transition-base) var(--ease-out);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .hover-lift:hover {
   transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
 }
 
-/* 点击反馈 */
+.hover-glow {
+  transition: box-shadow var(--transition-base);
+}
+
+.hover-glow:hover {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+}
+
+.active-scale {
+  transition: transform var(--transition-fast);
+}
+
 .active-scale:active {
-  transform: scale(0.98);
+  transform: scale(0.96);
 }
 
 /* 加载动画 */
-@keyframes loading-dots {
-  0%, 20% {
-    content: '.';
-  }
-  40% {
-    content: '..';
-  }
-  60%, 100% {
-    content: '...';
-  }
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
 }
 
-.loading::after {
+.loading-ring::before {
   content: '';
-  animation: loading-dots 1.5s steps(4, end) infinite;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: var(--color-primary);
+  animation: pulse-ring 2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
 }
-

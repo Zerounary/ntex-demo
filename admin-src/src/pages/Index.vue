@@ -1,21 +1,22 @@
 <template>
-  <div class="index-page min-h-screen p-6 md:p-8 lg:p-12">
+  <div class="index-page min-h-screen p-6 md:p-10 lg:p-14">
     <!-- 页面头部 -->
-    <div class="mb-8 animate-slide-up">
-      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div class="mb-12 animate-slide-up">
+      <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
         <div>
-          <h1 class="text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-2">
-            节点管理
+          <h1 class="text-4xl font-bold text-gray-900 tracking-tight mb-3">
+            Nodes
+            <span class="text-primary-400">.</span>
           </h1>
-          <p class="text-gray-500 text-sm">管理和监控您的 Xray-core 节点</p>
+          <p class="text-gray-500 font-medium">Manage and monitor your infrastructure</p>
         </div>
         <button
           @click="refreshNodes"
           :disabled="nodeStore.loading"
-          class="px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed transition-all active-scale flex items-center gap-2"
+          class="btn-primary flex items-center gap-2.5 px-6 py-2.5"
         >
-          <span v-if="!nodeStore.loading">刷新</span>
-          <span v-else class="animate-spin">⟳</span>
+          <div :class="nodeStore.loading ? 'animate-spin' : ''" class="i-carbon-renew text-lg"></div>
+          <span class="text-sm font-semibold tracking-wide">REFRESH</span>
         </button>
       </div>
     </div>
@@ -24,38 +25,38 @@
     <transition name="fade">
       <div
         v-if="nodeStore.error"
-        class="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 rounded-xl shadow-sm animate-slide-up"
+        class="mb-8 p-4 bg-red-50/80 border border-red-100 text-red-600 rounded-2xl shadow-sm animate-slide-up flex items-center gap-3"
       >
-        {{ nodeStore.error }}
+        <div class="i-carbon-warning-alt text-xl"></div>
+        <span class="font-medium">{{ nodeStore.error }}</span>
       </div>
     </transition>
 
     <!-- 加载状态 -->
     <div
       v-if="nodeStore.loading && nodeStore.nodes.length === 0"
-      class="flex items-center justify-center py-20"
+      class="flex flex-col items-center justify-center py-32 animate-fade-in"
     >
-      <div class="text-center">
-        <div class="w-16 h-16 border-4 border-indigo-200 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
-        <p class="text-gray-500">加载中...</p>
-      </div>
+      <div class="loading-ring w-12 h-12 relative mb-6"></div>
+      <p class="text-gray-400 font-medium tracking-wide">SYNCING DATA...</p>
     </div>
 
     <!-- 空状态 -->
     <div
       v-else-if="nodeStore.sortedNodes.length === 0"
-      class="text-center py-20"
+      class="flex flex-col items-center justify-center py-32 animate-fade-in"
     >
-      <div class="w-24 h-24 bg-gradient-to-br from-indigo-100 to-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <span class="text-4xl">📡</span>
+      <div class="w-32 h-32 bg-gray-50 rounded-full flex items-center justify-center mb-6 border border-gray-100">
+        <div class="i-carbon-cloud-satellite text-4xl text-gray-300"></div>
       </div>
-      <p class="text-gray-500 text-lg">暂无节点</p>
+      <h3 class="text-xl font-bold text-gray-700 mb-2">No Nodes Found</h3>
+      <p class="text-gray-400">Add a new node to get started</p>
     </div>
 
     <!-- 节点网格 -->
     <div
       v-else
-      class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+      class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"
     >
       <transition-group name="list" tag="div" class="contents">
         <NodeCard
@@ -64,7 +65,7 @@
           :node="node"
           :style="{ 'animation-delay': `${index * 50}ms` }"
           @click="goToNodeDetail(node.node_id)"
-          class="animate-slide-up hover-lift cursor-pointer"
+          class="animate-slide-up"
         />
       </transition-group>
     </div>
@@ -96,12 +97,12 @@ const goToNodeDetail = (nodeId: number) => {
 <style scoped>
 .list-enter-active,
 .list-leave-active {
-  transition: all 0.3s ease;
+  transition: all 0.4s var(--ease-spring);
 }
 
 .list-enter-from {
   opacity: 0;
-  transform: translateY(20px);
+  transform: translateY(30px) scale(0.95);
 }
 
 .list-leave-to {
