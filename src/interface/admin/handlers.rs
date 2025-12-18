@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule, User};
+use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 use sea_orm::DatabaseConnection;
 

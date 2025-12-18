@@ -69,7 +69,7 @@ async fn main() -> std::io::Result<()> {
     
     // 启动 MQTT 客户端用于接收节点上报数据
     info!("正在启动 MQTT 客户端...");
-    let mqtt_client = mqtt_client::MqttClientManager::start(admin_config.clone())
+    let mqtt_client = mqtt_client::MqttClientManager::start(admin_config.clone(), db.clone())
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT 客户端启动失败: {}", e)))?;
     info!("MQTT 客户端启动成功");

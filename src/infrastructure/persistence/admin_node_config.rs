@@ -12,6 +12,17 @@ pub struct Model {
     pub inbounds: JsonValue,
     #[sea_orm(default_value = "0")]
     pub maintenance_mode: bool,
+    // 实时状态字段
+    #[sea_orm(nullable)]
+    pub cpu_usage: Option<String>,  // CPU 使用率，如 "50%"
+    #[sea_orm(nullable)]
+    pub mem_usage: Option<String>,  // 内存使用率，如 "60%"
+    #[sea_orm(nullable)]
+    pub disk_usage: Option<String>, // 磁盘使用率，如 "40%"
+    #[sea_orm(nullable)]
+    pub uptime: Option<u64>,        // 运行时间（秒）
+    #[sea_orm(nullable)]
+    pub online_user_count: Option<u64>, // 在线用户数
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]

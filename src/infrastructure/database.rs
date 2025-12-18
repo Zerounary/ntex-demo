@@ -3,7 +3,8 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
     admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
-    cdk_code, config_entry, wechat_ticket,
+    cdk_code, config_entry, node_illegal_log, node_online_user_log, node_outbound_event_log,
+    node_outbound_latency_log, node_status_log, node_traffic_log, wechat_ticket,
 };
 
 pub async fn connect(url: &str) -> Result<DatabaseConnection, DbErr> {
@@ -28,6 +29,12 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
         schema.create_table_from_entity(cdk_code::Entity),
         schema.create_table_from_entity(config_entry::Entity),
         schema.create_table_from_entity(wechat_ticket::Entity),
+        schema.create_table_from_entity(node_traffic_log::Entity),
+        schema.create_table_from_entity(node_status_log::Entity),
+        schema.create_table_from_entity(node_online_user_log::Entity),
+        schema.create_table_from_entity(node_illegal_log::Entity),
+        schema.create_table_from_entity(node_outbound_event_log::Entity),
+        schema.create_table_from_entity(node_outbound_latency_log::Entity),
     ] {
         let mut stmt = table;
         stmt.if_not_exists();
