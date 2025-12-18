@@ -13,6 +13,8 @@ use std::collections::HashMap;
 use std::fs;
 use log::{info, error, warn, debug};
 
+use crate::infrastructure::admin_config::AdminConfigStore;
+
 /// 响应等待器
 type ResponseWaiter = tokio::sync::oneshot::Sender<Value>;
 
@@ -21,11 +23,12 @@ pub struct MqttClientManager {
     client: Arc<AsyncClient>,
     shutdown_flag: Arc<tokio::sync::Notify>,
     response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+    admin_config: AdminConfigStore,
 }
 
 impl MqttClientManager {
     /// 创建并启动 MQTT 客户端
-    pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn start(admin_config: AdminConfigStore) -> Result<Self, Box<dyn std::error::Error>> {
         // 从环境变量获取配置
         let broker_host = env::var("MQTT_BROKER_HOST")
             .unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -174,8 +177,9 @@ impl MqttClientManager {
         let client_clone = client_arc.clone();
         let shutdown_clone = shutdown_flag.clone();
         let response_waiters_clone = response_waiters.clone();
+        let admin_config_clone = admin_config.clone();
         tokio::spawn(async move {
-            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone).await;
+            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone, admin_config_clone).await;
         });
         
         // 等待连接建立（给事件循环一些时间处理连接）
@@ -198,6 +202,7 @@ impl MqttClientManager {
             client: client_arc,
             shutdown_flag,
             response_waiters,
+            admin_config,
         })
     }
     
@@ -207,6 +212,7 @@ impl MqttClientManager {
         _client: Arc<AsyncClient>,
         shutdown_flag: Arc<tokio::sync::Notify>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        admin_config: AdminConfigStore,
     ) {
         info!("🚀 MQTT 客户端事件循环已启动");
         
@@ -230,7 +236,8 @@ impl MqttClientManager {
                                 // 尝试从 topic 解析信息并发送错误响应
                                 Self::handle_oversized_message(client_clone, publish.topic.clone(), publish.payload.len()).await;
                             } else {
-                                Self::handle_message(client_clone, response_waiters_clone, publish.topic, publish.payload).await;
+                                let admin_config_clone = admin_config.clone();
+                                Self::handle_message(client_clone, response_waiters_clone, admin_config_clone, publish.topic, publish.payload).await;
                             }
                         }
                         Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
@@ -361,6 +368,7 @@ impl MqttClientManager {
     async fn handle_message(
         client: Arc<AsyncClient>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        admin_config: AdminConfigStore,
         topic: String,
         payload: bytes::Bytes,
     ) {
@@ -477,8 +485,28 @@ impl MqttClientManager {
         
         info!("📨 [MQTT Request] node_id={}, action={}, request_id={}", node_id, action, request_id);
         
-        // 生成响应
-        let response = Self::handle_request(action, &data);
+        // 解析 node_id 为 u64
+        let node_id_u64 = match node_id.parse::<u64>() {
+            Ok(id) => id,
+            Err(e) => {
+                error!("❌ [MQTT Request] 无效的 node_id: {}, 错误: {}", node_id, e);
+                // 发送错误响应
+                let response_topic = format!("xrayr/node/{}/response/{}", node_id, request_id);
+                let error_response = serde_json::json!({
+                    "msg": "error",
+                    "error": format!("无效的 node_id: {}", node_id)
+                });
+                let response_json = serde_json::to_string(&error_response)
+                    .unwrap_or_else(|_| r#"{"msg":"error","error":"序列化响应失败"}"#.to_string());
+                if let Err(e) = client.publish(&response_topic, QoS::AtLeastOnce, false, response_json.as_bytes()).await {
+                    error!("❌ [MQTT] 发送错误响应失败: {}, 错误: {}", response_topic, e);
+                }
+                return;
+            }
+        };
+        
+        // 生成响应（异步方法）
+        let response = Self::handle_request(action, node_id_u64, &admin_config).await;
         
         // 如果返回 None，表示应该由节点端处理，管理端不发送响应
         if response.is_none() {
@@ -644,180 +672,85 @@ impl MqttClientManager {
     }
     
     /// 处理 MQTT 请求，返回响应数据
-    fn handle_request(action: &str, _request_data: &Value) -> Option<Value> {
+    async fn handle_request(action: &str, node_id: u64, admin_config: &AdminConfigStore) -> Option<Value> {
         match action {
             "user" => {
-                // 返回用户列表（使用 Python 脚本中的配置数据）
-                Some(serde_json::json!({
-                    "msg": "ok",
-                    "data": [
-                        {
-                            "id": 1,
-                            "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                            "st": 5,
-                            "dt": 0
-                        },
-                        {
-                            "id": 2,
-                            "uuid": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-                            "st": 1,
-                            "dt": 0
-                        },
-                        {
-                            "id": 3,
-                            "uuid": "c3d4e5f6-a7b8-9012-cdef-123456789012",
-                            "st": 1,
-                            "dt": 0
-                        },
-                        {
-                            "id": 4,
-                            "uuid": "d4e5f6a7-b8c9-0123-def0-234567890123",
-                            "st": 1,
-                            "dt": 0
-                        },
-                        {
-                            "id": 5,
-                            "uuid": "e5f6a7b8-c9d0-1234-ef01-345678901234",
-                            "st": 1,
-                            "dt": 0
-                        },
-                        {
-                            "id": 6,
-                            "uuid": "f6a7b8c9-d0e1-2345-f012-456789012345",
-                            "st": 1,
-                            "dt": 0
-                        }
-                    ]
-                }))
+                // 从数据库获取用户列表
+                match admin_config.get_users(node_id).await {
+                    Ok(users) => {
+                        Some(serde_json::json!({
+                            "msg": "ok",
+                            "data": users
+                        }))
+                    }
+                    Err(e) => {
+                        error!("❌ [MQTT Request] 获取用户列表失败: {}", e);
+                        Some(serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }))
+                    }
+                }
             }
             "config" => {
-                // 返回节点配置（使用 Python 脚本中的配置数据）
-                Some(serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "node_id": 41,
-                        "node_type": "Vmess",
-                        "node_speed_limit": 0,
-                        "traffic_rate": 1.0,
-                        "sort": 1,
-                        "inbounds": [
-                            {
-                                "port": 10086,
-                                "protocol": "vmess",
-                                "settings": {},
-                                "streamSettings": {
-                                    "network": "tcp"
-                                }
-                            }
-                        ]
+                // 从数据库获取节点配置
+                match admin_config.get_node_config(node_id).await {
+                    Ok(node_config) => {
+                        Some(serde_json::json!({
+                            "msg": "ok",
+                            "data": node_config
+                        }))
                     }
-                }))
+                    Err(e) => {
+                        error!("❌ [MQTT Request] 获取节点配置失败: {}", e);
+                        Some(serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }))
+                    }
+                }
             }
             "outbound" => {
-                // 返回上游代理配置（使用 Python 脚本中的配置数据）
-                Some(serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "outbounds": [
-                            {
-                                "tag": "block",
-                                "protocol": "blackhole",
-                                "settings": {
-                                    "response": {
-                                        "type": "http"
-                                    }
-                                }
-                            },
-                            {
-                                "tag": "direct",
-                                "protocol": "freedom",
-                                "settings": {}
-                            },
-                            {
-                                "tag": "ss_1",
-                                "protocol": "shadowsocks",
-                                "settings": {
-                                    "servers": [
-                                        {
-                                            "address": "67.209.176.181",
-                                            "port": 19166,
-                                            "method": "aes-256-gcm",
-                                            "password": "bxaeWJ4Kf9ZL59R3"
-                                        }
-                                    ]
-                                }
-                            },
-                            {
-                                "tag": "ss_2",
-                                "protocol": "shadowsocks",
-                                "settings": {
-                                    "servers": [
-                                        {
-                                            "address": "65.49.212.165",
-                                            "port": 19166,
-                                            "method": "aes-256-gcm",
-                                            "password": "bxaeWJ4Kf9ZL59R3"
-                                        }
-                                    ]
-                                }
-                            },
-                            {
-                                "tag": "ss_3",
-                                "protocol": "shadowsocks",
-                                "settings": {
-                                    "servers": [
-                                        {
-                                            "address": "65.49.212.165",
-                                            "port": 19166,
-                                            "method": "aes-256-gcm",
-                                            "password": "bxaeWJ4Kf9ZL59R3"
-                                        }
-                                    ]
-                                }
-                            },
-                            {
-                                "tag": "vmess_loopback",
-                                "protocol": "vmess",
-                                "settings": {
-                                    "vnext": [
-                                        {
-                                            "address": "127.0.0.1",
-                                            "port": 10086,
-                                            "users": [
-                                                {
-                                                    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                                                    "alterId": 0,
-                                                    "email": "t@t.tt",
-                                                    "security": "auto"
-                                                }
-                                            ]
-                                        }
-                                    ]
-                                },
-                                "streamSettings": {
-                                    "network": "tcp"
-                                }
+                // 从数据库获取上游代理配置
+                match admin_config.get_outbounds(node_id).await {
+                    Ok((outbounds, user_mapping)) => {
+                        Some(serde_json::json!({
+                            "msg": "ok",
+                            "data": {
+                                "outbounds": outbounds,
+                                "user_mapping": user_mapping
                             }
-                        ],
-                        "user_mapping": {
-                            "a1b2c3d4-e5f6-7890-abcd-ef1234567890": "ss_1",
-                            "b2c3d4e5-f6a7-8901-bcde-f12345678901": "ss_2",
-                            "c3d4e5f6-a7b8-9012-cdef-123456789012": "ss_3",
-                            "d4e5f6a7-b8c9-0123-def0-234567890123": "ss_1",
-                            "e5f6a7b8-c9d0-1234-ef01-345678901234": "ss_2"
-                        }
+                        }))
                     }
-                }))
+                    Err(e) => {
+                        error!("❌ [MQTT Request] 获取上游代理配置失败: {}", e);
+                        Some(serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }))
+                    }
+                }
             }
             "routing" => {
-                // 返回路由配置（使用 Python 脚本中的配置数据）
-                Some(serde_json::json!({
-                    "msg": "ok",
-                    "data": {
-                        "domainStrategy": "AsIs",
-                        "rules": []
+                // 从数据库获取路由配置
+                match admin_config.get_routing(node_id).await {
+                    Ok(routing) => {
+                        Some(serde_json::json!({
+                            "msg": "ok",
+                            "data": {
+                                "domainStrategy": routing.domain_strategy,
+                                "rules": routing.rules
+                            }
+                        }))
                     }
-                }))
+                    Err(e) => {
+                        error!("❌ [MQTT Request] 获取路由配置失败: {}", e);
+                        Some(serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }))
+                    }
+                }
             }
             "submit" | "nodestatus" | "onlineusers" | "illegal" 
             | "outbound_failure" | "outbound_recovery" 

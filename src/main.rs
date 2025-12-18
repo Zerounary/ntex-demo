@@ -64,15 +64,15 @@ async fn main() -> std::io::Result<()> {
     // 等待一小段时间确保 broker 完全启动
     tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     
+    // 创建管理配置存储
+    let admin_config = admin_config::AdminConfigStore::new(db.clone());
+    
     // 启动 MQTT 客户端用于接收节点上报数据
     info!("正在启动 MQTT 客户端...");
-    let mqtt_client = mqtt_client::MqttClientManager::start()
+    let mqtt_client = mqtt_client::MqttClientManager::start(admin_config.clone())
         .await
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT 客户端启动失败: {}", e)))?;
     info!("MQTT 客户端启动成功");
-
-    // 创建管理配置存储
-    let admin_config = admin_config::AdminConfigStore::new(db.clone());
     
     // 创建 MQTT 客户端 Arc 引用
     let mqtt_client_arc = std::sync::Arc::new(mqtt_client);
