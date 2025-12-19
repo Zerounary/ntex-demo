@@ -24,6 +24,28 @@ body {
   line-height: 1.6;
 }
 
+button,
+[type='button'],
+[type='submit'],
+[type='reset'] {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+}
+
+button:focus {
+  outline: none;
+}
+
+button::-moz-focus-inner {
+  border: 0;
+  padding: 0;
+}
+
 /* 字体定义 */
 @font-face {
   font-family: 'siddan';

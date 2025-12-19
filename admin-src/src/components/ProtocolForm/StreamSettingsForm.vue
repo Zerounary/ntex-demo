@@ -1,115 +1,112 @@
 <template>
   <div class="space-y-4">
-    <div class="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4 border border-gray-200">
-      <div class="flex items-center justify-between mb-3">
-        <h4 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-gray-400"></span>
-          传输设置 (StreamSettings)
+    <div class="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-5 border border-gray-200/60 shadow-sm">
+      <div class="flex items-center justify-between mb-4">
+        <h4 class="text-sm font-bold text-gray-700 flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-gray-500 shadow-sm shadow-gray-500/50"></div>
+          Stream Settings
         </h4>
-        <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+        <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none group">
           <input
             v-model="enabled"
             type="checkbox"
-            class="w-4 h-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary"
+            class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-400/50 transition-colors"
           />
-          <span>启用传输设置</span>
+          <span class="group-hover:text-primary-600 transition-colors">Enable Stream Settings</span>
         </label>
       </div>
       
-      <div v-if="enabled" class="space-y-3 animate-fade-in">
+      <div v-if="enabled" class="space-y-4 animate-fade-in">
         <div>
-          <label class="block text-xs font-medium text-gray-600 mb-1.5">
-            网络类型
-          </label>
-          <select
+          <BaseSelect
             v-model="config.network"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-all"
-          >
-            <option value="tcp">TCP</option>
-            <option value="kcp">mKCP</option>
-            <option value="ws">WebSocket</option>
-            <option value="http">HTTP/2</option>
-            <option value="quic">QUIC</option>
-            <option value="grpc">gRPC</option>
-          </select>
+            :options="networkOptions"
+            label="Network"
+          />
         </div>
         
         <!-- TLS 设置 -->
-        <div>
-          <label class="flex items-center gap-2 text-xs text-gray-600 mb-1.5">
+        <div class="bg-white/50 rounded-lg p-3 border border-gray-200/50">
+          <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 mb-2 cursor-pointer select-none group w-fit">
             <input
               v-model="config.security"
               type="checkbox"
               value="tls"
-              class="w-4 h-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary"
+              :true-value="'tls'"
+              :false-value="''"
+              class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-400/50 transition-colors"
             />
-            <span>启用 TLS</span>
+            <span class="group-hover:text-primary-600 transition-colors">Enable TLS</span>
           </label>
-        </div>
         
-        <div v-if="config.security === 'tls'" class="ml-6 space-y-2 pl-4 border-l-2 border-gray-200">
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">
-              服务器名称 (SNI)
-            </label>
-            <input
-              v-model="config.tlsSettings.serverName"
-              type="text"
-              placeholder="example.com"
-              class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-all"
-            />
-          </div>
-          
-          <div>
-            <label class="flex items-center gap-2 text-xs text-gray-600 mb-1.5">
+          <div v-if="config.security === 'tls'" class="space-y-3 pl-6 animate-fade-in">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1.5">
+                Server Name (SNI)
+              </label>
               <input
-                v-model="config.tlsSettings.allowInsecure"
-                type="checkbox"
-                class="w-4 h-4 rounded border-gray-300 text-primary focus:ring-2 focus:ring-primary"
+                v-model="config.tlsSettings.serverName"
+                type="text"
+                placeholder="example.com"
+                class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-gray-400/30 focus:border-gray-400 transition-all shadow-sm"
               />
-              <span>允许不安全连接</span>
-            </label>
+            </div>
+            
+            <div>
+              <label class="flex items-center gap-2 text-xs text-gray-600 cursor-pointer select-none group w-fit">
+                <input
+                  v-model="config.tlsSettings.allowInsecure"
+                  type="checkbox"
+                  class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-400/50 transition-colors"
+                />
+                <span class="group-hover:text-primary-600 transition-colors">Allow Insecure</span>
+              </label>
+            </div>
           </div>
         </div>
         
         <!-- WebSocket 设置 -->
-        <div v-if="config.network === 'ws'" class="ml-6 space-y-2 pl-4 border-l-2 border-gray-200">
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">
-              路径 (Path)
-            </label>
-            <input
-              v-model="config.wsSettings.path"
-              type="text"
-              placeholder="/path"
-              class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-all"
-            />
-          </div>
-          
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">
-              Host 头
-            </label>
-            <input
-              v-model="config.wsSettings.headers.Host"
-              type="text"
-              placeholder="example.com"
-              class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-all"
-            />
+        <div v-if="config.network === 'ws'" class="bg-white/50 rounded-lg p-3 border border-gray-200/50 animate-fade-in">
+           <h5 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">WebSocket Settings</h5>
+           <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1.5">
+                Path
+              </label>
+              <input
+                v-model="config.wsSettings.path"
+                type="text"
+                placeholder="/path"
+                class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-gray-400/30 focus:border-gray-400 transition-all shadow-sm"
+              />
+            </div>
+            
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1.5">
+                Host Header
+              </label>
+              <input
+                v-model="config.wsSettings.headers.Host"
+                type="text"
+                placeholder="example.com"
+                class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-gray-400/30 focus:border-gray-400 transition-all shadow-sm"
+              />
+            </div>
           </div>
         </div>
         
         <!-- gRPC 设置 -->
-        <div v-if="config.network === 'grpc'" class="ml-6 space-y-2 pl-4 border-l-2 border-gray-200">
+        <div v-if="config.network === 'grpc'" class="bg-white/50 rounded-lg p-3 border border-gray-200/50 animate-fade-in">
+          <h5 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">gRPC Settings</h5>
           <div>
             <label class="block text-xs font-medium text-gray-600 mb-1.5">
-              服务名称
+              Service Name
             </label>
             <input
               v-model="config.grpcSettings.serviceName"
               type="text"
               placeholder="GunService"
-              class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent transition-all"
+              class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-gray-400/30 focus:border-gray-400 transition-all shadow-sm"
             />
           </div>
         </div>
@@ -119,7 +116,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch } from 'vue';
+import BaseSelect from '@/components/BaseSelect.vue';
 
 interface Props {
   modelValue?: any;
@@ -151,6 +149,15 @@ const config = ref({
     serviceName: '',
   },
 });
+
+const networkOptions = [
+  { label: 'TCP', value: 'tcp' },
+  { label: 'mKCP', value: 'kcp' },
+  { label: 'WebSocket', value: 'ws' },
+  { label: 'HTTP/2', value: 'http' },
+  { label: 'QUIC', value: 'quic' },
+  { label: 'gRPC', value: 'grpc' },
+];
 
 watch(
   () => props.modelValue,

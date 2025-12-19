@@ -1,8 +1,12 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
+import ToastContainer from '@/components/ToastContainer.vue';
 
 export default defineComponent({
   name: 'App',
+  components: {
+    ToastContainer,
+  },
 });
 </script>
 <template>
@@ -16,6 +20,9 @@ export default defineComponent({
         <component :is="Component" :key="route.path" />
       </transition>
     </router-view>
+    
+    <!-- Global Toast Container -->
+    <ToastContainer />
   </div>
 </template>
 

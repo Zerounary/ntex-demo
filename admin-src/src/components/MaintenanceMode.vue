@@ -61,9 +61,11 @@
 import { ref, computed, onMounted } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
+import { useToastStore } from '@/stores/toast';
 
 const adminStore = useAdminStore();
 const nodeStore = useNodeStore();
+const toastStore = useToastStore();
 
 const loading = ref(false);
 
@@ -97,8 +99,9 @@ const handleToggle = async (event: Event) => {
   loading.value = true;
   try {
     await adminStore.setMaintenanceMode(nodeStore.currentNodeId, newValue);
+    toastStore.success(`Maintenance mode ${newValue ? 'enabled' : 'disabled'}`);
   } catch (err: any) {
-    alert(err.message || 'Failed to set maintenance mode');
+    toastStore.error(err.message || 'Failed to set maintenance mode');
     // Revert state
     target.checked = !newValue;
   } finally {

@@ -46,25 +46,16 @@
     <div v-else class="space-y-6">
       <!-- Domain Strategy -->
       <div class="card-base p-6">
-        <label class="block text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-          <div class="i-carbon-settings text-gray-500"></div>
-          Domain Strategy
-        </label>
-        <div class="relative max-w-md">
-          <select
-            v-model="domainStrategy"
-            @change="updateDomainStrategy"
-            class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all appearance-none"
-          >
-            <option value="AsIs">AsIs</option>
-            <option value="UseIP">UseIP</option>
-            <option value="UseIPv4">UseIPv4</option>
-            <option value="UseIPv6">UseIPv6</option>
-          </select>
-          <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-            <div class="i-carbon-chevron-down"></div>
-          </div>
-        </div>
+        <BaseSelect
+          v-model="domainStrategy"
+          :options="domainStrategyOptions"
+          label="Domain Strategy"
+          @update:modelValue="updateDomainStrategy"
+        >
+          <template #icon>
+            <div class="i-carbon-settings text-lg"></div>
+          </template>
+        </BaseSelect>
         <p class="mt-2 text-xs text-gray-400">Controls how domains are resolved in routing decisions</p>
       </div>
 
@@ -166,15 +157,25 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
+import { useToastStore } from '@/stores/toast';
 import RoutingRuleForm from './RoutingRuleForm.vue';
+import BaseSelect from '@/components/BaseSelect.vue';
 import type { RoutingRule } from '@/api/types';
 
 const adminStore = useAdminStore();
 const nodeStore = useNodeStore();
+const toastStore = useToastStore();
 
 const showAddRuleForm = ref(false);
 const editingRuleIndex = ref<number | null>(null);
 const domainStrategy = ref('AsIs');
+
+const domainStrategyOptions = [
+  { label: 'AsIs', value: 'AsIs' },
+  { label: 'UseIP', value: 'UseIP' },
+  { label: 'UseIPv4', value: 'UseIPv4' },
+  { label: 'UseIPv6', value: 'UseIPv6' },
+];
 
 const editingRule = computed(() => {
   if (editingRuleIndex.value === null || !adminStore.routing) return null;
@@ -203,8 +204,9 @@ const updateDomainStrategy = async () => {
     await adminStore.updateRouting(nodeStore.currentNodeId, {
       domain_strategy: domainStrategy.value,
     });
+    toastStore.success('Domain Strategy updated');
   } catch (err: any) {
-    alert(err.message || 'Failed to update Domain Strategy');
+    toastStore.error(err.message || 'Failed to update Domain Strategy');
   }
 };
 
@@ -219,8 +221,9 @@ const deleteRule = async (index: number) => {
 
   try {
     await adminStore.deleteRoutingRule(nodeStore.currentNodeId, index);
+    toastStore.success('Rule deleted successfully');
   } catch (err: any) {
-    alert(err.message || 'Failed to delete rule');
+    toastStore.error(err.message || 'Failed to delete rule');
   }
 };
 
@@ -234,12 +237,14 @@ const handleSubmit = async (rule: RoutingRule) => {
         editingRuleIndex.value,
         rule
       );
+      toastStore.success('Rule updated successfully');
     } else {
       await adminStore.addRoutingRule(nodeStore.currentNodeId, rule);
+      toastStore.success('Rule added successfully');
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || 'Operation failed');
+    toastStore.error(err.message || 'Operation failed');
   }
 };
 

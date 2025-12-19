@@ -1,35 +1,71 @@
 <template>
-  <div class="topology-canvas relative w-full h-full bg-gray-50 border border-gray-200 rounded-lg overflow-hidden">
-    <div class="absolute top-4 left-4 z-10 flex space-x-2">
-      <button
-        @click="zoomIn"
-        class="px-3 py-1 bg-white border border-gray-300 rounded shadow hover:bg-gray-50"
-      >
-        放大
-      </button>
-      <button
-        @click="zoomOut"
-        class="px-3 py-1 bg-white border border-gray-300 rounded shadow hover:bg-gray-50"
-      >
-        缩小
-      </button>
-      <button
-        @click="resetView"
-        class="px-3 py-1 bg-white border border-gray-300 rounded shadow hover:bg-gray-50"
-      >
-        重置
-      </button>
+  <div class="topology-canvas relative w-full h-full bg-slate-50/50 border border-gray-200 rounded-2xl overflow-hidden shadow-inner">
+    <!-- Controls -->
+    <div class="absolute top-4 left-4 z-10 flex flex-col gap-2">
+      <div class="flex flex-col bg-white rounded-xl shadow-lg border border-gray-100 overflow-hidden">
+        <button
+          @click="zoomIn"
+          class="p-2 hover:bg-gray-50 text-gray-600 transition-colors border-b border-gray-100"
+          title="Zoom In"
+        >
+          <div class="i-carbon-zoom-in text-xl"></div>
+        </button>
+        <button
+          @click="zoomOut"
+          class="p-2 hover:bg-gray-50 text-gray-600 transition-colors border-b border-gray-100"
+          title="Zoom Out"
+        >
+          <div class="i-carbon-zoom-out text-xl"></div>
+        </button>
+        <button
+          @click="resetView"
+          class="p-2 hover:bg-gray-50 text-gray-600 transition-colors"
+          title="Reset View"
+        >
+          <div class="i-carbon-center-circle text-xl"></div>
+        </button>
+      </div>
     </div>
+
     <svg
       ref="svgRef"
-      class="w-full h-full"
+      class="w-full h-full cursor-grab active:cursor-grabbing"
       @mousedown="handleMouseDown"
       @mousemove="handleMouseMove"
       @mouseup="handleMouseUp"
+      @mouseleave="handleMouseUp"
       @wheel="handleWheel"
     >
+      <!-- Background Grid -->
+      <defs>
+        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#e2e8f0" stroke-width="0.5"/>
+        </pattern>
+        <marker
+          id="arrowhead"
+          markerWidth="10"
+          markerHeight="7"
+          refX="28"
+          refY="3.5"
+          orient="auto"
+        >
+          <polygon points="0 0, 10 3.5, 0 7" fill="#cbd5e1" />
+        </marker>
+        
+        <!-- Glow Filters -->
+        <filter id="glow-primary" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+      
+      <rect width="100%" height="100%" fill="url(#grid)" />
+
       <g :transform="`translate(${panX}, ${panY}) scale(${zoom})`">
-        <!-- 连接线 -->
+        <!-- Connections -->
         <g class="connections">
           <line
             v-for="(conn, index) in connections"
@@ -38,118 +74,184 @@
             :y1="conn.y1"
             :x2="conn.x2"
             :y2="conn.y2"
-            stroke="#94a3b8"
+            stroke="#cbd5e1"
             stroke-width="2"
+            stroke-linecap="round"
             marker-end="url(#arrowhead)"
+            class="transition-all duration-300"
           />
         </g>
 
-        <!-- 节点 -->
+        <!-- Outbounds (Rectangles) -->
+        <g class="outbounds">
+          <g
+            v-for="outbound in outbounds"
+            :key="`outbound-${outbound.id}`"
+            :transform="`translate(${outbound.x}, ${outbound.y})`"
+            class="cursor-pointer transition-all duration-300"
+            :class="{ 'opacity-100': !selectedItem || selectedItem.data === outbound.data, 'opacity-40': selectedItem && selectedItem.data !== outbound.data }"
+            @click.stop="selectOutbound(outbound)"
+          >
+            <rect
+              :x="-outbound.width / 2"
+              :y="-outbound.height / 2"
+              :width="outbound.width"
+              :height="outbound.height"
+              :fill="outbound.color"
+              rx="12"
+              class="transition-all duration-300 shadow-sm"
+              :stroke="selectedOutbound?.id === outbound.id ? '#f59e0b' : 'transparent'"
+              :stroke-width="selectedOutbound?.id === outbound.id ? 3 : 0"
+              filter="url(#glow-primary)"
+            />
+            <foreignObject
+              :x="-outbound.width / 2"
+              :y="-outbound.height / 2"
+              :width="outbound.width"
+              :height="outbound.height"
+            >
+              <div class="w-full h-full flex items-center justify-center">
+                <span class="text-xs font-bold text-white truncate px-2">{{ outbound.label }}</span>
+              </div>
+            </foreignObject>
+          </g>
+        </g>
+
+        <!-- Nodes (Center) -->
         <g class="nodes">
           <g
             v-for="node in nodes"
             :key="`node-${node.id}`"
             :transform="`translate(${node.x}, ${node.y})`"
-            class="cursor-move"
+            class="cursor-move transition-all duration-300"
             @mousedown.stop="startDrag(node, $event)"
-            @click="selectNode(node)"
+            @click.stop="selectNode(node)"
           >
             <circle
               :r="node.radius"
               :fill="node.color"
-              :stroke="selectedNode?.id === node.id ? '#3b82f6' : '#64748b'"
-              :stroke-width="selectedNode?.id === node.id ? 3 : 2"
-              class="hover:opacity-80"
+              class="transition-all duration-300"
+              :stroke="selectedNode?.id === node.id ? '#818cf8' : 'white'"
+              :stroke-width="selectedNode?.id === node.id ? 4 : 4"
+              filter="url(#glow-primary)"
             />
-            <text
-              x="0"
-              y="0"
-              text-anchor="middle"
-              dominant-baseline="middle"
-              class="text-sm font-semibold fill-white pointer-events-none"
+            <foreignObject
+              :x="-node.radius"
+              :y="-node.radius"
+              :width="node.radius * 2"
+              :height="node.radius * 2"
             >
-              {{ node.label }}
-            </text>
+              <div class="w-full h-full flex flex-col items-center justify-center text-white">
+                <div class="i-carbon-cloud-satellite text-2xl mb-1"></div>
+                <span class="text-[10px] font-bold opacity-90">{{ node.label }}</span>
+              </div>
+            </foreignObject>
           </g>
         </g>
 
-        <!-- 用户 -->
+        <!-- Users (Circles) -->
         <g class="users">
-          <circle
+          <g
             v-for="user in users"
             :key="`user-${user.id}`"
-            :cx="user.x"
-            :cy="user.y"
-            :r="user.radius"
-            :fill="user.color"
-            :stroke="selectedUser?.id === user.id ? '#3b82f6' : '#64748b'"
-            :stroke-width="selectedUser?.id === user.id ? 2 : 1"
-            class="cursor-pointer hover:opacity-80"
-            @click="selectUser(user)"
-          />
-        </g>
-
-        <!-- 上游代理 -->
-        <g class="outbounds">
-          <rect
-            v-for="outbound in outbounds"
-            :key="`outbound-${outbound.id}`"
-            :x="outbound.x - outbound.width / 2"
-            :y="outbound.y - outbound.height / 2"
-            :width="outbound.width"
-            :height="outbound.height"
-            :fill="outbound.color"
-            :stroke="selectedOutbound?.id === outbound.id ? '#3b82f6' : '#64748b'"
-            :stroke-width="selectedOutbound?.id === outbound.id ? 2 : 1"
-            rx="4"
-            class="cursor-pointer hover:opacity-80"
-            @click="selectOutbound(outbound)"
-          />
-          <text
-            v-for="outbound in outbounds"
-            :key="`outbound-text-${outbound.id}`"
-            :x="outbound.x"
-            :y="outbound.y"
-            text-anchor="middle"
-            dominant-baseline="middle"
-            class="text-xs font-medium fill-white pointer-events-none"
+            :transform="`translate(${user.x}, ${user.y})`"
+            class="cursor-pointer transition-all duration-300"
+            :class="{ 'opacity-100': !selectedItem || selectedItem.data === user.data, 'opacity-40': selectedItem && selectedItem.data !== user.data }"
+            @click.stop="selectUser(user)"
           >
-            {{ outbound.label }}
-          </text>
+            <circle
+              :r="user.radius"
+              :fill="user.color"
+              class="transition-all duration-300"
+              :stroke="selectedUser?.id === user.id ? '#34d399' : 'white'"
+              :stroke-width="selectedUser?.id === user.id ? 3 : 2"
+              filter="url(#glow-primary)"
+            />
+            <foreignObject
+              :x="-user.radius"
+              :y="-user.radius"
+              :width="user.radius * 2"
+              :height="user.radius * 2"
+            >
+              <div class="w-full h-full flex items-center justify-center">
+                <div class="i-carbon-user text-white text-sm"></div>
+              </div>
+            </foreignObject>
+          </g>
         </g>
       </g>
-
-      <!-- 箭头标记 -->
-      <defs>
-        <marker
-          id="arrowhead"
-          markerWidth="10"
-          markerHeight="10"
-          refX="9"
-          refY="3"
-          orient="auto"
-        >
-          <polygon points="0 0, 10 3, 0 6" fill="#94a3b8" />
-        </marker>
-      </defs>
     </svg>
 
-    <!-- 详情面板 -->
-    <div
-      v-if="selectedItem"
-      class="absolute top-4 right-4 bg-white border border-gray-200 rounded-lg shadow-lg p-4 max-w-xs z-20"
-    >
-      <div class="flex justify-between items-center mb-2">
-        <h3 class="font-semibold text-gray-800">详情</h3>
-        <button
-          @click="selectedItem = null"
-          class="text-gray-500 hover:text-gray-700"
-        >
-          ✕
-        </button>
+    <!-- Detail Panel -->
+    <transition name="slide-fade">
+      <div
+        v-if="selectedItem"
+        class="absolute top-4 right-4 w-72 bg-white/90 backdrop-blur-md border border-gray-200 rounded-2xl shadow-xl z-20 overflow-hidden animate-slide-up"
+      >
+        <div class="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+          <h3 class="font-bold text-gray-800 flex items-center gap-2">
+            <div 
+              class="w-2 h-2 rounded-full"
+              :class="{
+                'bg-blue-500': selectedItem.type === 'node',
+                'bg-green-500': selectedItem.type === 'user',
+                'bg-orange-500': selectedItem.type === 'outbound'
+              }"
+            ></div>
+            {{ selectedItem.type.charAt(0).toUpperCase() + selectedItem.type.slice(1) }} Details
+          </h3>
+          <button
+            @click="selectedItem = null"
+            class="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
+          >
+            <div class="i-carbon-close text-lg"></div>
+          </button>
+        </div>
+        <div class="p-4 max-h-80 overflow-y-auto custom-scrollbar">
+          <div class="space-y-3">
+            <template v-if="selectedItem.type === 'user'">
+              <div class="space-y-1">
+                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">UUID</span>
+                <p class="text-sm font-mono text-gray-700 bg-gray-50 p-2 rounded-lg break-all border border-gray-100">
+                  {{ selectedItem.data.uuid }}
+                </p>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <span class="text-xs text-gray-400 block mb-1">Speed Limit</span>
+                  <span class="text-sm font-bold text-blue-600">{{ selectedItem.data.st || '∞' }} Mbps</span>
+                </div>
+                <div class="bg-gray-50 p-2 rounded-lg border border-gray-100">
+                  <span class="text-xs text-gray-400 block mb-1">Devices</span>
+                  <span class="text-sm font-bold text-purple-600">{{ selectedItem.data.dt || '∞' }}</span>
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="selectedItem.type === 'outbound'">
+              <div class="space-y-1">
+                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Tag</span>
+                <p class="text-sm font-bold text-gray-800">{{ selectedItem.data.tag }}</p>
+              </div>
+              <div class="space-y-1">
+                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Protocol</span>
+                <span class="px-2 py-1 rounded-md bg-orange-50 text-orange-600 text-xs font-bold border border-orange-100">
+                  {{ selectedItem.data.protocol }}
+                </span>
+              </div>
+              <div class="space-y-1">
+                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Config</span>
+                <pre class="text-[10px] text-gray-600 font-mono bg-gray-50 p-2 rounded-lg overflow-x-auto border border-gray-100">{{ JSON.stringify(selectedItem.data.settings, null, 2) }}</pre>
+              </div>
+            </template>
+
+            <template v-else>
+              <pre class="text-xs text-gray-600 font-mono bg-gray-50 p-2 rounded-lg overflow-x-auto border border-gray-100">{{ JSON.stringify(selectedItem.data, null, 2) }}</pre>
+            </template>
+          </div>
+        </div>
       </div>
-      <pre class="text-xs overflow-auto max-h-64">{{ JSON.stringify(selectedItem.data, null, 2) }}</pre>
-    </div>
+    </transition>
   </div>
 </template>
 
@@ -211,11 +313,20 @@ const selectedNode = ref<CanvasNode | null>(null);
 const selectedUser = ref<CanvasUser | null>(null);
 const selectedOutbound = ref<CanvasOutbound | null>(null);
 
-const selectedItem = computed(() => {
-  if (selectedNode.value) return { type: 'node', data: selectedNode.value.data };
-  if (selectedUser.value) return { type: 'user', data: selectedUser.value.data };
-  if (selectedOutbound.value) return { type: 'outbound', data: selectedOutbound.value.data };
-  return null;
+const selectedItem = computed({
+  get: () => {
+    if (selectedNode.value) return { type: 'node', data: selectedNode.value.data };
+    if (selectedUser.value) return { type: 'user', data: selectedUser.value.data };
+    if (selectedOutbound.value) return { type: 'outbound', data: selectedOutbound.value.data };
+    return null;
+  },
+  set: (val) => {
+    if (!val) {
+      selectedNode.value = null;
+      selectedUser.value = null;
+      selectedOutbound.value = null;
+    }
+  }
 });
 
 const nodes = ref<CanvasNode[]>([]);
@@ -226,56 +337,59 @@ const connections = ref<Connection[]>([]);
 const layoutNodes = () => {
   if (!nodeStore.currentNodeId) return;
 
-  // 中心节点
-  const centerX = 400;
-  const centerY = 300;
-  const nodeRadius = 40;
-
+  const rect = svgRef.value?.getBoundingClientRect();
+  const centerX = rect ? rect.width / 2 : 400;
+  const centerY = rect ? rect.height / 2 : 300;
+  
+  // Center Node
+  const nodeRadius = 45;
   nodes.value = [
     {
       id: `node-${nodeStore.currentNodeId}`,
       x: centerX,
       y: centerY,
       radius: nodeRadius,
-      color: '#3b82f6',
-      label: `节点 ${nodeStore.currentNodeId}`,
+      color: '#6366f1', // Primary-500
+      label: `Node ${nodeStore.currentNodeId}`,
       data: nodeStore.currentNode,
     },
   ];
 
-  // 用户布局（围绕节点）
+  // Users (Orbiting)
   const userCount = adminStore.users.length;
-  const userRadius = 15;
-  const userDistance = 120;
+  const userRadius = 18;
+  const userDistance = 160;
   users.value = adminStore.users.map((user, index) => {
-    const angle = (index / userCount) * Math.PI * 2;
+    const angle = (index / userCount) * Math.PI * 2 - Math.PI / 2;
     return {
       id: `user-${user.id}`,
       x: centerX + Math.cos(angle) * userDistance,
       y: centerY + Math.sin(angle) * userDistance,
       radius: userRadius,
-      color: '#10b981',
+      color: '#10b981', // Emerald-500
       data: user,
     };
   });
 
-  // 上游代理布局（节点下方）
-  const outboundWidth = 80;
-  const outboundHeight = 40;
-  const outboundSpacing = 100;
-  const outboundStartX = centerX - ((adminStore.outbounds.length - 1) * outboundSpacing) / 2;
+  // Outbounds (Bottom Row)
+  const outboundWidth = 100;
+  const outboundHeight = 44;
+  const outboundSpacing = 120;
+  const outboundStartY = centerY + 180;
+  const totalOutboundWidth = (adminStore.outbounds.length - 1) * outboundSpacing;
+  const outboundStartX = centerX - totalOutboundWidth / 2;
+  
   outbounds.value = adminStore.outbounds.map((outbound, index) => ({
     id: `outbound-${outbound.tag}`,
     x: outboundStartX + index * outboundSpacing,
-    y: centerY + 150,
+    y: outboundStartY,
     width: outboundWidth,
     height: outboundHeight,
-    color: '#f59e0b',
+    color: '#f59e0b', // Amber-500
     label: outbound.tag,
     data: outbound,
   }));
 
-  // 生成连接线
   updateConnections();
 };
 
@@ -286,23 +400,36 @@ const updateConnections = () => {
 
   const node = nodes.value[0];
 
-  // 用户到节点的连接
+  // User to Node
   users.value.forEach((user) => {
+    // Calculate intersection point on node circle to stop line at edge
+    const angle = Math.atan2(user.y - node.y, user.x - node.x);
+    const nodeEdgeX = node.x + Math.cos(angle) * (node.radius + 5);
+    const nodeEdgeY = node.y + Math.sin(angle) * (node.radius + 5);
+    
+    // Calculate intersection point on user circle
+    const userEdgeX = user.x - Math.cos(angle) * (user.radius + 5);
+    const userEdgeY = user.y - Math.sin(angle) * (user.radius + 5);
+
     connections.value.push({
-      x1: user.x,
-      y1: user.y,
-      x2: node.x,
-      y2: node.y,
+      x1: userEdgeX,
+      y1: userEdgeY,
+      x2: nodeEdgeX,
+      y2: nodeEdgeY,
     });
   });
 
-  // 节点到上游代理的连接
+  // Node to Outbound
   outbounds.value.forEach((outbound) => {
+    const angle = Math.atan2(outbound.y - node.y, outbound.x - node.x);
+    const nodeEdgeX = node.x + Math.cos(angle) * (node.radius + 5);
+    const nodeEdgeY = node.y + Math.sin(angle) * (node.radius + 5);
+    
     connections.value.push({
-      x1: node.x,
-      y1: node.y,
+      x1: nodeEdgeX,
+      y1: nodeEdgeY,
       x2: outbound.x,
-      y2: outbound.y,
+      y2: outbound.y - outbound.height / 2 - 5,
     });
   });
 };
@@ -409,7 +536,35 @@ const loadData = async () => {
     console.error('Failed to load data:', err);
   }
 };
+
+onMounted(() => {
+  // Initial layout delay to ensure SVG size is correct
+  setTimeout(layoutNodes, 100);
+  window.addEventListener('resize', layoutNodes);
+});
 </script>
 
-<style scoped></style>
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #e2e8f0;
+  border-radius: 20px;
+}
+
+.slide-fade-enter-active,
+.slide-fade-leave-active {
+  transition: all 0.3s ease-out;
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateX(20px);
+  opacity: 0;
+}
+</style>
 

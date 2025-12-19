@@ -42,25 +42,24 @@
       <!-- 标签页容器 -->
       <div class="card-base overflow-hidden">
         <!-- 标签页导航 -->
-        <div class="border-b border-gray-100 bg-gray-50/50">
-          <nav class="flex overflow-x-auto px-2">
-            <button
-              v-for="tab in tabs"
-              :key="tab.id"
-              @click="activeTab = tab.id"
-              :class="[
-                'px-6 py-4 text-sm font-medium transition-all whitespace-nowrap relative',
-                activeTab === tab.id
-                  ? 'text-primary-600'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100/50 rounded-t-lg',
-              ]"
-            >
-              {{ tab.label }}
-              <span
-                v-if="activeTab === tab.id"
-                class="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-500 shadow-[0_-2px_6px_rgba(99,102,241,0.4)]"
-              ></span>
-            </button>
+        <div class="border-b border-gray-100 bg-gray-50/40">
+          <nav class="flex overflow-x-auto px-4 py-3">
+            <div class="flex gap-1.5 p-1.5 rounded-2xl bg-white/70 border border-white/60 shadow-sm backdrop-blur-xl">
+              <button
+                v-for="tab in tabs"
+                :key="tab.id"
+                type="button"
+                @click="activeTab = tab.id"
+                :class="[
+                  'cursor-pointer px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-all border focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/40 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent active:scale-95',
+                  activeTab === tab.id
+                    ? 'bg-gradient-to-br from-primary-50 via-white to-white text-primary-700 border-primary-100 shadow-md shadow-primary-500/15 ring-1 ring-primary-200/50'
+                    : 'bg-transparent border-transparent text-gray-500 hover:text-gray-900 hover:bg-white/90 hover:border-gray-100 hover:shadow-sm hover:shadow-primary-500/5',
+                ]"
+              >
+                {{ tab.label }}
+              </button>
+            </div>
           </nav>
         </div>
 

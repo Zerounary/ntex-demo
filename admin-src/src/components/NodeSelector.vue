@@ -1,27 +1,24 @@
 <template>
   <div class="node-selector">
-    <select
-      v-model="selectedNodeId"
-      class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-      @change="handleChange"
+    <BaseSelect
+      :model-value="selectedNodeId"
+      :options="nodeOptions"
+      placeholder="Select Node"
+      searchable
+      @update:modelValue="handleChange"
     >
-      <option value="">请选择节点</option>
-      <option
-        v-for="node in sortedNodes"
-        :key="node.node_id"
-        :value="node.node_id"
-      >
-        节点 {{ node.node_id }} - {{ node.node_type }}
-        <span v-if="node.maintenance_mode">(维护中)</span>
-      </option>
-    </select>
+      <template #icon>
+        <div class="i-carbon-data-base text-lg"></div>
+      </template>
+    </BaseSelect>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useNodeStore } from '@/stores/node';
 import { storeToRefs } from 'pinia';
+import BaseSelect from '@/components/BaseSelect.vue';
 
 interface Props {
   modelValue?: number | null;
@@ -40,6 +37,14 @@ const { sortedNodes } = storeToRefs(nodeStore);
 
 const selectedNodeId = ref<number | null>(props.modelValue || null);
 
+const nodeOptions = computed(() => {
+  return sortedNodes.value.map(node => ({
+    label: `Node ${node.node_id} - ${node.node_type} ${node.maintenance_mode ? '(Maintenance)' : ''}`,
+    value: node.node_id,
+    icon: node.maintenance_mode ? 'i-carbon-warning-filled text-yellow-500' : 'i-carbon-cloud-satellite'
+  }));
+});
+
 watch(
   () => props.modelValue,
   (newValue) => {
@@ -47,13 +52,17 @@ watch(
   }
 );
 
-const handleChange = () => {
-  emit('update:modelValue', selectedNodeId.value);
-  emit('change', selectedNodeId.value);
+const handleChange = (value: any) => {
+  const nodeId = value as number | null;
+  selectedNodeId.value = nodeId;
+  emit('update:modelValue', nodeId);
+  emit('change', nodeId);
 };
 
 // 初始化时加载节点列表
-nodeStore.fetchNodes();
+onMounted(() => {
+  nodeStore.fetchNodes();
+});
 </script>
 
 <style scoped></style>

@@ -1,6 +1,6 @@
 <template>
   <div
-    class="node-card card-base hover-lift group relative overflow-hidden cursor-pointer"
+    class="node-card card-base hover-lift group relative overflow-hidden cursor-pointer p-6"
     @click="$emit('click')"
   >
     <!-- 装饰背景 -->

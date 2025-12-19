@@ -1,48 +1,58 @@
 <template>
   <div class="space-y-4">
-    <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-100">
-      <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-purple-500"></span>
-        VMess 配置
+    <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-4 border border-purple-100/50">
+      <h4 class="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-purple-500 shadow-sm shadow-purple-500/50"></div>
+        VMess Configuration
       </h4>
       
-      <div class="space-y-3">
+      <div class="space-y-4">
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1.5">
-            服务器地址 <span class="text-red-400">*</span>
+            Server Address <span class="text-red-400">*</span>
           </label>
           <input
             v-model="config.address"
             type="text"
             required
             placeholder="example.com"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
+            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400 transition-all shadow-sm"
           />
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-600 mb-1.5">
+              Port <span class="text-red-400">*</span>
+            </label>
+            <input
+              v-model.number="config.port"
+              type="number"
+              required
+              placeholder="443"
+              class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400 transition-all shadow-sm"
+            />
+          </div>
+          
+          <div>
+             <BaseSelect
+              v-model="config.security"
+              :options="securityOptions"
+              label="Encryption"
+             />
+          </div>
         </div>
         
         <div>
           <label class="block text-xs font-medium text-gray-600 mb-1.5">
-            端口 <span class="text-red-400">*</span>
-          </label>
-          <input
-            v-model.number="config.port"
-            type="number"
-            required
-            placeholder="443"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
-          />
-        </div>
-        
-        <div>
-          <label class="block text-xs font-medium text-gray-600 mb-1.5">
-            用户 ID (UUID) <span class="text-red-400">*</span>
+            UUID <span class="text-red-400">*</span>
           </label>
           <input
             v-model="config.id"
             type="text"
             required
             placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
+            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400 transition-all shadow-sm"
           />
         </div>
         
@@ -54,25 +64,9 @@
             v-model.number="config.alterId"
             type="number"
             min="0"
-            placeholder="0 (推荐)"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
+            placeholder="0 (Recommended)"
+            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400 transition-all shadow-sm"
           />
-        </div>
-        
-        <div>
-          <label class="block text-xs font-medium text-gray-600 mb-1.5">
-            加密方式
-          </label>
-          <select
-            v-model="config.security"
-            class="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent transition-all"
-          >
-            <option value="auto">auto</option>
-            <option value="aes-128-gcm">aes-128-gcm</option>
-            <option value="chacha20-poly1305">chacha20-poly1305</option>
-            <option value="none">none</option>
-            <option value="zero">zero</option>
-          </select>
         </div>
       </div>
     </div>
@@ -81,6 +75,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import BaseSelect from '@/components/BaseSelect.vue';
 
 interface Props {
   modelValue: any;
@@ -100,6 +95,14 @@ const config = ref({
   alterId: 0,
   security: 'auto',
 });
+
+const securityOptions = [
+  { label: 'auto', value: 'auto' },
+  { label: 'aes-128-gcm', value: 'aes-128-gcm' },
+  { label: 'chacha20-poly1305', value: 'chacha20-poly1305' },
+  { label: 'none', value: 'none' },
+  { label: 'zero', value: 'zero' },
+];
 
 watch(
   () => props.modelValue,

@@ -155,12 +155,14 @@
 import { ref, onMounted } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
+import { useToastStore } from '@/stores/toast';
 import * as adminApi from '@/api/admin';
 import OutboundForm from './OutboundForm.vue';
 import type { OutboundConfig, UdpLatencyResult } from '@/api/types';
 
 const adminStore = useAdminStore();
 const nodeStore = useNodeStore();
+const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingOutbound = ref<OutboundConfig | null>(null);
@@ -184,8 +186,9 @@ const deleteOutbound = async (tag: string) => {
 
   try {
     await adminStore.deleteOutbound(nodeStore.currentNodeId, tag);
+    toastStore.success('Proxy deleted successfully');
   } catch (err: any) {
-    alert(err.message || 'Failed to delete proxy');
+    toastStore.error(err.message || 'Failed to delete proxy');
   }
 };
 
@@ -196,8 +199,14 @@ const testLatency = async (tag: string) => {
   try {
     const result = await adminApi.queryUdpLatency(nodeStore.currentNodeId, tag);
     latencyResults.value[tag] = result;
+    if (result.error) {
+      toastStore.warning(`Latency test failed: ${result.error}`);
+    } else {
+      toastStore.success(`Latency: ${result.latency}ms`);
+    }
   } catch (err: any) {
     latencyResults.value[tag] = { error: err.message || 'Test failed' };
+    toastStore.error(err.message || 'Test failed');
   } finally {
     testingLatency.value = null;
   }
@@ -221,12 +230,14 @@ const handleSubmit = async (outboundData: {
           settings: outboundData.settings,
         }
       );
+      toastStore.success('Proxy updated successfully');
     } else {
       await adminStore.addOutbound(nodeStore.currentNodeId, outboundData);
+      toastStore.success('Proxy added successfully');
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || 'Operation failed');
+    toastStore.error(err.message || 'Operation failed');
   }
 };
 

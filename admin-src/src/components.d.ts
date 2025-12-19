@@ -4,7 +4,7 @@
 
 declare module 'vue' {
   export interface GlobalComponents {
-    HelloWorld: typeof import('./components/HelloWorld.vue')['default']
+    BaseSelect: typeof import('./components/BaseSelect.vue')['default']
     MaintenanceMode: typeof import('./components/MaintenanceMode.vue')['default']
     NodeCard: typeof import('./components/NodeCard.vue')['default']
     NodeSelector: typeof import('./components/NodeSelector.vue')['default']
@@ -12,9 +12,10 @@ declare module 'vue' {
     OutboundManagement: typeof import('./components/OutboundManagement.vue')['default']
     RoutingManagement: typeof import('./components/RoutingManagement.vue')['default']
     RoutingRuleForm: typeof import('./components/RoutingRuleForm.vue')['default']
-    Select: typeof import('./components/Select.vue')['default']
     ShadowsocksForm: typeof import('./components/ProtocolForm/ShadowsocksForm.vue')['default']
     StreamSettingsForm: typeof import('./components/ProtocolForm/StreamSettingsForm.vue')['default']
+    Toast: typeof import('./components/Toast.vue')['default']
+    ToastContainer: typeof import('./components/ToastContainer.vue')['default']
     TopologyCanvas: typeof import('./components/TopologyCanvas.vue')['default']
     TrojanForm: typeof import('./components/ProtocolForm/TrojanForm.vue')['default']
     UserForm: typeof import('./components/UserForm.vue')['default']

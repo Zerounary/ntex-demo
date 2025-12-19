@@ -125,28 +125,12 @@
                 />
               </div>
               <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-2">
-                  Outbound Tag <span class="text-red-400">*</span>
-                </label>
-                <div class="relative">
-                  <select
-                    v-model="form.outbound_tag"
-                    required
-                    class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all appearance-none"
-                  >
-                    <option value="">Select Outbound Proxy</option>
-                    <option
-                      v-for="outbound in adminStore.outbounds"
-                      :key="outbound.tag"
-                      :value="outbound.tag"
-                    >
-                      {{ outbound.tag }} ({{ outbound.protocol }})
-                    </option>
-                  </select>
-                  <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                    <div class="i-carbon-chevron-down"></div>
-                  </div>
-                </div>
+                <BaseSelect
+                  v-model="form.outbound_tag"
+                  :options="outboundOptions"
+                  label="Outbound Tag"
+                  required
+                />
               </div>
               <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
                 <button
@@ -172,12 +156,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
+import { useToastStore } from '@/stores/toast';
+import BaseSelect from '@/components/BaseSelect.vue';
 
 const adminStore = useAdminStore();
 const nodeStore = useNodeStore();
+const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingUuid = ref<string | null>(null);
@@ -185,6 +172,13 @@ const editingUuid = ref<string | null>(null);
 const form = ref({
   uuid: '',
   outbound_tag: '',
+});
+
+const outboundOptions = computed(() => {
+  return adminStore.outbounds.map(outbound => ({
+    label: `${outbound.tag} (${outbound.protocol})`,
+    value: outbound.tag,
+  }));
 });
 
 onMounted(() => {
@@ -208,8 +202,9 @@ const deleteMapping = async (uuid: string) => {
 
   try {
     await adminStore.deleteMapping(nodeStore.currentNodeId, uuid);
+    toastStore.success('Mapping deleted successfully');
   } catch (err: any) {
-    alert(err.message || 'Failed to delete mapping');
+    toastStore.error(err.message || 'Failed to delete mapping');
   }
 };
 
@@ -223,16 +218,18 @@ const handleSubmit = async () => {
         form.value.uuid,
         form.value.outbound_tag
       );
+      toastStore.success('Mapping updated successfully');
     } else {
       await adminStore.addMapping(
         nodeStore.currentNodeId,
         form.value.uuid,
         form.value.outbound_tag
       );
+      toastStore.success('Mapping added successfully');
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || 'Operation failed');
+    toastStore.error(err.message || 'Operation failed');
   }
 };
 

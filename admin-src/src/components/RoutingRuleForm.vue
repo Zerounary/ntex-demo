@@ -151,26 +151,11 @@
               </div>
 
               <div>
-                <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                  Network
-                </label>
-                <div class="relative">
-                  <select
-                    v-model="form.network"
-                    class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all appearance-none pl-10"
-                  >
-                    <option value="">All Networks</option>
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                    <option value="tcp,udp">TCP + UDP</option>
-                  </select>
-                  <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                    <div class="i-carbon-network-overlay text-lg"></div>
-                  </div>
-                  <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-                    <div class="i-carbon-chevron-down"></div>
-                  </div>
-                </div>
+                <BaseSelect
+                  v-model="form.network"
+                  :options="networkOptions"
+                  label="Network"
+                />
               </div>
             </div>
           </div>
@@ -208,6 +193,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
+import BaseSelect from '@/components/BaseSelect.vue';
 import type { RoutingRule } from '@/api/types';
 
 interface Props {
@@ -231,6 +217,13 @@ const ruleTypes = [
   { value: 'field', label: 'Field' },
   { value: 'chinaip', label: 'ChinaIP' },
   { value: 'chinasites', label: 'ChinaSites' },
+];
+
+const networkOptions = [
+  { label: 'All Networks', value: '' },
+  { label: 'TCP', value: 'tcp' },
+  { label: 'UDP', value: 'udp' },
+  { label: 'TCP + UDP', value: 'tcp,udp' },
 ];
 
 const form = ref<RoutingRule>({

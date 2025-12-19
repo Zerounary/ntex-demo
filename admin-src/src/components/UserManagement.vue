@@ -154,11 +154,13 @@
 import { ref, onMounted } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
+import { useToastStore } from '@/stores/toast';
 import UserForm from './UserForm.vue';
 import type { User } from '@/api/types';
 
 const adminStore = useAdminStore();
 const nodeStore = useNodeStore();
+const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingUser = ref<User | null>(null);
@@ -180,8 +182,9 @@ const deleteUser = async (userId: number) => {
 
   try {
     await adminStore.deleteUser(nodeStore.currentNodeId, userId);
+    toastStore.success('User deleted successfully');
   } catch (err: any) {
-    alert(err.message || 'Failed to delete user');
+    toastStore.error(err.message || 'Failed to delete user');
   }
 };
 
@@ -195,12 +198,14 @@ const handleSubmit = async (userData: { uuid: string; st?: number; dt?: number }
         editingUser.value.id,
         userData
       );
+      toastStore.success('User updated successfully');
     } else {
       await adminStore.addUser(nodeStore.currentNodeId, userData);
+      toastStore.success('User added successfully');
     }
     closeForm();
   } catch (err: any) {
-    alert(err.message || 'Operation failed');
+    toastStore.error(err.message || 'Operation failed');
   }
 };
 

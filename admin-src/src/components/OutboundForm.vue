@@ -3,7 +3,7 @@
     <!-- Tag 和协议选择 -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
       <div>
-        <label class="block text-sm font-semibold text-gray-700 mb-2">
+        <label class="block text-xs font-medium text-gray-600 mb-1.5">
           Tag <span class="text-red-400">*</span>
         </label>
         <div class="relative">
@@ -13,7 +13,7 @@
             required
             :disabled="isEdit"
             placeholder="Enter proxy tag"
-            class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all shadow-sm pl-10"
+            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all shadow-sm pl-10"
           />
           <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
             <div class="i-carbon-tag text-lg"></div>
@@ -22,35 +22,21 @@
       </div>
       
       <div>
-        <label class="block text-sm font-semibold text-gray-700 mb-2">
-          Protocol <span class="text-red-400">*</span>
-        </label>
-        <div class="relative">
-          <select
-            v-model="form.protocol"
-            class="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all shadow-sm appearance-none pl-10"
-          >
-            <option value="shadowsocks">Shadowsocks</option>
-            <option value="vmess">VMess</option>
-            <option value="vless">VLESS</option>
-            <option value="trojan">Trojan</option>
-            <option value="socks">SOCKS</option>
-            <option value="http">HTTP</option>
-            <option value="freedom">Freedom</option>
-            <option value="blackhole">Blackhole</option>
-          </select>
-          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
+        <BaseSelect
+          v-model="form.protocol"
+          :options="protocolOptions"
+          label="Protocol"
+          required
+        >
+          <template #icon>
             <div class="i-carbon-network-4 text-lg"></div>
-          </div>
-          <div class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">
-            <div class="i-carbon-chevron-down"></div>
-          </div>
-        </div>
+          </template>
+        </BaseSelect>
       </div>
     </div>
 
     <!-- 协议配置表单 -->
-    <div class="bg-gray-50/50 p-5 rounded-2xl border border-gray-100">
+    <div class="bg-gray-50/50 p-5 rounded-2xl border border-gray-100 transition-all duration-300">
       <transition name="fade" mode="out-in">
         <component
           :is="protocolComponent"
@@ -70,13 +56,13 @@
     <!-- JSON 编辑器（高级模式） -->
     <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
       <div class="flex items-center justify-between mb-3">
-        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer select-none">
+        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer select-none group">
           <input
             v-model="showAdvanced"
             type="checkbox"
             class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-400/50 transition-colors"
           />
-          <span>Advanced Mode (JSON)</span>
+          <span class="group-hover:text-primary-600 transition-colors">Advanced Mode (JSON)</span>
         </label>
       </div>
       
@@ -85,7 +71,7 @@
           <textarea
             v-model="settingsJson"
             rows="8"
-            class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar"
+            class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
             placeholder='{"servers": [...]}'
           ></textarea>
           <p v-if="settingsError" class="mt-2 text-xs text-red-500 flex items-center gap-1">
@@ -119,6 +105,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, markRaw } from 'vue';
 import type { OutboundConfig } from '@/api/types';
+import BaseSelect from '@/components/BaseSelect.vue';
 import ShadowsocksForm from './ProtocolForm/ShadowsocksForm.vue';
 import VMessForm from './ProtocolForm/VMessForm.vue';
 import VLESSForm from './ProtocolForm/VLESSForm.vue';
@@ -152,6 +139,17 @@ const streamSettings = ref<any>(null);
 const showAdvanced = ref(false);
 const settingsJson = ref('{}');
 const settingsError = ref('');
+
+const protocolOptions = [
+  { label: 'Shadowsocks', value: 'shadowsocks' },
+  { label: 'VMess', value: 'vmess' },
+  { label: 'VLESS', value: 'vless' },
+  { label: 'Trojan', value: 'trojan' },
+  { label: 'SOCKS', value: 'socks' },
+  { label: 'HTTP', value: 'http' },
+  { label: 'Freedom', value: 'freedom' },
+  { label: 'Blackhole', value: 'blackhole' },
+];
 
 const protocolComponents: Record<string, any> = {
   shadowsocks: markRaw(ShadowsocksForm),
