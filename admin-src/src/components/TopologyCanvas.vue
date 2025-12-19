@@ -152,29 +152,29 @@
         <!-- Users (Circles) -->
         <g class="users">
           <g
-            v-for="user in users"
-            :key="`user-${user.id}`"
-            :transform="`translate(${user.x}, ${user.y})`"
+            v-if="usersCluster"
+            :transform="`translate(${usersCluster.x}, ${usersCluster.y})`"
             class="cursor-pointer transition-all duration-300"
-            :class="{ 'opacity-100': !selectedItem || selectedItem.data === user.data, 'opacity-40': selectedItem && selectedItem.data !== user.data }"
-            @click.stop="selectUser(user)"
+            :class="{ 'opacity-100': !selectedItem || selectedItem.type === 'users', 'opacity-40': selectedItem && selectedItem.type !== 'users' }"
+            @click.stop="selectUsersCluster()"
           >
             <circle
-              :r="user.radius"
-              :fill="user.color"
+              :r="usersCluster.radius"
+              :fill="usersCluster.color"
               class="transition-all duration-300"
-              :stroke="selectedUser?.id === user.id ? '#34d399' : 'white'"
-              :stroke-width="selectedUser?.id === user.id ? 3 : 2"
+              :stroke="selectedUsersCluster ? '#34d399' : 'white'"
+              :stroke-width="selectedUsersCluster ? 3 : 2"
               filter="url(#glow-primary)"
             />
             <foreignObject
-              :x="-user.radius"
-              :y="-user.radius"
-              :width="user.radius * 2"
-              :height="user.radius * 2"
+              :x="-usersCluster.radius"
+              :y="-usersCluster.radius"
+              :width="usersCluster.radius * 2"
+              :height="usersCluster.radius * 2"
             >
-              <div class="w-full h-full flex items-center justify-center">
-                <div class="i-carbon-user text-white text-sm"></div>
+              <div class="w-full h-full flex flex-col items-center justify-center text-white">
+                <div class="i-carbon-user text-sm mb-0.5"></div>
+                <span class="text-[10px] font-bold leading-none">{{ usersCluster.count }}</span>
               </div>
             </foreignObject>
           </g>
@@ -209,21 +209,29 @@
         </div>
         <div class="p-4 max-h-80 overflow-y-auto custom-scrollbar">
           <div class="space-y-3">
-            <template v-if="selectedItem.type === 'user'">
+            <template v-if="selectedItem.type === 'users'">
               <div class="space-y-1">
-                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">UUID</span>
-                <p class="text-sm font-mono text-gray-700 bg-gray-50 p-2 rounded-lg break-all border border-gray-100">
-                  {{ selectedItem.data.uuid }}
-                </p>
+                <span class="text-xs text-gray-400 uppercase tracking-wider font-semibold">Users</span>
+                <p class="text-sm font-bold text-gray-800">{{ adminStore.users.length }}</p>
               </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div class="bg-gray-50 p-2 rounded-lg border border-gray-100">
-                  <span class="text-xs text-gray-400 block mb-1">Speed Limit</span>
-                  <span class="text-sm font-bold text-blue-600">{{ selectedItem.data.st || '∞' }} Mbps</span>
-                </div>
-                <div class="bg-gray-50 p-2 rounded-lg border border-gray-100">
-                  <span class="text-xs text-gray-400 block mb-1">Devices</span>
-                  <span class="text-sm font-bold text-purple-600">{{ selectedItem.data.dt || '∞' }}</span>
+              <div class="space-y-2">
+                <div
+                  v-for="user in adminStore.users"
+                  :key="user.id"
+                  class="bg-white rounded-xl border border-gray-100 p-3 hover:shadow-sm transition-shadow"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="text-[10px] text-gray-400 uppercase tracking-wider font-semibold mb-1">UUID</div>
+                      <div class="text-xs font-mono text-gray-700 break-all">{{ user.uuid }}</div>
+                    </div>
+                    <div class="flex flex-col items-end gap-1 shrink-0">
+                      <div class="text-[10px] text-gray-400">Speed</div>
+                      <div class="text-xs font-bold text-green-600">{{ user.st || '∞' }}</div>
+                      <div class="text-[10px] text-gray-400">Devices</div>
+                      <div class="text-xs font-bold text-purple-600">{{ user.dt || '∞' }}</div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </template>
@@ -259,7 +267,7 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useAdminStore } from '@/stores/admin';
 import { useNodeStore } from '@/stores/node';
-import type { User, OutboundConfig } from '@/api/types';
+import type { OutboundConfig } from '@/api/types';
 
 interface CanvasNode {
   id: string;
@@ -271,13 +279,12 @@ interface CanvasNode {
   data: any;
 }
 
-interface CanvasUser {
-  id: string;
+interface CanvasUsersCluster {
   x: number;
   y: number;
   radius: number;
   color: string;
-  data: User;
+  count: number;
 }
 
 interface CanvasOutbound {
@@ -310,27 +317,27 @@ const dragStart = ref({ x: 0, y: 0 });
 const draggingNode = ref<CanvasNode | null>(null);
 
 const selectedNode = ref<CanvasNode | null>(null);
-const selectedUser = ref<CanvasUser | null>(null);
 const selectedOutbound = ref<CanvasOutbound | null>(null);
+const selectedUsersCluster = ref(false);
 
 const selectedItem = computed({
   get: () => {
     if (selectedNode.value) return { type: 'node', data: selectedNode.value.data };
-    if (selectedUser.value) return { type: 'user', data: selectedUser.value.data };
+    if (selectedUsersCluster.value) return { type: 'users', data: adminStore.users };
     if (selectedOutbound.value) return { type: 'outbound', data: selectedOutbound.value.data };
     return null;
   },
   set: (val) => {
     if (!val) {
       selectedNode.value = null;
-      selectedUser.value = null;
       selectedOutbound.value = null;
+      selectedUsersCluster.value = false;
     }
   }
 });
 
 const nodes = ref<CanvasNode[]>([]);
-const users = ref<CanvasUser[]>([]);
+const usersCluster = ref<CanvasUsersCluster | null>(null);
 const outbounds = ref<CanvasOutbound[]>([]);
 const connections = ref<Connection[]>([]);
 
@@ -355,21 +362,13 @@ const layoutNodes = () => {
     },
   ];
 
-  // Users (Orbiting)
-  const userCount = adminStore.users.length;
-  const userRadius = 18;
-  const userDistance = 160;
-  users.value = adminStore.users.map((user, index) => {
-    const angle = (index / userCount) * Math.PI * 2 - Math.PI / 2;
-    return {
-      id: `user-${user.id}`,
-      x: centerX + Math.cos(angle) * userDistance,
-      y: centerY + Math.sin(angle) * userDistance,
-      radius: userRadius,
-      color: '#10b981', // Emerald-500
-      data: user,
-    };
-  });
+  usersCluster.value = {
+    x: centerX - 170,
+    y: centerY - 90,
+    radius: 26,
+    color: '#10b981',
+    count: adminStore.users.length,
+  };
 
   // Outbounds (Bottom Row)
   const outboundWidth = 100;
@@ -401,15 +400,12 @@ const updateConnections = () => {
   const node = nodes.value[0];
 
   // User to Node
-  users.value.forEach((user) => {
-    // Calculate intersection point on node circle to stop line at edge
-    const angle = Math.atan2(user.y - node.y, user.x - node.x);
+  if (usersCluster.value) {
+    const angle = Math.atan2(usersCluster.value.y - node.y, usersCluster.value.x - node.x);
     const nodeEdgeX = node.x + Math.cos(angle) * (node.radius + 5);
     const nodeEdgeY = node.y + Math.sin(angle) * (node.radius + 5);
-    
-    // Calculate intersection point on user circle
-    const userEdgeX = user.x - Math.cos(angle) * (user.radius + 5);
-    const userEdgeY = user.y - Math.sin(angle) * (user.radius + 5);
+    const userEdgeX = usersCluster.value.x - Math.cos(angle) * (usersCluster.value.radius + 5);
+    const userEdgeY = usersCluster.value.y - Math.sin(angle) * (usersCluster.value.radius + 5);
 
     connections.value.push({
       x1: userEdgeX,
@@ -417,7 +413,7 @@ const updateConnections = () => {
       x2: nodeEdgeX,
       y2: nodeEdgeY,
     });
-  });
+  }
 
   // Node to Outbound
   outbounds.value.forEach((outbound) => {
@@ -488,12 +484,12 @@ const startDrag = (node: CanvasNode, event: MouseEvent) => {
 
 const selectNode = (node: CanvasNode) => {
   selectedNode.value = node;
-  selectedUser.value = null;
   selectedOutbound.value = null;
+  selectedUsersCluster.value = false;
 };
 
-const selectUser = (user: CanvasUser) => {
-  selectedUser.value = user;
+const selectUsersCluster = () => {
+  selectedUsersCluster.value = true;
   selectedNode.value = null;
   selectedOutbound.value = null;
 };
@@ -501,7 +497,7 @@ const selectUser = (user: CanvasUser) => {
 const selectOutbound = (outbound: CanvasOutbound) => {
   selectedOutbound.value = outbound;
   selectedNode.value = null;
-  selectedUser.value = null;
+  selectedUsersCluster.value = false;
 };
 
 watch(
