@@ -52,6 +52,39 @@ pub async fn list_nodes(
     }
 }
 
+#[derive(Deserialize)]
+pub struct UpdateNodeMetaRequest {
+    #[serde(default)]
+    pub name: Option<Option<String>>,
+    #[serde(default)]
+    pub region: Option<Option<String>>,
+    #[serde(default)]
+    pub description: Option<Option<String>>,
+}
+
+#[web::put("/api/admin/nodes/{node_id}/meta")]
+pub async fn update_node_meta(
+    state: State<AdminState>,
+    path: web::types::Path<u64>,
+    Json(body): Json<UpdateNodeMetaRequest>,
+) -> HttpResponse {
+    let node_id = path.into_inner();
+
+    match state
+        .config
+        .update_node_meta(node_id, body.name, body.region, body.description)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
+}
+
 #[web::get("/api/admin/query")]
 pub async fn query_handler(
     state: State<AdminState>,

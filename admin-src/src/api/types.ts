@@ -9,6 +9,9 @@ export interface ApiResponse<T = any> {
 
 export interface NodeInfo {
   node_id: number;
+  name?: string | null;
+  region?: string | null;
+  description?: string | null;
   node_type: string;
   node_speed_limit: number;
   traffic_rate: number;

@@ -55,6 +55,19 @@ export async function listNodes(): Promise<NodeInfo[]> {
   throw new Error(response.error || '获取节点列表失败');
 }
 
+export async function updateNodeMeta(
+  nodeId: number,
+  meta: { name?: string | null; region?: string | null; description?: string | null }
+): Promise<void> {
+  const response = await request(`/api/admin/nodes/${nodeId}/meta`, {
+    method: 'PUT',
+    body: JSON.stringify(meta),
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '更新节点信息失败');
+  }
+}
+
 export async function getNodeConfig(nodeId: number): Promise<NodeConfig> {
   const query = buildQuery({ node_id: nodeId, act: 'config' });
   const response = await request<NodeConfig>(`/api/admin/query?${query}`);

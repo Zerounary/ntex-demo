@@ -5,6 +5,12 @@ use sea_orm::{entity::prelude::*, JsonValue, sea_query::Expr};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub node_id: u64,
+    #[sea_orm(nullable)]
+    pub name: Option<String>,
+    #[sea_orm(nullable)]
+    pub region: Option<String>,
+    #[sea_orm(nullable, column_type = "Text")]
+    pub description: Option<String>,
     pub node_type: String,
     pub node_speed_limit: u64,
     pub traffic_rate: f64,

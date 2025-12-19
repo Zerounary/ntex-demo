@@ -19,6 +19,42 @@
           <span class="text-sm font-semibold tracking-wide">REFRESH</span>
         </button>
       </div>
+
+      <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="relative">
+          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div class="i-carbon-search"></div>
+          </div>
+          <input
+            v-model="filterName"
+            type="text"
+            placeholder="Filter by name"
+            class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
+          />
+        </div>
+        <div class="relative">
+          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div class="i-carbon-earth"></div>
+          </div>
+          <input
+            v-model="filterRegion"
+            type="text"
+            placeholder="Filter by region"
+            class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
+          />
+        </div>
+        <div class="relative">
+          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div class="i-carbon-document"></div>
+          </div>
+          <input
+            v-model="filterDescription"
+            type="text"
+            placeholder="Filter by description"
+            class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
+          />
+        </div>
+      </div>
     </div>
 
     <!-- 错误提示 -->
@@ -60,7 +96,7 @@
     >
       <transition-group name="list" tag="div" class="contents">
         <NodeCard
-          v-for="(node, index) in nodeStore.sortedNodes"
+          v-for="(node, index) in filteredNodes"
           :key="node.node_id"
           :node="node"
           :style="{ 'animation-delay': `${index * 50}ms` }"
@@ -73,13 +109,34 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import NodeCard from '@/components/NodeCard.vue';
 
 const router = useRouter();
 const nodeStore = useNodeStore();
+
+const filterName = ref('');
+const filterRegion = ref('');
+const filterDescription = ref('');
+
+const filteredNodes = computed(() => {
+  const nameQ = filterName.value.trim().toLowerCase();
+  const regionQ = filterRegion.value.trim().toLowerCase();
+  const descQ = filterDescription.value.trim().toLowerCase();
+
+  return nodeStore.sortedNodes.filter((n) => {
+    const name = (n.name || '').toLowerCase();
+    const region = (n.region || '').toLowerCase();
+    const description = (n.description || '').toLowerCase();
+
+    if (nameQ && !name.includes(nameQ)) return false;
+    if (regionQ && !region.includes(regionQ)) return false;
+    if (descQ && !description.includes(descQ)) return false;
+    return true;
+  });
+});
 
 onMounted(() => {
   nodeStore.fetchNodes();

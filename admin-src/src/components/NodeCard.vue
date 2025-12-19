@@ -13,14 +13,25 @@
       <div>
         <div class="flex items-center gap-2 mb-1">
           <h3 class="text-xl font-bold text-gray-800 tracking-tight">
-            Node {{ node.node_id }}
+            {{ node.name || `Node ${node.node_id}` }}
           </h3>
           <div v-if="node.online_user_count !== undefined" class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-50/80 border border-green-100">
             <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
             <span class="text-[10px] font-medium text-green-700">{{ node.online_user_count }}</span>
           </div>
         </div>
-        <p class="text-sm text-gray-400 font-medium">{{ node.node_type }}</p>
+        <div class="flex items-center gap-2">
+          <p class="text-sm text-gray-400 font-medium">#{{ node.node_id }} · {{ node.node_type }}</p>
+          <span
+            v-if="node.region"
+            class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-primary-50 text-primary-700 border border-primary-100"
+          >
+            {{ node.region }}
+          </span>
+        </div>
+        <p v-if="node.description" class="text-xs text-gray-500 mt-1 line-clamp-2">
+          {{ node.description }}
+        </p>
       </div>
       
       <span

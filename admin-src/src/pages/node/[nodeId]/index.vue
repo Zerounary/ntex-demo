@@ -22,21 +22,41 @@
         <div>
           <div class="flex items-center gap-3 mb-2">
             <h1 class="text-3xl font-bold text-gray-900 tracking-tight">
-              Node {{ nodeStore.currentNode.node_id }}
+              {{ nodeStore.currentNode.name || `Node ${nodeStore.currentNode.node_id}` }}
             </h1>
-            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200">
-              {{ nodeStore.currentNode.node_type }}
-            </span>
+            <div class="flex items-center gap-2">
+              <span
+                v-if="nodeStore.currentNode.region"
+                class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 border border-primary-100"
+              >
+                {{ nodeStore.currentNode.region }}
+              </span>
+              <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200">
+                #{{ nodeStore.currentNode.node_id }} · {{ nodeStore.currentNode.node_type }}
+              </span>
+            </div>
           </div>
-          <p class="text-gray-500">Manage detailed configuration and view status</p>
+          <p class="text-gray-500">
+            {{ nodeStore.currentNode.description || 'Manage detailed configuration and view status' }}
+          </p>
         </div>
-        <router-link
-          :to="`/node/${nodeStore.currentNode.node_id}/topology`"
-          class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
-        >
-          <div class="i-carbon-chart-network text-lg"></div>
-          <span>Topology View</span>
-        </router-link>
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            class="btn-ghost flex items-center gap-2"
+            @click="openMetaEditor"
+          >
+            <div class="i-carbon-edit text-lg"></div>
+            <span>Edit Info</span>
+          </button>
+          <router-link
+            :to="`/node/${nodeStore.currentNode.node_id}/topology`"
+            class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+          >
+            <div class="i-carbon-chart-network text-lg"></div>
+            <span>Topology View</span>
+          </router-link>
+        </div>
       </div>
 
       <!-- 标签页容器 -->
@@ -213,6 +233,69 @@
         </div>
       </div>
     </div>
+
+    <transition name="modal">
+      <div
+        v-if="showMetaEditor"
+        class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all"
+        @click.self="closeMetaEditor"
+      >
+        <div class="bg-white rounded-2xl overflow-hidden shadow-xl max-w-lg w-full animate-scale-in border border-gray-100">
+          <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <div class="space-y-1">
+              <h3 class="text-lg font-bold text-gray-900">Edit Node Info</h3>
+              <p class="text-xs text-gray-500">Update name, region and description</p>
+            </div>
+            <button @click="closeMetaEditor" class="text-gray-400 hover:text-gray-600 transition-colors">
+              <div class="i-carbon-close text-xl"></div>
+            </button>
+          </div>
+          <div class="p-6">
+            <form @submit.prevent="saveMeta" class="space-y-5">
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Name</label>
+                <input
+                  v-model="metaForm.name"
+                  type="text"
+                  placeholder="e.g. Tokyo Edge"
+                  class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Region</label>
+                <input
+                  v-model="metaForm.region"
+                  type="text"
+                  placeholder="e.g. JP / SG / US-West"
+                  class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all"
+                />
+              </div>
+              <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Description</label>
+                <textarea
+                  v-model="metaForm.description"
+                  rows="3"
+                  placeholder="Short note about this node"
+                  class="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all resize-none"
+                ></textarea>
+              </div>
+
+              <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button type="button" class="btn-ghost" @click="closeMetaEditor">Cancel</button>
+                <button
+                  type="submit"
+                  class="btn-primary shadow-lg shadow-primary-500/20"
+                  :disabled="savingMeta"
+                >
+                  <span v-if="savingMeta">Saving...</span>
+                  <span v-else>Save</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -226,12 +309,22 @@ import OutboundManagement from '@/components/OutboundManagement.vue';
 import RoutingManagement from '@/components/RoutingManagement.vue';
 import UserMapping from '@/components/UserMapping.vue';
 import MaintenanceMode from '@/components/MaintenanceMode.vue';
+import * as adminApi from '@/api/admin';
+import { useToastStore } from '@/stores/toast';
 
 const route = useRoute();
 const nodeStore = useNodeStore();
 const adminStore = useAdminStore();
+const toast = useToastStore();
 
 const activeTab = ref('overview');
+const showMetaEditor = ref(false);
+const savingMeta = ref(false);
+const metaForm = ref({
+  name: '',
+  region: '',
+  description: '',
+});
 
 const tabs = [
   { id: 'overview', label: 'Overview' },
@@ -292,6 +385,52 @@ onMounted(() => {
   nodeStore.setCurrentNode(nodeId.value);
   nodeStore.fetchNodes();
 });
+
+const openMetaEditor = () => {
+  const node = nodeStore.currentNode;
+  if (!node) return;
+  metaForm.value = {
+    name: node.name ?? '',
+    region: node.region ?? '',
+    description: node.description ?? '',
+  };
+  showMetaEditor.value = true;
+};
+
+const closeMetaEditor = () => {
+  showMetaEditor.value = false;
+  savingMeta.value = false;
+};
+
+const saveMeta = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+
+  savingMeta.value = true;
+  try {
+    const name = metaForm.value.name.trim();
+    const region = metaForm.value.region.trim();
+    const description = metaForm.value.description.trim();
+
+    await adminApi.updateNodeMeta(id, {
+      name: name.length ? name : null,
+      region: region.length ? region : null,
+      description: description.length ? description : null,
+    });
+
+    nodeStore.updateNode(id, {
+      name: name.length ? name : null,
+      region: region.length ? region : null,
+      description: description.length ? description : null,
+    });
+    toast.success('Node info updated');
+    closeMetaEditor();
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to update node info');
+  } finally {
+    savingMeta.value = false;
+  }
+};
 
 watch(
   () => route.params.nodeId,

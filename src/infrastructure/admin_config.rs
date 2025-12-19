@@ -562,6 +562,9 @@ impl AdminConfigStore {
         for node_config in node_configs {
             result.push(serde_json::json!({
                 "node_id": node_config.node_id,
+                "name": node_config.name,
+                "region": node_config.region,
+                "description": node_config.description,
                 "node_type": node_config.node_type,
                 "node_speed_limit": node_config.node_speed_limit,
                 "traffic_rate": node_config.traffic_rate,
@@ -582,6 +585,38 @@ impl AdminConfigStore {
         }
         
         Ok(result)
+    }
+
+    pub async fn update_node_meta(
+        &self,
+        node_id: u64,
+        name: Option<Option<String>>,
+        region: Option<Option<String>>,
+        description: Option<Option<String>>,
+    ) -> Result<(), String> {
+        let node_config = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询节点配置失败: {}", e))?
+            .ok_or_else(|| "节点配置不存在".to_string())?;
+
+        let mut active_model: admin_node_config::ActiveModel = node_config.into();
+        if let Some(name) = name {
+            active_model.name = Set(name);
+        }
+        if let Some(region) = region {
+            active_model.region = Set(region);
+        }
+        if let Some(description) = description {
+            active_model.description = Set(description);
+        }
+
+        active_model
+            .update(&self.db)
+            .await
+            .map_err(|e| format!("更新节点信息失败: {}", e))?;
+
+        Ok(())
     }
 
     // ========== 维护模式 ==========

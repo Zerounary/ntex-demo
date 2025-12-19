@@ -110,6 +110,9 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
     if matches!(backend, sea_orm::DatabaseBackend::MySql) {
         // 添加新字段（如果不存在）
         let alter_sqls = vec![
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS name VARCHAR(255) NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS region VARCHAR(255) NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS description TEXT NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INT UNSIGNED NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT UNSIGNED NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT UNSIGNED NULL",
@@ -154,6 +157,9 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
     // PostgreSQL 迁移
     if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
         let alter_sqls = vec![
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS name VARCHAR(255)",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS region VARCHAR(255)",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS description TEXT",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INTEGER",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT",
