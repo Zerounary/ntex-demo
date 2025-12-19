@@ -17,6 +17,8 @@ export interface NodeInfo {
   traffic_rate: number;
   sort: number;
   maintenance_mode: boolean;
+  is_online?: boolean;
+  last_seen_at?: string | null;
   cpu_usage?: number;
   mem_usage?: number;
   disk_usage?: number;

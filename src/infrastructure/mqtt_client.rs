@@ -12,6 +12,7 @@ use tokio::sync::Mutex;
 use std::collections::HashMap;
 use std::fs;
 use log::{info, error, warn, debug};
+use std::time::Instant;
 
 use crate::infrastructure::admin_config::AdminConfigStore;
 use sea_orm::DatabaseConnection;
@@ -24,13 +25,29 @@ pub struct MqttClientManager {
     client: Arc<AsyncClient>,
     shutdown_flag: Arc<tokio::sync::Notify>,
     response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+    presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
     admin_config: AdminConfigStore,
     db: DatabaseConnection,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NodePresence {
+    last_seen: Instant,
+    is_online: bool,
 }
 
 impl MqttClientManager {
     /// 创建并启动 MQTT 客户端
     pub async fn start(admin_config: AdminConfigStore, db: DatabaseConnection) -> Result<Self, Box<dyn std::error::Error>> {
+        match admin_config.set_all_nodes_offline().await {
+            Ok(rows) => {
+                info!("⚫ [Presence] 启动时已重置所有节点为离线: rows_affected={}", rows);
+            }
+            Err(e) => {
+                warn!("⚠️  [Presence] 启动时重置节点离线失败（将继续运行）: {}", e);
+            }
+        }
+
         // 从环境变量获取配置
         let broker_host = env::var("MQTT_BROKER_HOST")
             .unwrap_or_else(|_| "127.0.0.1".to_string());
@@ -174,6 +191,8 @@ impl MqttClientManager {
         
         // 创建响应等待器映射
         let response_waiters = Arc::new(Mutex::new(HashMap::<String, ResponseWaiter>::new()));
+
+        let presence = Arc::new(Mutex::new(HashMap::<u64, NodePresence>::new()));
         
         // 启动事件循环任务（必须在订阅之前启动，以便处理连接和订阅确认）
         let client_clone = client_arc.clone();
@@ -181,8 +200,16 @@ impl MqttClientManager {
         let response_waiters_clone = response_waiters.clone();
         let admin_config_clone = admin_config.clone();
         let db_clone = db.clone();
+        let presence_clone = presence.clone();
         tokio::spawn(async move {
-            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone, admin_config_clone, db_clone).await;
+            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone, presence_clone, admin_config_clone, db_clone).await;
+        });
+
+        let shutdown_clone = shutdown_flag.clone();
+        let presence_clone = presence.clone();
+        let admin_config_clone = admin_config.clone();
+        tokio::spawn(async move {
+            Self::run_presence_watchdog(shutdown_clone, presence_clone, admin_config_clone).await;
         });
         
         // 等待连接建立（给事件循环一些时间处理连接）
@@ -205,6 +232,7 @@ impl MqttClientManager {
             client: client_arc,
             shutdown_flag,
             response_waiters,
+            presence,
             admin_config,
             db,
         })
@@ -216,6 +244,7 @@ impl MqttClientManager {
         _client: Arc<AsyncClient>,
         shutdown_flag: Arc<tokio::sync::Notify>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
         admin_config: AdminConfigStore,
         db: DatabaseConnection,
     ) {
@@ -234,6 +263,7 @@ impl MqttClientManager {
                             }
                             let client_clone = _client.clone();
                             let response_waiters_clone = response_waiters.clone();
+                            let presence_clone = presence.clone();
                             // 检查 payload 大小（最大 100MB，与 broker 配置一致）
                             if publish.payload.len() > 104857600 {
                                 warn!("⚠️  MQTT 消息 payload 大小超限: topic={}, size={} bytes (最大: 104857600 bytes)", 
@@ -243,7 +273,7 @@ impl MqttClientManager {
                             } else {
                                 let admin_config_clone = admin_config.clone();
                                 let db_clone = db.clone();
-                                Self::handle_message(client_clone, response_waiters_clone, admin_config_clone, db_clone, publish.topic, publish.payload).await;
+                                Self::handle_message(client_clone, response_waiters_clone, presence_clone, admin_config_clone, db_clone, publish.topic, publish.payload).await;
                             }
                         }
                         Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
@@ -320,6 +350,49 @@ impl MqttClientManager {
         
         info!("✅ MQTT 客户端事件循环已停止");
     }
+
+    async fn run_presence_watchdog(
+        shutdown_flag: Arc<tokio::sync::Notify>,
+        presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
+        admin_config: AdminConfigStore,
+    ) {
+        let offline_after = Duration::from_secs(
+            env::var("NODE_OFFLINE_AFTER_SECONDS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(60),
+        );
+
+        let mut ticker = time::interval(Duration::from_secs(10));
+        loop {
+            tokio::select! {
+                _ = shutdown_flag.notified() => {
+                    break;
+                }
+                _ = ticker.tick() => {
+                    let mut to_mark_offline: Vec<u64> = Vec::new();
+                    {
+                        let now = Instant::now();
+                        let mut map = presence.lock().await;
+                        for (node_id, p) in map.iter_mut() {
+                            if p.is_online && now.duration_since(p.last_seen) > offline_after {
+                                p.is_online = false;
+                                to_mark_offline.push(*node_id);
+                            }
+                        }
+                    }
+
+                    for node_id in to_mark_offline {
+                        if let Err(e) = admin_config.set_node_online_status(node_id, false).await {
+                            warn!("⚠️  [Presence] 标记节点离线失败: node_id={}, error={}", node_id, e);
+                        } else {
+                            info!("⚫ [Presence] 节点已离线: node_id={}", node_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
     
     /// 处理超大消息（payload 大小超限）
     async fn handle_oversized_message(
@@ -374,6 +447,7 @@ impl MqttClientManager {
     async fn handle_message(
         client: Arc<AsyncClient>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
         admin_config: AdminConfigStore,
         _db: DatabaseConnection,
         topic: String,
@@ -390,6 +464,31 @@ impl MqttClientManager {
         let topic_type = topic_parts[3]; // 'request' 或 'response'
         let request_id = topic_parts[4];
         
+        let node_id_u64_from_topic = node_id.parse::<u64>().ok();
+        if let Some(node_id_u64) = node_id_u64_from_topic {
+            let mut should_set_online = false;
+            {
+                let mut map = presence.lock().await;
+                let entry = map.entry(node_id_u64).or_insert(NodePresence {
+                    last_seen: Instant::now(),
+                    is_online: false,
+                });
+                entry.last_seen = Instant::now();
+                if !entry.is_online {
+                    entry.is_online = true;
+                    should_set_online = true;
+                }
+            }
+
+            if should_set_online {
+                if let Err(e) = admin_config.set_node_online_status(node_id_u64, true).await {
+                    warn!("⚠️  [Presence] 标记节点在线失败: node_id={}, error={}", node_id_u64, e);
+                } else {
+                    info!("🟢 [Presence] 节点已在线: node_id={}", node_id_u64);
+                }
+            }
+        }
+
         // 解析 JSON 负载
         let payload_str = match String::from_utf8(payload.to_vec()) {
             Ok(s) => s,

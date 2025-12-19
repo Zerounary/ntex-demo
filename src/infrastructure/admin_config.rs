@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect};
+use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
 use crate::infrastructure::persistence::{
     admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config,
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
@@ -570,6 +570,8 @@ impl AdminConfigStore {
                 "traffic_rate": node_config.traffic_rate,
                 "sort": node_config.sort,
                 "maintenance_mode": node_config.maintenance_mode,
+                "is_online": node_config.is_online,
+                "last_seen_at": node_config.last_seen_at.map(|t| t.to_rfc3339()),
                 "cpu_usage": node_config.cpu_usage,
                 "mem_usage": node_config.mem_usage,
                 "disk_usage": node_config.disk_usage,
@@ -585,6 +587,37 @@ impl AdminConfigStore {
         }
         
         Ok(result)
+    }
+
+    pub async fn set_node_online_status(&self, node_id: u64, is_online: bool) -> Result<(), String> {
+        let node_config = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询节点配置失败: {}", e))?
+            .ok_or_else(|| "节点配置不存在".to_string())?;
+
+        let mut active_model: admin_node_config::ActiveModel = node_config.into();
+        active_model.is_online = Set(is_online);
+        if is_online {
+            active_model.last_seen_at = Set(Some(chrono::Utc::now()));
+        }
+
+        active_model
+            .update(&self.db)
+            .await
+            .map_err(|e| format!("更新节点在线状态失败: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn set_all_nodes_offline(&self) -> Result<u64, String> {
+        let res = admin_node_config::Entity::update_many()
+            .col_expr(admin_node_config::Column::IsOnline, Expr::value(false))
+            .exec(&self.db)
+            .await
+            .map_err(|e| format!("重置节点在线状态失败: {}", e))?;
+
+        Ok(res.rows_affected)
     }
 
     pub async fn update_node_meta(

@@ -18,6 +18,10 @@ pub struct Model {
     pub inbounds: JsonValue,
     #[sea_orm(default_value = "0")]
     pub maintenance_mode: bool,
+    #[sea_orm(default_value = "0")]
+    pub is_online: bool,
+    #[sea_orm(nullable, column_type = "Timestamp")]
+    pub last_seen_at: Option<DateTimeUtc>,
     // 实时状态字段
     #[sea_orm(nullable)]
     pub cpu_usage: Option<f64>,  // CPU 使用率，0.0-1.0（0.9 表示 90%）

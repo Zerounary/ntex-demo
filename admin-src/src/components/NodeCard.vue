@@ -127,9 +127,10 @@ const hasMetrics = computed(() => {
 
 const statusText = computed(() => {
   if (props.node.maintenance_mode) return 'MAINTENANCE';
-  if (props.node.online_user_count !== undefined && props.node.online_user_count > 0) {
-    return 'ONLINE';
+  if (props.node.is_online !== undefined) {
+    return props.node.is_online ? 'ONLINE' : 'OFFLINE';
   }
+  if (props.node.online_user_count !== undefined && props.node.online_user_count > 0) return 'ONLINE';
   return 'OFFLINE';
 });
 
@@ -137,10 +138,11 @@ const statusClass = computed(() => {
   if (props.node.maintenance_mode) {
     return 'bg-yellow-50 text-yellow-600';
   }
-  if (props.node.online_user_count !== undefined && props.node.online_user_count > 0) {
-    return 'bg-green-50 text-green-600';
+  if (props.node.is_online !== undefined) {
+    return props.node.is_online ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600';
   }
-  return 'bg-gray-100 text-gray-400';
+  if (props.node.online_user_count !== undefined && props.node.online_user_count > 0) return 'bg-green-50 text-green-600';
+  return 'bg-red-50 text-red-600';
 });
 </script>
 
