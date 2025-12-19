@@ -219,6 +219,43 @@
                   </div>
                 </div>
               </div>
+
+              <div v-if="networkInterfaces.length" class="space-y-5">
+                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                  <div class="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse"></div>
+                  Network Interfaces
+                </h3>
+                <div class="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
+                  <table class="min-w-full text-sm">
+                    <thead class="bg-gray-50/60">
+                      <tr class="text-left">
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">RX</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">TX</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Packets</th>
+                        <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Speed</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr
+                        v-for="nic in networkInterfaces"
+                        :key="nic.name"
+                        class="border-t border-gray-100 hover:bg-gray-50/40 transition-colors"
+                      >
+                        <td class="px-4 py-3">
+                          <div class="font-semibold text-gray-800 truncate max-w-[16rem]">{{ nic.name }}</div>
+                        </td>
+                        <td class="px-4 py-3 font-mono text-gray-700 whitespace-nowrap">{{ formatBytes(nic.bytes_recv) }}</td>
+                        <td class="px-4 py-3 font-mono text-gray-700 whitespace-nowrap">{{ formatBytes(nic.bytes_sent) }}</td>
+                        <td class="px-4 py-3 font-mono text-gray-500 whitespace-nowrap">
+                          {{ nic.packets_recv }} ↓ / {{ nic.packets_sent }} ↑
+                        </td>
+                        <td class="px-4 py-3 font-mono text-gray-500 whitespace-nowrap">{{ formatSpeed(nic.speed) }}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </div>
 
             <!-- 其他标签页 -->
@@ -304,6 +341,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import { useAdminStore } from '@/stores/admin';
+import type { NodeNetworkInterface } from '@/api/types';
 import UserManagement from '@/components/UserManagement.vue';
 import OutboundManagement from '@/components/OutboundManagement.vue';
 import RoutingManagement from '@/components/RoutingManagement.vue';
@@ -366,6 +404,20 @@ const formatBytes = (bytes: number): string => {
   }
   return `${size.toFixed(2)} ${units[unitIndex]}`;
 };
+
+const formatSpeed = (speed: number): string => {
+  if (!speed) return '-';
+  return `${formatBytes(speed)}/s`;
+};
+
+const networkInterfaces = computed<NodeNetworkInterface[]>(() => {
+  const nics = nodeStore.currentNode?.network_interfaces || [];
+  return [...nics].sort((a, b) => {
+    const ta = (a.bytes_recv || 0) + (a.bytes_sent || 0);
+    const tb = (b.bytes_recv || 0) + (b.bytes_sent || 0);
+    return tb - ta;
+  });
+});
 
 const formatUptime = (seconds: number): string => {
   const days = Math.floor(seconds / 86400);

@@ -54,6 +54,21 @@
       </div>
     </div>
 
+    <div v-if="hasNetwork" class="mb-6 relative z-10">
+      <div class="bg-gray-50/80 rounded-xl p-3 border border-gray-100/50">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-gray-400 font-medium">Network</span>
+          <span class="text-[10px] font-semibold text-gray-500">{{ networkInterfaceCount }} IF</span>
+        </div>
+        <div v-if="topNetworkInterface" class="mt-1 flex items-center justify-between gap-2">
+          <span class="text-xs font-semibold text-gray-700 truncate">{{ topNetworkInterface.name }}</span>
+          <span class="text-[10px] font-mono text-gray-500 whitespace-nowrap">
+            {{ formatBytes(topNetworkInterface.bytes_recv) }} ↓ / {{ formatBytes(topNetworkInterface.bytes_sent) }} ↑
+          </span>
+        </div>
+      </div>
+    </div>
+
     <!-- 指标 -->
     <div v-if="hasMetrics" class="space-y-4 relative z-10">
       <div v-if="node.cpu_usage !== undefined" class="space-y-1.5">
@@ -109,7 +124,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { NodeInfo } from '@/api/types';
+import type { NodeInfo, NodeNetworkInterface } from '@/api/types';
 
 interface Props {
   node: NodeInfo;
@@ -124,6 +139,42 @@ const hasMetrics = computed(() => {
     props.node.disk_usage !== undefined
   );
 });
+
+const networkInterfaces = computed(() => {
+  return props.node.network_interfaces || [];
+});
+
+const hasNetwork = computed(() => {
+  return networkInterfaces.value.length > 0;
+});
+
+const networkInterfaceCount = computed(() => {
+  return networkInterfaces.value.length;
+});
+
+const topNetworkInterface = computed<NodeNetworkInterface | null>(() => {
+  let best: NodeNetworkInterface | null = null;
+  let bestTotal = -1;
+  for (const nic of networkInterfaces.value) {
+    const total = (nic?.bytes_recv ?? 0) + (nic?.bytes_sent ?? 0);
+    if (total > bestTotal) {
+      bestTotal = total;
+      best = nic;
+    }
+  }
+  return best;
+});
+
+const formatBytes = (bytes: number): string => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = bytes || 0;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex++;
+  }
+  return `${size.toFixed(1)} ${units[unitIndex]}`;
+};
 
 const statusText = computed(() => {
   if (props.node.maintenance_mode) return 'MAINTENANCE';

@@ -7,6 +7,15 @@ export interface ApiResponse<T = any> {
   message?: string;
 }
 
+export interface NodeNetworkInterface {
+  name: string;
+  bytes_recv: number;
+  bytes_sent: number;
+  packets_recv: number;
+  packets_sent: number;
+  speed: number;
+}
+
 export interface NodeInfo {
   node_id: number;
   name?: string | null;
@@ -27,7 +36,7 @@ export interface NodeInfo {
   cpu_threads?: number;
   mem_total?: number;
   disk_total?: number;
-  network_interfaces?: any;
+  network_interfaces?: NodeNetworkInterface[];
   created_at: string;
   updated_at: string;
 }
