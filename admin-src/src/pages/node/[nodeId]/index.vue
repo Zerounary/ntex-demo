@@ -227,10 +227,10 @@
                     Network Interfaces
                   </h3>
                   <button
-                    class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
-                    :disabled="refreshingNetwork"
-                    @click="refreshNetworkInterfaces"
-                    title="Refresh"
+                    :class="networkRefreshButtonClass"
+                    @click="toggleNetworkAutoRefresh"
+                    :title="autoRefreshNetwork ? 'Auto refresh on (5s)' : 'Auto refresh off'"
+                    :aria-pressed="autoRefreshNetwork"
                   >
                     <div
                       class="i-carbon-renew w-5 h-5"
@@ -350,7 +350,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import { useAdminStore } from '@/stores/admin';
@@ -372,6 +372,8 @@ const activeTab = ref('overview');
 const showMetaEditor = ref(false);
 const savingMeta = ref(false);
 const refreshingNetwork = ref(false);
+const autoRefreshNetwork = ref(false);
+const networkAutoRefreshTimerId = ref<number | null>(null);
 const metaForm = ref({
   name: '',
   region: '',
@@ -433,21 +435,53 @@ const networkInterfaces = computed<NodeNetworkInterface[]>(() => {
   });
 });
 
+const networkRefreshButtonClass = computed(() => {
+  return autoRefreshNetwork.value
+    ? 'w-9 h-9 rounded-xl flex items-center justify-center bg-primary-50 text-primary-600 hover:bg-primary-100 transition-colors disabled:opacity-50'
+    : 'w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50';
+});
+
+const stopNetworkAutoRefresh = () => {
+  if (networkAutoRefreshTimerId.value !== null) {
+    clearInterval(networkAutoRefreshTimerId.value);
+    networkAutoRefreshTimerId.value = null;
+  }
+};
+
 const refreshNetworkInterfaces = async () => {
   const id = nodeStore.currentNodeId;
   if (!id) return;
+  if (refreshingNetwork.value) return;
   refreshingNetwork.value = true;
   try {
     const data = await adminApi.refreshNodeNetworkInterfaces(id);
     nodeStore.updateNode(id, {
       network_interfaces: data.network_interfaces || [],
     });
-    toast.success('Network interfaces refreshed');
   } catch (err: any) {
     toast.error(err?.message || 'Failed to refresh network interfaces');
+    if (autoRefreshNetwork.value) {
+      autoRefreshNetwork.value = false;
+      stopNetworkAutoRefresh();
+    }
   } finally {
     refreshingNetwork.value = false;
   }
+};
+
+const toggleNetworkAutoRefresh = async () => {
+  autoRefreshNetwork.value = !autoRefreshNetwork.value;
+  if (!autoRefreshNetwork.value) {
+    stopNetworkAutoRefresh();
+    return;
+  }
+
+  await refreshNetworkInterfaces();
+  stopNetworkAutoRefresh();
+  networkAutoRefreshTimerId.value = window.setInterval(() => {
+    if (!autoRefreshNetwork.value) return;
+    refreshNetworkInterfaces();
+  }, 5000);
 };
 
 const formatUptime = (seconds: number): string => {
@@ -467,6 +501,10 @@ const nodeId = computed(() => {
 onMounted(() => {
   nodeStore.setCurrentNode(nodeId.value);
   nodeStore.fetchNodes();
+});
+
+onBeforeUnmount(() => {
+  stopNetworkAutoRefresh();
 });
 
 const openMetaEditor = () => {
@@ -521,6 +559,9 @@ watch(
     const id = typeof newId === 'string' ? parseInt(newId, 10) : Number(newId);
     nodeStore.setCurrentNode(id);
     adminStore.reset();
+
+    autoRefreshNetwork.value = false;
+    stopNetworkAutoRefresh();
   }
 );
 </script>
