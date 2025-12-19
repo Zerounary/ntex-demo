@@ -36,6 +36,7 @@ export interface NodeInfo {
   cpu_threads?: number;
   mem_total?: number;
   disk_total?: number;
+  public_ip?: string | null;
   network_interfaces?: NodeNetworkInterface[];
   created_at: string;
   updated_at: string;

@@ -514,9 +514,10 @@ impl AdminConfigStore {
         let cpu_threads = request_data.get("cpu_threads").and_then(|v| v.as_u64()).map(|v| v as u32);
         let mem_total = request_data.get("mem_total").and_then(|v| v.as_u64());
         let disk_total = request_data.get("disk_total").and_then(|v| v.as_u64());
+        let public_ip = request_data.get("public_ip").and_then(|v| v.as_str()).map(|v| v.to_string());
         
         // 如果没有任何硬件信息，直接返回
-        if cpu_threads.is_none() && mem_total.is_none() && disk_total.is_none() {
+        if cpu_threads.is_none() && mem_total.is_none() && disk_total.is_none() && public_ip.is_none() {
             return Ok(());
         }
         
@@ -536,6 +537,9 @@ impl AdminConfigStore {
             }
             if let Some(disk_total) = disk_total {
                 active_model.disk_total = Set(Some(disk_total));
+            }
+            if let Some(public_ip) = public_ip {
+                active_model.public_ip = Set(Some(public_ip));
             }
             
             active_model.update(&self.db).await
@@ -597,6 +601,7 @@ impl AdminConfigStore {
                 "cpu_threads": node_config.cpu_threads,
                 "mem_total": node_config.mem_total,
                 "disk_total": node_config.disk_total,
+                "public_ip": node_config.public_ip,
                 "network_interfaces": node_config.network_interfaces,
                 "created_at": node_config.created_at.to_rfc3339(),
                 "updated_at": node_config.updated_at.to_rfc3339(),

@@ -118,6 +118,7 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INT UNSIGNED NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT UNSIGNED NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT UNSIGNED NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS public_ip VARCHAR(255) NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS network_interfaces JSON NULL",
         ];
         
@@ -167,6 +168,7 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS cpu_threads INTEGER",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS mem_total BIGINT",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS public_ip VARCHAR(255)",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS network_interfaces JSONB",
         ];
         

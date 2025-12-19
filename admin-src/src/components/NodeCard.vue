@@ -28,6 +28,12 @@
           >
             {{ node.region }}
           </span>
+          <span
+            v-if="node.public_ip"
+            class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 border border-gray-200 font-mono"
+          >
+            {{ node.public_ip }}
+          </span>
         </div>
         <p v-if="node.description" class="text-xs text-gray-500 mt-1 line-clamp-2">
           {{ node.description }}

@@ -31,6 +31,12 @@
                 {{ onlineBadgeText }}
               </span>
               <span
+                v-if="nodeStore.currentNode.public_ip"
+                class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200 font-mono"
+              >
+                {{ nodeStore.currentNode.public_ip }}
+              </span>
+              <span
                 v-if="nodeStore.currentNode.region"
                 class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 border border-primary-100"
               >
