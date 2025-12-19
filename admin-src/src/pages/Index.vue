@@ -55,18 +55,16 @@
           />
         </div>
 
-        <div class="relative">
-          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
-            <div class="i-carbon-signal-strength"></div>
-          </div>
-          <select
+        <div>
+          <BaseSelect
             v-model="filterOnline"
-            class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
+            :options="onlineOptions"
+            placeholder="All status"
           >
-            <option value="all">All status</option>
-            <option value="online">Online</option>
-            <option value="offline">Offline</option>
-          </select>
+            <template #icon>
+              <div class="i-carbon-signal-strength text-lg"></div>
+            </template>
+          </BaseSelect>
         </div>
       </div>
     </div>
@@ -127,6 +125,7 @@ import { onMounted, ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import NodeCard from '@/components/NodeCard.vue';
+import BaseSelect from '@/components/BaseSelect.vue';
 
 const router = useRouter();
 const nodeStore = useNodeStore();
@@ -135,6 +134,12 @@ const filterName = ref('');
 const filterRegion = ref('');
 const filterDescription = ref('');
 const filterOnline = ref<'all' | 'online' | 'offline'>('all');
+
+const onlineOptions = [
+  { label: 'All status', value: 'all' },
+  { label: 'Online', value: 'online' },
+  { label: 'Offline', value: 'offline' },
+];
 
 const onlineParam = computed(() => {
   if (filterOnline.value === 'online') return true;
