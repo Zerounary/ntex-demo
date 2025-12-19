@@ -522,7 +522,7 @@ watch(
   { deep: true }
 );
 
-const loadData = async () => {
+async function loadData() {
   if (!nodeStore.currentNodeId) return;
 
   try {
@@ -535,7 +535,7 @@ const loadData = async () => {
   } catch (err) {
     console.error('Failed to load data:', err);
   }
-};
+}
 
 onMounted(() => {
   // Initial layout delay to ensure SVG size is correct
