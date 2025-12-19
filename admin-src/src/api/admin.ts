@@ -77,6 +77,21 @@ export async function getNodeConfig(nodeId: number): Promise<NodeConfig> {
   throw new Error(response.error || '获取节点配置失败');
 }
 
+export async function refreshNodeNetworkInterfaces(
+  nodeId: number
+): Promise<{ network_interfaces: NodeInfo['network_interfaces'] }> {
+  const response = await request<{ network_interfaces: NodeInfo['network_interfaces'] }>(
+    `/api/admin/nodes/${nodeId}/network_interfaces/refresh`,
+    {
+      method: 'POST',
+    }
+  );
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '刷新网络接口信息失败');
+}
+
 // ========== 用户管理 ==========
 
 export async function getUsers(nodeId: number): Promise<User[]> {

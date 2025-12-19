@@ -221,10 +221,23 @@
               </div>
 
               <div v-if="networkInterfaces.length" class="space-y-5">
-                <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  <div class="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse"></div>
-                  Network Interfaces
-                </h3>
+                <div class="flex items-center justify-between">
+                  <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <div class="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse"></div>
+                    Network Interfaces
+                  </h3>
+                  <button
+                    class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
+                    :disabled="refreshingNetwork"
+                    @click="refreshNetworkInterfaces"
+                    title="Refresh"
+                  >
+                    <div
+                      class="i-carbon-renew w-5 h-5"
+                      :class="refreshingNetwork ? 'animate-spin' : ''"
+                    ></div>
+                  </button>
+                </div>
                 <div class="overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
                   <table class="min-w-full text-sm">
                     <thead class="bg-gray-50/60">
@@ -358,6 +371,7 @@ const toast = useToastStore();
 const activeTab = ref('overview');
 const showMetaEditor = ref(false);
 const savingMeta = ref(false);
+const refreshingNetwork = ref(false);
 const metaForm = ref({
   name: '',
   region: '',
@@ -418,6 +432,23 @@ const networkInterfaces = computed<NodeNetworkInterface[]>(() => {
     return tb - ta;
   });
 });
+
+const refreshNetworkInterfaces = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+  refreshingNetwork.value = true;
+  try {
+    const data = await adminApi.refreshNodeNetworkInterfaces(id);
+    nodeStore.updateNode(id, {
+      network_interfaces: data.network_interfaces || [],
+    });
+    toast.success('Network interfaces refreshed');
+  } catch (err: any) {
+    toast.error(err?.message || 'Failed to refresh network interfaces');
+  } finally {
+    refreshingNetwork.value = false;
+  }
+};
 
 const formatUptime = (seconds: number): string => {
   const days = Math.floor(seconds / 86400);

@@ -9,6 +9,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::list_nodes);
     cfg.service(handlers::update_node_meta);
     cfg.service(handlers::query_handler);
+
+    cfg.service(handlers::refresh_node_network_interfaces);
     
     // 用户管理
     cfg.service(handlers::add_user);

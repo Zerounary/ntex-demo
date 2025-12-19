@@ -418,7 +418,10 @@ impl MqttClientManager {
         }
         
         // 检查是否是管理端自己发送的请求
-        if request_id.starts_with("log_query_") || request_id.starts_with("udp_probe_") {
+        if request_id.starts_with("log_query_")
+            || request_id.starts_with("udp_probe_")
+            || request_id.starts_with("query_network_")
+        {
             warn!("⚠️  超大消息是管理端发送的请求，无需响应: topic={}", topic);
             return;
         }
@@ -582,8 +585,11 @@ impl MqttClientManager {
             .unwrap_or("unknown");
         
         // 检查是否是管理端自己发送的请求（通过 request_id 前缀判断）
-        // 管理端发送的请求使用特定前缀：log_query_, udp_probe_
-        if request_id.starts_with("log_query_") || request_id.starts_with("udp_probe_") {
+        // 管理端发送的请求使用特定前缀：log_query_, udp_probe_, query_network_
+        if request_id.starts_with("log_query_")
+            || request_id.starts_with("udp_probe_")
+            || request_id.starts_with("query_network_")
+        {
             // 这是管理端自己发送的请求，应该由节点处理，管理端忽略
             debug!("⚠️  [MQTT] 收到管理端自己发送的请求，忽略: action={}, request_id={}", action, request_id);
             return;
@@ -1036,6 +1042,65 @@ impl MqttClientManager {
                 } else {
                     warn!("⚠️  [MQTT Log Query] 等待器不存在（可能已被清理）: request_id={}", request_id);
                 }
+                None
+            }
+        }
+    }
+
+    pub async fn query_node_network_interfaces(
+        &self,
+        node_id: u64,
+        timeout: u64,
+    ) -> Option<Value> {
+        let request_id = format!(
+            "query_network_{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            node_id
+        );
+
+        let request_data = serde_json::json!({
+            "node_id": node_id,
+            "token": "123",
+            "action": "query_network"
+        });
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.insert(request_id.clone(), tx);
+        }
+
+        let request_topic = format!("xrayr/node/{}/request/{}", node_id, request_id);
+        let request_json = serde_json::to_string(&request_data)
+            .unwrap_or_else(|_| r#"{\"msg\":\"error\",\"error\":\"序列化请求失败\"}"#.to_string());
+
+        if let Err(e) = self
+            .client
+            .publish(&request_topic, QoS::AtLeastOnce, false, request_json.as_bytes())
+            .await
+        {
+            error!(
+                "❌ [MQTT Network Query] 发送网络接口查询请求失败: {}, 错误: {}",
+                request_topic, e
+            );
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.remove(&request_id);
+            return None;
+        }
+
+        match time::timeout(Duration::from_secs(timeout), rx).await {
+            Ok(Ok(response)) => Some(response),
+            Ok(Err(_)) => {
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                None
+            }
+            Err(_) => {
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
                 None
             }
         }

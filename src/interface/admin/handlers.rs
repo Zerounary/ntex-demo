@@ -52,6 +52,63 @@ pub async fn list_nodes(
     }
 }
 
+#[web::post("/api/admin/nodes/{node_id}/network_interfaces/refresh")]
+pub async fn refresh_node_network_interfaces(
+    state: State<AdminState>,
+    path: web::types::Path<u64>,
+) -> HttpResponse {
+    let node_id = path.into_inner();
+
+    let mqtt_client = match &state.mqtt_client {
+        Some(c) => c,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                "msg": "error",
+                "error": "MQTT 未连接，无法刷新网络接口信息"
+            }))
+        }
+    };
+
+    let result = mqtt_client.query_node_network_interfaces(node_id, 8).await;
+    let Some(result) = result else {
+        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+            "msg": "error",
+            "error": "刷新网络接口信息超时或失败"
+        }));
+    };
+
+    if result.get("msg").and_then(|v| v.as_str()) != Some("ok") {
+        return HttpResponse::Ok().json(&result);
+    }
+
+    let network = result
+        .get("data")
+        .and_then(|v| v.get("network"))
+        .or_else(|| result.get("data"))
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let network_json = sea_orm::JsonValue::from(network);
+    if let Err(e) = state
+        .config
+        .update_node_network_interfaces(node_id, network_json.clone())
+        .await
+    {
+        return HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        }));
+    }
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok",
+        "data": {
+            "network_interfaces": network_json
+        }
+    }))
+}
+
 #[derive(Deserialize)]
 pub struct UpdateNodeMetaRequest {
     #[serde(default)]

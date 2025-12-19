@@ -188,6 +188,23 @@ impl AdminConfigStore {
         Ok(())
     }
 
+    pub async fn update_node_network_interfaces(
+        &self,
+        node_id: u64,
+        network_interfaces: JsonValue,
+    ) -> Result<(), String> {
+        if let Ok(Some(node_config)) = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+        {
+            let mut active_model: admin_node_config::ActiveModel = node_config.into();
+            active_model.network_interfaces = Set(Some(network_interfaces));
+            active_model.update(&self.db).await
+                .map_err(|e| format!("更新节点网络接口信息失败: {}", e))?;
+        }
+        Ok(())
+    }
+
     pub async fn delete_user(&self, node_id: u64, id: u64) -> Result<User, String> {
         let user = admin_user::Entity::find_by_id(id)
             .filter(admin_user::Column::NodeId.eq(node_id))
