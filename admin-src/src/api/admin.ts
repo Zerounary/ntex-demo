@@ -47,8 +47,10 @@ function buildQuery(params: Record<string, any>): string {
 
 // ========== 节点管理 ==========
 
-export async function listNodes(): Promise<NodeInfo[]> {
-  const response = await request<NodeInfo[]>('/api/admin/nodes');
+export async function listNodes(params?: { is_online?: boolean }): Promise<NodeInfo[]> {
+  const query = params ? buildQuery(params) : '';
+  const url = query ? `/api/admin/nodes?${query}` : '/api/admin/nodes';
+  const response = await request<NodeInfo[]>(url);
   if (response.msg === 'ok' && response.data) {
     return response.data;
   }

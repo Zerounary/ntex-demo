@@ -20,7 +20,7 @@
         </button>
       </div>
 
-      <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="relative">
           <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
             <div class="i-carbon-search"></div>
@@ -53,6 +53,20 @@
             placeholder="Filter by description"
             class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
           />
+        </div>
+
+        <div class="relative">
+          <div class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <div class="i-carbon-signal-strength"></div>
+          </div>
+          <select
+            v-model="filterOnline"
+            class="w-full pl-9 pr-3 py-2.5 bg-white/70 border border-gray-200 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/40 focus:border-primary-300 transition-all shadow-sm"
+          >
+            <option value="all">All status</option>
+            <option value="online">Online</option>
+            <option value="offline">Offline</option>
+          </select>
         </div>
       </div>
     </div>
@@ -109,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue';
+import { onMounted, ref, computed, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import NodeCard from '@/components/NodeCard.vue';
@@ -120,6 +134,13 @@ const nodeStore = useNodeStore();
 const filterName = ref('');
 const filterRegion = ref('');
 const filterDescription = ref('');
+const filterOnline = ref<'all' | 'online' | 'offline'>('all');
+
+const onlineParam = computed(() => {
+  if (filterOnline.value === 'online') return true;
+  if (filterOnline.value === 'offline') return false;
+  return undefined;
+});
 
 const filteredNodes = computed(() => {
   const nameQ = filterName.value.trim().toLowerCase();
@@ -139,11 +160,18 @@ const filteredNodes = computed(() => {
 });
 
 onMounted(() => {
-  nodeStore.fetchNodes();
+  nodeStore.fetchNodes(onlineParam.value);
 });
 
+watch(
+  () => filterOnline.value,
+  () => {
+    nodeStore.fetchNodes(onlineParam.value);
+  }
+);
+
 const refreshNodes = () => {
-  nodeStore.fetchNodes();
+  nodeStore.fetchNodes(onlineParam.value);
 };
 
 const goToNodeDetail = (nodeId: number) => {

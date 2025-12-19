@@ -35,12 +35,26 @@ fn get_node_id_from_query(params: &HashMap<String, String>) -> Result<u64, HttpR
 #[web::get("/api/admin/nodes")]
 pub async fn list_nodes(
     state: State<AdminState>,
+    query: Query<HashMap<String, String>>,
 ) -> HttpResponse {
     match state.config.list_nodes().await {
         Ok(nodes) => {
+            let filtered_nodes = if let Some(is_online) = query
+                .get("is_online")
+                .and_then(|v| v.parse::<bool>().ok())
+            {
+                nodes
+                    .into_iter()
+                    .filter(|n| {
+                        n.get("is_online").and_then(|v| v.as_bool()).unwrap_or(false) == is_online
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                nodes
+            };
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
-                "data": nodes
+                "data": filtered_nodes
             }))
         }
         Err(e) => {

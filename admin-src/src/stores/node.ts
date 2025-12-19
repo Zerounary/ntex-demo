@@ -22,11 +22,11 @@ export const useNodeStore = defineStore('node', {
   },
 
   actions: {
-    async fetchNodes() {
+    async fetchNodes(isOnline?: boolean) {
       this.loading = true;
       this.error = null;
       try {
-        this.nodes = await adminApi.listNodes();
+        this.nodes = await adminApi.listNodes({ is_online: isOnline });
       } catch (err: any) {
         this.error = err.message || '获取节点列表失败';
         console.error('Failed to fetch nodes:', err);

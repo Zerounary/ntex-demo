@@ -26,6 +26,11 @@
             </h1>
             <div class="flex items-center gap-2">
               <span
+                :class="onlineBadgeClass"
+              >
+                {{ onlineBadgeText }}
+              </span>
+              <span
                 v-if="nodeStore.currentNode.region"
                 class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 border border-primary-100"
               >
@@ -408,6 +413,24 @@ const hasMetrics = computed(() => {
     node.mem_usage !== undefined ||
     node.disk_usage !== undefined
   );
+});
+
+const onlineBadgeText = computed(() => {
+  const v = nodeStore.currentNode?.is_online;
+  if (v === true) return 'Online';
+  if (v === false) return 'Offline';
+  return 'Unknown';
+});
+
+const onlineBadgeClass = computed(() => {
+  const v = nodeStore.currentNode?.is_online;
+  if (v === true) {
+    return 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-700 border border-green-100';
+  }
+  if (v === false) {
+    return 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200';
+  }
+  return 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-50 text-yellow-700 border border-yellow-100';
 });
 
 const formatBytes = (bytes: number): string => {
