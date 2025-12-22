@@ -6,6 +6,7 @@ pub mod routes;
 use ntex::web::{self, App};
 use std::sync::Arc;
 
+use ntex_files as fs;
 use crate::infrastructure::admin_config::AdminConfigStore;
 use crate::infrastructure::mqtt_client::MqttClientManager;
 use sea_orm::DatabaseConnection;
@@ -24,6 +25,11 @@ pub async fn serve(port: u16, config: AdminConfigStore, db: DatabaseConnection, 
         App::new()
             .state(state.clone())
             .configure(configure)
+            .service(
+                fs::Files::new("/", "./admin")
+                    .show_files_listing()
+                    .index_file("index.html"),
+            )
     })
     .bind(("127.0.0.1", port))?
     .run()
