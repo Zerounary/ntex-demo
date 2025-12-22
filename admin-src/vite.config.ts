@@ -18,7 +18,7 @@ export default defineConfig({
     port: 4000,
     proxy: {
       '/api': {
-        target: 'http://localhost:667'
+        target: 'http://118.25.95.106:667'
       }
     }
   },
