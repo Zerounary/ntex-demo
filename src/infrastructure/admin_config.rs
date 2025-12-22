@@ -3,7 +3,7 @@
 //! 用于存储用户、上游代理、路由配置等数据（数据库存储）
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
 use crate::infrastructure::persistence::{
@@ -549,12 +549,68 @@ impl AdminConfigStore {
         Ok(())
     }
     
+    /// 为指定节点创建默认配置（含默认入站与默认上游代理）
+    async fn create_default_node_config(&self, node_id: u64) -> Result<admin_node_config::Model, String> {
+        let inbounds = json!([{
+            "port": 10086,
+            "protocol": "vmess",
+            "settings": {},
+            "streamSettings": { "network": "tcp" }
+        }]);
+
+        let inserted_config = admin_node_config::ActiveModel {
+            node_id: Set(node_id),
+            node_type: Set("Vmess".to_string()),
+            node_speed_limit: Set(0),
+            traffic_rate: Set(1.0),
+            sort: Set(1),
+            inbounds: Set(inbounds),
+            ..Default::default()
+        }
+        .insert(&self.db)
+        .await
+        .map_err(|e| format!("创建默认节点配置失败: {}", e))?;
+
+        // 初始化默认上游代理：block 与 direct
+        let default_outbounds = vec![
+            (
+                "block".to_string(),
+                "blackhole".to_string(),
+                json!({
+                    "response": { "type": "http" }
+                }),
+            ),
+            ("direct".to_string(), "freedom".to_string(), json!({})),
+        ];
+
+        for (tag, protocol, settings) in default_outbounds {
+            admin_outbound::ActiveModel {
+                node_id: Set(node_id),
+                tag: Set(tag),
+                protocol: Set(protocol),
+                settings: Set(settings),
+                stream_settings: Set(None),
+                ..Default::default()
+            }
+            .insert(&self.db)
+            .await
+            .map_err(|e| format!("创建默认上游代理失败: {}", e))?;
+        }
+
+        Ok(inserted_config)
+    }
+
     pub async fn get_node_config(&self, node_id: u64) -> Result<NodeConfig, String> {
         let node_config = admin_node_config::Entity::find_by_id(node_id)
             .one(&self.db)
             .await
-            .map_err(|e| format!("查询节点配置失败: {}", e))?
-            .ok_or_else(|| "节点配置不存在".to_string())?;
+            .map_err(|e| format!("查询节点配置失败: {}", e))?;
+
+        let node_config = if let Some(config) = node_config {
+            config
+        } else {
+            self.create_default_node_config(node_id).await?
+        };
         
         let inbounds: Vec<Value> = serde_json::from_value(node_config.inbounds.clone())
             .map_err(|e| format!("解析节点入站配置失败: {}", e))?;
