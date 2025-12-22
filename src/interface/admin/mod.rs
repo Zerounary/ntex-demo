@@ -31,7 +31,7 @@ pub async fn serve(port: u16, config: AdminConfigStore, db: DatabaseConnection, 
                     .index_file("index.html"),
             )
     })
-    .bind(("127.0.0.1", port))?
+    .bind(("0.0.0.0", port))?
     .run()
     .await
 }
