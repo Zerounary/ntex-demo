@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, OutboundConfig, RoutingRule};
+use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 use sea_orm::DatabaseConnection;
 
@@ -18,7 +18,141 @@ pub struct AdminState {
     pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
 }
 
-// ========== 辅助函数 ==========
+#[derive(Deserialize)]
+pub struct AddInboundRequest {
+    pub tag: String,
+    pub protocol: String,
+    pub port: i32,
+    #[serde(default)]
+    pub listen: Option<String>,
+    #[serde(default)]
+    pub settings: Value,
+    #[serde(default)]
+    pub stream_settings: Option<Value>,
+    #[serde(default)]
+    pub sniffing: Option<Value>,
+}
+
+#[web::post("/api/admin/inbound")]
+pub async fn add_inbound(
+    state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(body): Json<AddInboundRequest>,
+) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    let inbound = InboundConfig {
+        tag: body.tag,
+        protocol: body.protocol,
+        port: body.port,
+        listen: body.listen,
+        settings: body.settings,
+        stream_settings: body.stream_settings,
+        sniffing: body.sniffing,
+    };
+
+    match state.config.add_inbound(node_id, inbound.clone()).await {
+        Ok(_) => {
+            if let Some(ref mqtt_client) = state.mqtt_client {
+                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            }
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": inbound
+            }))
+        }
+        Err(e) => HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateInboundRequest {
+    pub protocol: Option<String>,
+    pub port: Option<i32>,
+    pub listen: Option<Option<String>>,
+    pub settings: Option<Value>,
+    pub stream_settings: Option<Option<Value>>,
+    pub sniffing: Option<Option<Value>>,
+}
+
+#[web::put("/api/admin/inbound/{tag}")]
+pub async fn update_inbound(
+    state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
+    path: web::types::Path<String>,
+    Json(body): Json<UpdateInboundRequest>,
+) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let tag = path.into_inner();
+
+    match state
+        .config
+        .update_inbound(
+            node_id,
+            &tag,
+            body.protocol,
+            body.port,
+            body.listen,
+            body.settings,
+            body.stream_settings,
+            body.sniffing,
+        )
+        .await
+    {
+        Ok(_) => {
+            if let Some(ref mqtt_client) = state.mqtt_client {
+                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            }
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok"
+            }))
+        }
+        Err(e) => HttpResponse::NotFound().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
+}
+
+#[web::delete("/api/admin/inbound/{tag}")]
+pub async fn delete_inbound(
+    state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
+    path: web::types::Path<String>,
+) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let tag = path.into_inner();
+
+    match state.config.delete_inbound(node_id, &tag).await {
+        Ok(_) => {
+            if let Some(ref mqtt_client) = state.mqtt_client {
+                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            }
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok"
+            }))
+        }
+        Err(e) => HttpResponse::NotFound().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
+}
 
 /// 从查询参数获取 node_id，如果没有提供则返回错误
 fn get_node_id_from_query(params: &HashMap<String, String>) -> Result<u64, HttpResponse> {
@@ -224,6 +358,26 @@ pub async fn query_handler(
                         "data": {
                             "outbounds": [],
                             "user_mapping": {}
+                        }
+                    }))
+                }
+            }
+        }
+        "inbound" => {
+            match state.config.get_inbounds(node_id).await {
+                Ok(inbounds) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "inbounds": inbounds
+                        }
+                    }))
+                }
+                Err(_) => {
+                    HttpResponse::Ok().json(&serde_json::json!({
+                        "msg": "ok",
+                        "data": {
+                            "inbounds": []
                         }
                     }))
                 }
@@ -464,6 +618,7 @@ pub async fn delete_user(
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
                 let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
                 let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
             }
             

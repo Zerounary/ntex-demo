@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
-    admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
+    admin_inbound, admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
     config_entry,
 };
 
@@ -219,6 +219,22 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
             traffic_rate: Set(1.0),
             sort: Set(1),
             inbounds: Set(inbounds),
+            ..Default::default()
+        }
+        .insert(db)
+        .await?;
+
+        admin_inbound::ActiveModel {
+            node_id: Set(node_id),
+            tag: Set("in_10086".to_string()),
+            protocol: Set("vmess".to_string()),
+            port: Set(10086),
+            listen: Set(None),
+            settings: Set(json!({})),
+            stream_settings: Set(Some(json!({
+                "network": "tcp"
+            }))),
+            sniffing: Set(None),
             ..Default::default()
         }
         .insert(db)

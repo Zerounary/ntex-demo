@@ -5,6 +5,8 @@
 declare module 'vue' {
   export interface GlobalComponents {
     BaseSelect: typeof import('./components/BaseSelect.vue')['default']
+    InboundForm: typeof import('./components/InboundForm.vue')['default']
+    InboundManagement: typeof import('./components/InboundManagement.vue')['default']
     MaintenanceMode: typeof import('./components/MaintenanceMode.vue')['default']
     NodeCard: typeof import('./components/NodeCard.vue')['default']
     NodeSelector: typeof import('./components/NodeSelector.vue')['default']

@@ -4,6 +4,7 @@ pub mod accelerator_profile;
 pub mod accelerator_user;
 pub mod account_user;
 pub mod admin_node_config;
+pub mod admin_inbound;
 pub mod admin_outbound;
 pub mod admin_routing;
 pub mod admin_user;

@@ -16,6 +16,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::add_user);
     cfg.service(handlers::update_user);
     cfg.service(handlers::delete_user);
+
+    cfg.service(handlers::add_inbound);
+    cfg.service(handlers::update_inbound);
+    cfg.service(handlers::delete_inbound);
     
     // 上游代理管理
     cfg.service(handlers::add_outbound);

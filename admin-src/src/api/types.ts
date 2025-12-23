@@ -68,6 +68,16 @@ export interface OutboundConfig {
   stream_settings?: any;
 }
 
+export interface InboundConfig {
+  tag: string;
+  protocol: string;
+  port: number;
+  listen?: string | null;
+  settings: any;
+  stream_settings?: any;
+  sniffing?: any;
+}
+
 export interface RoutingRule {
   type: string;
   outbound_tag?: string;

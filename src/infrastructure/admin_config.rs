@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
 use crate::infrastructure::persistence::{
-    admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config,
+    admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config, admin_inbound,
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
     node_outbound_event_log, node_outbound_latency_log,
 };
@@ -19,6 +19,36 @@ pub struct User {
     pub uuid: String,
     pub st: u64,  // 限速值（Mbps）
     pub dt: u64,  // 设备限制
+}
+
+/// 入站配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundConfig {
+    pub tag: String,
+    pub protocol: String,
+    pub port: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listen: Option<String>,
+    #[serde(default)]
+    pub settings: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_settings: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sniffing: Option<Value>,
+}
+
+impl From<admin_inbound::Model> for InboundConfig {
+    fn from(model: admin_inbound::Model) -> Self {
+        InboundConfig {
+            tag: model.tag,
+            protocol: model.protocol,
+            port: model.port,
+            listen: model.listen,
+            settings: model.settings,
+            stream_settings: model.stream_settings,
+            sniffing: model.sniffing,
+        }
+    }
 }
 
 /// 上游代理配置
@@ -236,6 +266,200 @@ impl AdminConfigStore {
             .ok(); // 忽略映射删除错误，可能不存在
         
         Ok(user_result)
+    }
+
+    // ========== 入站管理 ==========
+    pub async fn get_inbounds(&self, node_id: u64) -> Result<Vec<InboundConfig>, String> {
+        let inbounds = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .order_by_asc(admin_inbound::Column::Id)
+            .all(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?;
+
+        if !inbounds.is_empty() {
+            return Ok(inbounds.into_iter().map(Into::into).collect());
+        }
+
+        let node_config = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询节点配置失败: {}", e))?;
+
+        let Some(node_config) = node_config else {
+            return Ok(vec![]);
+        };
+
+        let legacy_inbounds: Vec<Value> = serde_json::from_value(node_config.inbounds.clone())
+            .map_err(|e| format!("解析节点入站配置失败: {}", e))?;
+
+        if legacy_inbounds.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut migrated: Vec<InboundConfig> = Vec::new();
+        for (idx, v) in legacy_inbounds.into_iter().enumerate() {
+            let port = v.get("port").and_then(|p| p.as_i64()).unwrap_or(0) as i32;
+            if port <= 0 {
+                continue;
+            }
+
+            let tag = v
+                .get("tag")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("in_{}_{}", port, idx + 1));
+
+            let protocol = v
+                .get("protocol")
+                .and_then(|p| p.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "vmess".to_string());
+
+            let listen = v.get("listen").and_then(|l| l.as_str()).map(|s| s.to_string());
+            let settings = v.get("settings").cloned().unwrap_or_else(|| json!({}));
+            let stream_settings = v
+                .get("streamSettings")
+                .cloned()
+                .or_else(|| v.get("stream_settings").cloned());
+            let sniffing = v
+                .get("sniffing")
+                .cloned()
+                .or_else(|| v.get("sniffingSettings").cloned());
+
+            let inbound = InboundConfig {
+                tag: tag.clone(),
+                protocol: protocol.clone(),
+                port,
+                listen,
+                settings: settings.clone(),
+                stream_settings: stream_settings.clone(),
+                sniffing: sniffing.clone(),
+            };
+
+            let active_model = admin_inbound::ActiveModel {
+                node_id: Set(node_id),
+                tag: Set(tag),
+                protocol: Set(protocol),
+                port: Set(port),
+                listen: Set(inbound.listen.clone()),
+                settings: Set(settings),
+                stream_settings: Set(stream_settings),
+                sniffing: Set(sniffing),
+                ..Default::default()
+            };
+
+            active_model
+                .insert(&self.db)
+                .await
+                .map_err(|e| format!("添加入站失败: {}", e))?;
+
+            migrated.push(inbound);
+        }
+
+        Ok(migrated)
+    }
+
+    pub async fn add_inbound(&self, node_id: u64, inbound: InboundConfig) -> Result<(), String> {
+        let existing = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .filter(admin_inbound::Column::Tag.eq(&inbound.tag))
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?;
+
+        if existing.is_some() {
+            return Err(format!("tag {} 已存在", inbound.tag));
+        }
+
+        let active_model = admin_inbound::ActiveModel {
+            node_id: Set(node_id),
+            tag: Set(inbound.tag),
+            protocol: Set(inbound.protocol),
+            port: Set(inbound.port),
+            listen: Set(inbound.listen),
+            settings: Set(inbound.settings),
+            stream_settings: Set(inbound.stream_settings),
+            sniffing: Set(inbound.sniffing),
+            ..Default::default()
+        };
+
+        active_model
+            .insert(&self.db)
+            .await
+            .map_err(|e| format!("添加入站失败: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn update_inbound(
+        &self,
+        node_id: u64,
+        tag: &str,
+        protocol: Option<String>,
+        port: Option<i32>,
+        listen: Option<Option<String>>,
+        settings: Option<Value>,
+        stream_settings: Option<Option<Value>>,
+        sniffing: Option<Option<Value>>,
+    ) -> Result<(), String> {
+        let inbound = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .filter(admin_inbound::Column::Tag.eq(tag))
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?
+            .ok_or_else(|| "入站不存在".to_string())?;
+
+        let mut active_model: admin_inbound::ActiveModel = inbound.into();
+
+        if let Some(protocol) = protocol {
+            active_model.protocol = Set(protocol);
+        }
+        if let Some(port) = port {
+            active_model.port = Set(port);
+        }
+        if let Some(listen) = listen {
+            active_model.listen = Set(listen);
+        }
+        if let Some(settings) = settings {
+            active_model.settings = Set(settings);
+        }
+        if let Some(stream_settings) = stream_settings {
+            active_model.stream_settings = Set(stream_settings);
+        }
+        if let Some(sniffing) = sniffing {
+            active_model.sniffing = Set(sniffing);
+        }
+
+        active_model
+            .update(&self.db)
+            .await
+            .map_err(|e| format!("更新入站失败: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn delete_inbound(&self, node_id: u64, tag: &str) -> Result<(), String> {
+        let existing = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .filter(admin_inbound::Column::Tag.eq(tag))
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?;
+
+        if existing.is_none() {
+            return Err("入站不存在".to_string());
+        }
+
+        admin_inbound::Entity::delete_many()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .filter(admin_inbound::Column::Tag.eq(tag))
+            .exec(&self.db)
+            .await
+            .map_err(|e| format!("删除入站失败: {}", e))?;
+
+        Ok(())
     }
 
     // ========== 上游代理管理 ==========
@@ -612,8 +836,32 @@ impl AdminConfigStore {
             self.create_default_node_config(node_id).await?
         };
         
-        let inbounds: Vec<Value> = serde_json::from_value(node_config.inbounds.clone())
-            .map_err(|e| format!("解析节点入站配置失败: {}", e))?;
+        let inbounds_from_table = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .order_by_asc(admin_inbound::Column::Id)
+            .all(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?;
+
+        let inbounds: Vec<Value> = if !inbounds_from_table.is_empty() {
+            inbounds_from_table
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "tag": m.tag,
+                        "port": m.port,
+                        "protocol": m.protocol,
+                        "listen": m.listen,
+                        "settings": m.settings,
+                        "streamSettings": m.stream_settings,
+                        "sniffing": m.sniffing
+                    })
+                })
+                .collect()
+        } else {
+            serde_json::from_value(node_config.inbounds.clone())
+                .map_err(|e| format!("解析节点入站配置失败: {}", e))?
+        };
         
         Ok(NodeConfig {
             node_id: node_config.node_id,

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import type {
   User,
+  InboundConfig,
   OutboundConfig,
   RoutingConfig,
   UserMapping,
@@ -14,6 +15,10 @@ export const useAdminStore = defineStore('admin', {
     users: [] as User[],
     usersLoading: false,
     usersError: null as string | null,
+
+    inbounds: [] as InboundConfig[],
+    inboundsLoading: false,
+    inboundsError: null as string | null,
 
     // 上游代理管理
     outbounds: [] as OutboundConfig[],
@@ -77,6 +82,73 @@ export const useAdminStore = defineStore('admin', {
       try {
         await adminApi.deleteUser(nodeId, userId);
         this.users = this.users.filter((u) => u.id !== userId);
+      } catch (err: any) {
+        throw err;
+      }
+    },
+
+    async fetchInbounds(nodeId: number) {
+      this.inboundsLoading = true;
+      this.inboundsError = null;
+      try {
+        const data = await adminApi.getInbounds(nodeId);
+        this.inbounds = data.inbounds;
+      } catch (err: any) {
+        this.inboundsError = err.message || '获取入站列表失败';
+        console.error('Failed to fetch inbounds:', err);
+      } finally {
+        this.inboundsLoading = false;
+      }
+    },
+
+    async addInbound(
+      nodeId: number,
+      inbound: {
+        tag: string;
+        protocol: string;
+        port: number;
+        listen?: string | null;
+        settings: any;
+        stream_settings?: any;
+        sniffing?: any;
+      }
+    ) {
+      try {
+        const newInbound = await adminApi.addInbound(nodeId, inbound);
+        this.inbounds.push(newInbound);
+        return newInbound;
+      } catch (err: any) {
+        throw err;
+      }
+    },
+
+    async updateInbound(
+      nodeId: number,
+      tag: string,
+      inbound: {
+        protocol?: string;
+        port?: number;
+        listen?: string | null;
+        settings?: any;
+        stream_settings?: any;
+        sniffing?: any;
+      }
+    ) {
+      try {
+        await adminApi.updateInbound(nodeId, tag, inbound);
+        const index = this.inbounds.findIndex((i) => i.tag === tag);
+        if (index !== -1) {
+          this.inbounds[index] = { ...this.inbounds[index], ...inbound };
+        }
+      } catch (err: any) {
+        throw err;
+      }
+    },
+
+    async deleteInbound(nodeId: number, tag: string) {
+      try {
+        await adminApi.deleteInbound(nodeId, tag);
+        this.inbounds = this.inbounds.filter((i) => i.tag !== tag);
       } catch (err: any) {
         throw err;
       }
@@ -259,6 +331,7 @@ export const useAdminStore = defineStore('admin', {
     // ========== 重置状态 ==========
     reset() {
       this.users = [];
+      this.inbounds = [];
       this.outbounds = [];
       this.userMapping = {};
       this.routing = null;

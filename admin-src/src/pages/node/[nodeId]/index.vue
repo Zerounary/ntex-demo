@@ -285,6 +285,7 @@
             <!-- 其他标签页 -->
             <div v-else :key="activeTab" class="animate-fade-in">
               <UserManagement v-if="activeTab === 'users'" />
+              <InboundManagement v-if="activeTab === 'inbounds'" />
               <OutboundManagement v-if="activeTab === 'outbounds'" />
               <RoutingManagement v-if="activeTab === 'routing'" />
               <UserMapping v-if="activeTab === 'mapping'" />
@@ -366,6 +367,7 @@ import { useNodeStore } from '@/stores/node';
 import { useAdminStore } from '@/stores/admin';
 import type { NodeNetworkInterface } from '@/api/types';
 import UserManagement from '@/components/UserManagement.vue';
+import InboundManagement from '@/components/InboundManagement.vue';
 import OutboundManagement from '@/components/OutboundManagement.vue';
 import RoutingManagement from '@/components/RoutingManagement.vue';
 import UserMapping from '@/components/UserMapping.vue';
@@ -393,6 +395,7 @@ const metaForm = ref({
 const tabs = [
   { id: 'overview', label: 'Overview' },
   { id: 'users', label: 'Users' },
+  { id: 'inbounds', label: 'Inbounds' },
   { id: 'outbounds', label: 'Outbounds' },
   { id: 'routing', label: 'Routing' },
   { id: 'mapping', label: 'User Map' },

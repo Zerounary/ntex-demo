@@ -652,7 +652,7 @@ impl MqttClientManager {
         
         // 根据 action 类型打印不同的信息
         match action {
-            "user" | "config" | "outbound" | "routing" => {
+            "user" | "config" | "inbound" | "outbound" | "routing" => {
                 info!("📋 [配置请求] action={}, node_id={}", action, node_id);
                 println!("📋 [配置请求] 完整消息内容:");
                 println!("{}", serde_json::to_string_pretty(&data).unwrap_or_default());
@@ -836,6 +836,25 @@ impl MqttClientManager {
                     }
                     Err(e) => {
                         error!("❌ [MQTT Request] 获取节点配置失败: {}", e);
+                        Some(serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }))
+                    }
+                }
+            }
+            "inbound" => {
+                match admin_config.get_inbounds(node_id).await {
+                    Ok(inbounds) => {
+                        Some(serde_json::json!({
+                            "msg": "ok",
+                            "data": {
+                                "inbounds": inbounds
+                            }
+                        }))
+                    }
+                    Err(e) => {
+                        error!("❌ [MQTT Request] 获取入站配置失败: {}", e);
                         Some(serde_json::json!({
                             "msg": "error",
                             "error": e

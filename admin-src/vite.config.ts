@@ -18,7 +18,8 @@ export default defineConfig({
     port: 4000,
     proxy: {
       '/api': {
-        target: 'http://118.25.95.106:667'
+        // target: 'http://118.25.95.106:667',
+        target: 'http://127.0.0.1:667'
       }
     }
   },

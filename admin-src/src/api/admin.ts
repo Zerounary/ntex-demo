@@ -5,6 +5,7 @@ import type {
   NodeInfo,
   NodeConfig,
   User,
+  InboundConfig,
   OutboundConfig,
   RoutingConfig,
   RoutingRule,
@@ -142,6 +143,70 @@ export async function deleteUser(nodeId: number, userId: number): Promise<void> 
   });
   if (response.msg !== 'ok') {
     throw new Error(response.error || '删除用户失败');
+  }
+}
+
+export async function getInbounds(nodeId: number): Promise<{ inbounds: InboundConfig[] }> {
+  const query = buildQuery({ node_id: nodeId, act: 'inbound' });
+  const response = await request<{ inbounds: InboundConfig[] }>(`/api/admin/query?${query}`);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取入站列表失败');
+}
+
+export async function addInbound(
+  nodeId: number,
+  inbound: {
+    tag: string;
+    protocol: string;
+    port: number;
+    listen?: string | null;
+    settings: any;
+    stream_settings?: any;
+    sniffing?: any;
+  }
+): Promise<InboundConfig> {
+  const query = buildQuery({ node_id: nodeId });
+  const response = await request<InboundConfig>(`/api/admin/inbound?${query}`, {
+    method: 'POST',
+    body: JSON.stringify(inbound),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '添加入站失败');
+}
+
+export async function updateInbound(
+  nodeId: number,
+  tag: string,
+  inbound: {
+    protocol?: string;
+    port?: number;
+    listen?: string | null;
+    settings?: any;
+    stream_settings?: any;
+    sniffing?: any;
+  }
+): Promise<void> {
+  const query = buildQuery({ node_id: nodeId });
+  const response = await request(`/api/admin/inbound/${tag}?${query}`, {
+    method: 'PUT',
+    body: JSON.stringify(inbound),
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '更新入站失败');
+  }
+}
+
+export async function deleteInbound(nodeId: number, tag: string): Promise<void> {
+  const query = buildQuery({ node_id: nodeId });
+  const response = await request(`/api/admin/inbound/${tag}?${query}`, {
+    method: 'DELETE',
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '删除入站失败');
   }
 }
 
