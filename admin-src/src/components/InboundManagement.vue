@@ -86,10 +86,10 @@
               <div class="i-carbon-chevron-right group-open/details:rotate-90 transition-transform"></div>
               View Configuration
             </summary>
-            <div class="mt-3 p-3 bg-gray-900 rounded-xl overflow-hidden shadow-inner space-y-3">
-              <pre class="text-[10px] text-gray-300 font-mono overflow-x-auto custom-scrollbar">{{ JSON.stringify(inbound.settings, null, 2) }}</pre>
-              <pre class="text-[10px] text-gray-300 font-mono overflow-x-auto custom-scrollbar">{{ JSON.stringify(inbound.stream_settings ?? null, null, 2) }}</pre>
-              <pre class="text-[10px] text-gray-300 font-mono overflow-x-auto custom-scrollbar">{{ JSON.stringify(inbound.sniffing ?? null, null, 2) }}</pre>
+            <div class="mt-3 p-3 bg-gray-900 rounded-xl overflow-hidden shadow-inner">
+              <pre class="text-[10px] text-gray-300 font-mono overflow-x-auto custom-scrollbar">
+{{ formatInboundConfig(inbound) }}
+              </pre>
             </div>
           </details>
         </div>
@@ -138,6 +138,28 @@ const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingInbound = ref<InboundConfig | null>(null);
+
+const formatInboundConfig = (inbound: InboundConfig) => {
+  const config: Record<string, unknown> = {
+    port: inbound.port,
+    protocol: inbound.protocol,
+  };
+
+  if (inbound.listen) {
+    config.listen = inbound.listen;
+  }
+  if (inbound.settings) {
+    config.settings = inbound.settings;
+  }
+  if (inbound.stream_settings) {
+    config.streamSettings = inbound.stream_settings;
+  }
+  if (inbound.sniffing) {
+    config.sniffing = inbound.sniffing;
+  }
+
+  return JSON.stringify(config, null, 2);
+};
 
 onMounted(() => {
   if (nodeStore.currentNodeId) {
