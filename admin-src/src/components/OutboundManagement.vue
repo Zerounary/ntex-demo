@@ -126,7 +126,6 @@
       <div
         v-if="showAddForm || editingOutbound"
         class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all"
-        @click.self="closeForm"
       >
         <div class="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto animate-scale-in border border-gray-100">
           <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
