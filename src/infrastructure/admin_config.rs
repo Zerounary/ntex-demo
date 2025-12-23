@@ -31,7 +31,7 @@ pub struct InboundConfig {
     pub listen: Option<String>,
     #[serde(default)]
     pub settings: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "streamSettings", skip_serializing_if = "Option::is_none")]
     pub stream_settings: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sniffing: Option<Value>,
