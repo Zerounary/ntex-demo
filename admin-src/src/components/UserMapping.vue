@@ -100,7 +100,7 @@
         class="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 transition-all"
         @click.self="closeForm"
       >
-        <div class="bg-white rounded-2xl overflow-hidden shadow-xl max-w-md w-full animate-scale-in border border-gray-100">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full animate-scale-in border border-gray-100">
           <div class="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center rounded-t-2xl">
             <h3 class="text-lg font-bold text-gray-900">
               {{ editingUuid ? 'Edit Mapping' : 'Add Mapping' }}
