@@ -10,6 +10,8 @@ import type {
   RoutingConfig,
   RoutingRule,
   ChainDefinition,
+  ApplyChainRequest,
+  ApplyChainResult,
   UserMapping,
   MaintenanceMode,
   UserLog,
@@ -68,6 +70,17 @@ export async function updateChains(nodeId: number, chains: ChainDefinition[]): P
     return response.data;
   }
   throw new Error(response.error || '更新链路配置失败');
+}
+
+export async function applyChain(payload: ApplyChainRequest): Promise<ApplyChainResult> {
+  const response = await request<ApplyChainResult>(`/api/admin/chains/apply`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '应用链路失败');
 }
 
 // ========== 节点管理 ==========

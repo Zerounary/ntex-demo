@@ -24,6 +24,17 @@
           <div :class="nodesLoading ? 'animate-spin' : ''" class="i-carbon-data-base text-lg"></div>
           <span>Refresh Nodes</span>
         </button>
+
+        <button
+          type="button"
+          class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+          :disabled="!isGlobalTemplates || !activeChainId || applying"
+          @click="applyActiveChain"
+        >
+          <div :class="applying ? 'animate-spin' : ''" class="i-carbon-rocket text-lg"></div>
+          <span>Apply</span>
+        </button>
+
         <button
           type="button"
           class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
@@ -32,6 +43,27 @@
           <div class="i-carbon-add text-lg"></div>
           <span>Add Chain</span>
         </button>
+      </div>
+    </div>
+
+    <div
+      v-if="isGlobalTemplates"
+      class="p-4 rounded-xl border border-gray-100 bg-white shadow-sm"
+    >
+      <div class="text-sm font-semibold text-gray-800">Apply Settings</div>
+      <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <label class="block">
+          <div class="text-xs text-gray-500 mb-1">Entry inbound tag</div>
+          <input
+            v-model="entryInboundTag"
+            type="text"
+            class="input w-full"
+            placeholder="e.g. in_auth"
+          />
+        </label>
+      </div>
+      <div class="mt-2 text-xs text-gray-400">
+        Apply will add a routing rule on the first node: inboundTag = this value -> outbound = chain_entry_* (freedom redirect to local dokodemo).
       </div>
     </div>
 
@@ -51,6 +83,36 @@
     </div>
 
     <div v-else class="space-y-6">
+      <div
+        v-if="applyResult && isGlobalTemplates"
+        class="p-4 rounded-xl border border-gray-100 bg-white shadow-sm"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-sm font-semibold text-gray-800">Apply Result</div>
+          <button
+            type="button"
+            class="btn-secondary flex items-center gap-2"
+            @click="applyResult = null"
+          >
+            <div class="i-carbon-close text-lg"></div>
+            <span>Close</span>
+          </button>
+        </div>
+
+        <div class="mt-3 space-y-1 text-sm">
+          <div
+            v-for="(r, idx) in applyResult.applied_nodes"
+            :key="idx"
+            class="flex items-center justify-between gap-3 rounded-lg px-3 py-2 border"
+            :class="r.status === 'ok' ? 'border-emerald-100 bg-emerald-50/40 text-emerald-700' : 'border-red-100 bg-red-50/40 text-red-700'"
+          >
+            <div class="font-mono">node_id={{ r.node_id }}</div>
+            <div class="font-mono">tag={{ r.tag }}</div>
+            <div class="text-xs">{{ r.status }}</div>
+          </div>
+        </div>
+      </div>
+
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div class="lg:col-span-4 space-y-4">
           <div class="card-base p-5">
@@ -372,7 +434,7 @@ import { useNodeStore } from '@/stores/node';
 import { useToastStore } from '@/stores/toast';
 import BaseSelect from '@/components/BaseSelect.vue';
 import * as adminApi from '@/api/admin';
-import type { ChainDefinition, ChainRouteEntry } from '@/api/types';
+import type { ApplyChainResult, ChainDefinition, ChainRouteEntry } from '@/api/types';
 
 interface Props {
   nodeId: number;
@@ -387,6 +449,11 @@ const nodeStore = useNodeStore();
 const loading = ref(false);
 const error = ref<string | null>(null);
 const dirty = ref(false);
+
+const applying = ref(false);
+const applyResult = ref<ApplyChainResult | null>(null);
+
+const entryInboundTag = ref('');
 
 const chains = ref<ChainDefinition[]>([]);
 const activeChainId = ref<string | null>(null);
@@ -418,6 +485,8 @@ const activeChain = computed(() => {
 
 const selectedNodeId = computed(() => props.selectedNodeId || null);
 const nodesLoading = computed(() => nodeStore.loading);
+
+const isGlobalTemplates = computed(() => props.nodeId === 0);
 
 const getDefaultNodeId = () => nodeStore.sortedNodes[0]?.node_id || 0;
 
@@ -491,6 +560,30 @@ const selectChain = (id: string) => {
 const refreshNodes = async () => {
   await nodeStore.fetchNodes();
   toast.success('Node list refreshed');
+};
+
+const applyActiveChain = async () => {
+  if (!isGlobalTemplates.value) return;
+  if (!activeChainId.value) return;
+  if (!entryInboundTag.value.trim()) {
+    toast.error('Entry inbound tag is required');
+    return;
+  }
+  applying.value = true;
+  applyResult.value = null;
+  try {
+    const res = await adminApi.applyChain({
+      chain_id: activeChainId.value,
+      base_port: 40000,
+      entry_inbound_tag: entryInboundTag.value.trim(),
+    });
+    applyResult.value = res;
+    toast.success('Chain applied');
+  } catch (err: any) {
+    toast.error(err?.message || 'Apply failed');
+  } finally {
+    applying.value = false;
+  }
 };
 
 const createChain = () => {

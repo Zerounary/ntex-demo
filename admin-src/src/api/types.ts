@@ -114,6 +114,24 @@ export interface ChainDefinition {
   description?: string;
 }
 
+export interface ApplyChainRequest {
+  chain_id: string;
+  base_port?: number;
+  entry_inbound_tag?: string;
+}
+
+export interface ApplyChainNodeResult {
+  node_id: number;
+  tag: string;
+  status: 'ok' | 'error';
+  error?: string;
+}
+
+export interface ApplyChainResult {
+  chain_id: string;
+  applied_nodes: ApplyChainNodeResult[];
+}
+
 export interface UserMapping {
   [uuid: string]: string; // uuid -> outbound_tag
 }

@@ -69,6 +69,8 @@ pub struct RoutingRule {
     #[serde(rename = "type")]
     pub rule_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub inbound_tag: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub outbound_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<Vec<String>>,
@@ -173,6 +175,60 @@ impl AdminConfigStore {
         None
     }
 
+    pub async fn get_node_public_ip(&self, node_id: u64) -> Result<String, String> {
+        let node = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询节点失败: {}", e))?
+            .ok_or_else(|| "节点不存在".to_string())?;
+
+        node.public_ip
+            .ok_or_else(|| format!("node_id={} 未设置 public_ip", node_id))
+    }
+
+    pub async fn select_default_forward_port(&self, node_id: u64) -> Result<i32, String> {
+        let inbounds = self.get_inbounds(node_id).await?;
+        let mut candidates: Vec<i32> = inbounds
+            .into_iter()
+            .filter(|i| i.port > 0)
+            .filter(|i| i.protocol != "dokodemo-door")
+            .filter(|i| !i.tag.starts_with("chain_"))
+            .map(|i| i.port)
+            .collect();
+        candidates.sort();
+        candidates
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("node_id={} 没有可用的末端入站端口用于转发", node_id))
+    }
+
+    pub async fn upsert_inbound(&self, node_id: u64, inbound: InboundConfig) -> Result<(), String> {
+        let existing = admin_inbound::Entity::find()
+            .filter(admin_inbound::Column::NodeId.eq(node_id))
+            .filter(admin_inbound::Column::Tag.eq(&inbound.tag))
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询入站失败: {}", e))?;
+
+        if let Some(model) = existing {
+            let mut active_model: admin_inbound::ActiveModel = model.into();
+            active_model.protocol = Set(inbound.protocol);
+            active_model.port = Set(inbound.port);
+            active_model.listen = Set(inbound.listen);
+            active_model.settings = Set(inbound.settings);
+            active_model.stream_settings = Set(inbound.stream_settings);
+            active_model.sniffing = Set(inbound.sniffing);
+            active_model.updated_at = Set(Utc::now().into());
+            active_model
+                .update(&self.db)
+                .await
+                .map_err(|e| format!("更新入站失败: {}", e))?;
+            Ok(())
+        } else {
+            self.add_inbound(node_id, inbound).await
+        }
+    }
+
     // ========== 用户管理 ==========
     pub async fn get_users(&self, node_id: u64) -> Result<Vec<User>, String> {
         let users = admin_user::Entity::find()
@@ -245,6 +301,30 @@ impl AdminConfigStore {
             .map_err(|e| format!("更新用户失败: {}", e))?;
         
         Ok(())
+    }
+
+    pub async fn upsert_outbound(&self, node_id: u64, outbound: OutboundConfig) -> Result<(), String> {
+        let existing = admin_outbound::Entity::find()
+            .filter(admin_outbound::Column::NodeId.eq(node_id))
+            .filter(admin_outbound::Column::Tag.eq(&outbound.tag))
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询上游代理失败: {}", e))?;
+
+        if let Some(model) = existing {
+            let mut active_model: admin_outbound::ActiveModel = model.into();
+            active_model.protocol = Set(outbound.protocol);
+            active_model.settings = Set(outbound.settings);
+            active_model.stream_settings = Set(outbound.stream_settings);
+            active_model.updated_at = Set(Utc::now().into());
+            active_model
+                .update(&self.db)
+                .await
+                .map_err(|e| format!("更新上游代理失败: {}", e))?;
+            Ok(())
+        } else {
+            self.add_outbound(node_id, outbound).await
+        }
     }
 
     pub async fn update_node_network_interfaces(

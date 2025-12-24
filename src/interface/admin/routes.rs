@@ -11,6 +11,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::query_handler);
 
     // 链路（Chain）配置管理
+    cfg.service(handlers::apply_chain);
     cfg.service(handlers::get_chains);
     cfg.service(handlers::update_chains);
 
