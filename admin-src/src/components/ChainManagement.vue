@@ -1,5 +1,5 @@
 <template>
-  <div class="chain-management space-y-6">
+  <div class="chain-management space-y-4">
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
       <div>
         <h2 class="text-2xl font-bold text-gray-900 tracking-tight">Chains</h2>
@@ -240,9 +240,9 @@
               </div>
             </div>
 
-            <div class="mt-4 overflow-x-auto rounded-xl border border-gray-100 bg-white shadow-sm">
+            <div class="mt-4 rounded-xl border border-gray-100 bg-white shadow-sm max-h-[70vh] overflow-auto">
               <table class="min-w-full text-sm">
-                <thead class="bg-gray-50/60">
+                <thead class="bg-gray-50/60 sticky top-0 z-10">
                   <tr class="text-left">
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">#</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">From</th>

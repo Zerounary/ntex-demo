@@ -7,6 +7,7 @@
 
     <!-- Trigger -->
     <div
+      ref="triggerRef"
       @click="toggle"
       class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm transition-all duration-200 cursor-pointer flex items-center justify-between group"
       :class="[
@@ -41,64 +42,68 @@
     </div>
 
     <!-- Dropdown Menu -->
-    <transition
-      enter-active-class="transition duration-200 ease-out"
-      enter-from-class="transform scale-95 opacity-0 -translate-y-2"
-      enter-to-class="transform scale-100 opacity-100 translate-y-0"
-      leave-active-class="transition duration-150 ease-in"
-      leave-from-class="transform scale-100 opacity-100 translate-y-0"
-      leave-to-class="transform scale-95 opacity-0 -translate-y-2"
-    >
-      <div
-        v-if="isOpen"
-        class="absolute z-50 w-full mt-2 bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden focus:outline-none"
+    <teleport to="body">
+      <transition
+        enter-active-class="transition duration-200 ease-out"
+        enter-from-class="transform scale-95 opacity-0 -translate-y-2"
+        enter-to-class="transform scale-100 opacity-100 translate-y-0"
+        leave-active-class="transition duration-150 ease-in"
+        leave-from-class="transform scale-100 opacity-100 translate-y-0"
+        leave-to-class="transform scale-95 opacity-0 -translate-y-2"
       >
-        <!-- Search (Optional) -->
-        <div v-if="searchable" class="px-2 pb-1 pt-2">
-           <div class="relative">
-             <input
-               v-model="searchQuery"
-               ref="searchInputRef"
-               type="text"
-               class="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-primary-400 focus:bg-white transition-colors"
-               placeholder="Search..."
-               @click.stop
-             />
-             <div class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
-               <div class="i-carbon-search"></div>
+        <div
+          v-if="isOpen"
+          ref="dropdownRef"
+          class="fixed z-[9999] bg-white rounded-xl shadow-xl border border-gray-100 py-1 overflow-hidden focus:outline-none"
+          :style="dropdownStyle"
+        >
+          <!-- Search (Optional) -->
+          <div v-if="searchable" class="px-2 pb-1 pt-2">
+             <div class="relative">
+               <input
+                 v-model="searchQuery"
+                 ref="searchInputRef"
+                 type="text"
+                 class="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-primary-400 focus:bg-white transition-colors"
+                 placeholder="Search..."
+                 @click.stop
+               />
+               <div class="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
+                 <div class="i-carbon-search"></div>
+               </div>
              </div>
-           </div>
-        </div>
+          </div>
 
-        <!-- Options List -->
-        <ul class="max-h-60 overflow-auto custom-scrollbar p-1">
-          <li
-            v-for="option in filteredOptions"
-            :key="option.value"
-            @click="select(option)"
-            class="relative px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors flex items-center justify-between group"
-            :class="[
-              modelValue === option.value
-                ? 'bg-primary-50 text-primary-700 font-medium'
-                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-            ]"
-          >
-            <div class="flex items-center gap-2">
-               <div v-if="option.icon" :class="option.icon" class="text-lg opacity-70 group-hover:opacity-100"></div>
-               <span>{{ option.label }}</span>
-            </div>
+          <!-- Options List -->
+          <ul class="max-h-60 overflow-auto custom-scrollbar p-1">
+            <li
+              v-for="option in filteredOptions"
+              :key="option.value"
+              @click="select(option)"
+              class="relative px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors flex items-center justify-between group"
+              :class="[
+                modelValue === option.value
+                  ? 'bg-primary-50 text-primary-700 font-medium'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              ]"
+            >
+              <div class="flex items-center gap-2">
+                 <div v-if="option.icon" :class="option.icon" class="text-lg opacity-70 group-hover:opacity-100"></div>
+                 <span>{{ option.label }}</span>
+              </div>
+              
+              <div v-if="modelValue === option.value" class="text-primary-600 animate-scale-in">
+                <div class="i-carbon-checkmark"></div>
+              </div>
+            </li>
             
-            <div v-if="modelValue === option.value" class="text-primary-600 animate-scale-in">
-              <div class="i-carbon-checkmark"></div>
-            </div>
-          </li>
-          
-          <li v-if="filteredOptions.length === 0" class="px-3 py-4 text-center text-sm text-gray-400">
-            No options found
-          </li>
-        </ul>
-      </div>
-    </transition>
+            <li v-if="filteredOptions.length === 0" class="px-3 py-4 text-center text-sm text-gray-400">
+              No options found
+            </li>
+          </ul>
+        </div>
+      </transition>
+    </teleport>
   </div>
 </template>
 
@@ -138,8 +143,12 @@ const emit = defineEmits<Emits>();
 
 const isOpen = ref(false);
 const containerRef = ref<HTMLElement | null>(null);
+const triggerRef = ref<HTMLElement | null>(null);
+const dropdownRef = ref<HTMLElement | null>(null);
 const searchInputRef = ref<HTMLInputElement | null>(null);
 const searchQuery = ref('');
+
+const dropdownStyle = ref<Record<string, string>>({});
 
 const selectedOption = computed(() => {
   return props.options.find(opt => opt.value === props.modelValue);
@@ -156,6 +165,7 @@ const filteredOptions = computed(() => {
 const toggle = () => {
   if (props.disabled) return;
   isOpen.value = !isOpen.value;
+  if (isOpen.value) nextTick(() => updateDropdownPosition());
   if (isOpen.value && props.searchable) {
     searchQuery.value = '';
     nextTick(() => {
@@ -170,19 +180,57 @@ const select = (option: Option) => {
   isOpen.value = false;
 };
 
-const handleClickOutside = (event: MouseEvent) => {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    isOpen.value = false;
+const updateDropdownPosition = () => {
+  const el = triggerRef.value || containerRef.value;
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const dropdownEl = dropdownRef.value;
+  const margin = 8;
+  const viewportHeight = window.innerHeight;
+  const viewportWidth = window.innerWidth;
+  const dropdownHeight = dropdownEl?.offsetHeight || 0;
+  const dropdownWidth = rect.width;
+  let top = rect.bottom + margin;
+  if (dropdownHeight && top + dropdownHeight > viewportHeight - margin) {
+    const flippedTop = rect.top - dropdownHeight - margin;
+    if (flippedTop >= margin) top = flippedTop;
+    else top = Math.max(margin, viewportHeight - dropdownHeight - margin);
   }
+  let left = rect.left;
+  const maxLeft = viewportWidth - dropdownWidth - margin;
+  if (left > maxLeft) left = Math.max(margin, maxLeft);
+  dropdownStyle.value = {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${dropdownWidth}px`,
+  };
+};
+
+const handleClickOutside = (event: MouseEvent) => {
+  const t = event.target as Node;
+  const inTrigger = containerRef.value ? containerRef.value.contains(t) : false;
+  const inDropdown = dropdownRef.value ? dropdownRef.value.contains(t) : false;
+  if (!inTrigger && !inDropdown) isOpen.value = false;
 };
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  window.addEventListener('resize', updateDropdownPosition);
+  window.addEventListener('scroll', updateDropdownPosition, true);
 });
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', updateDropdownPosition);
+  window.removeEventListener('scroll', updateDropdownPosition, true);
 });
+
+watch(
+  () => isOpen.value,
+  (open) => {
+    if (open) nextTick(() => updateDropdownPosition());
+  }
+);
 </script>
 
 <style scoped>
