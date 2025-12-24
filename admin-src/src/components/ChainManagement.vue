@@ -409,6 +409,14 @@ const activeChain = computed(() => {
 
 const selectedNodeId = computed(() => props.selectedNodeId || null);
 
+const getDefaultNodeId = () => nodeStore.sortedNodes[0]?.node_id || 0;
+
+const getAlternateNodeId = (exclude?: number | null) => {
+  const candidate = nodeStore.sortedNodes.find((n) => n.node_id !== exclude)?.node_id;
+  if (candidate !== undefined) return candidate;
+  return exclude ?? getDefaultNodeId();
+};
+
 const markDirty = () => {
   dirty.value = true;
 };
@@ -442,6 +450,13 @@ const load = async () => {
 
 const save = async () => {
   if (!props.nodeId) return;
+  const invalid = chains.value.some((c) =>
+    c.routes.some((r) => r.fromNodeId === r.toNodeId)
+  );
+  if (invalid) {
+    toast.error('Save blocked: some routes have FROM equal to TO');
+    return;
+  }
   try {
     const payload = chains.value.map((c) => {
       const clone: ChainDefinition = JSON.parse(JSON.stringify(c));
@@ -507,11 +522,14 @@ const updateProtocol = (v: any) => {
 
 const addHop = () => {
   if (!activeChain.value) return;
+  const validRoutes = activeChain.value.routes.filter((r) => r.fromNodeId !== r.toNodeId);
+  const previous = validRoutes[validRoutes.length - 1];
+  const fromNodeId = previous ? previous.toNodeId : getDefaultNodeId();
   const row: ChainRouteEntry = {
     id: uuidv4(),
     order: activeChain.value.routes.length + 1,
-    fromNodeId: nodeStore.sortedNodes[0]?.node_id || 0,
-    toNodeId: nodeStore.sortedNodes[0]?.node_id || 0,
+    fromNodeId,
+    toNodeId: getAlternateNodeId(fromNodeId),
     mode: activeChain.value.protocol || 'vmess',
     remark: '',
   };
@@ -549,6 +567,12 @@ const updateRow = (rowId: string, patch: Partial<ChainRouteEntry>) => {
   if (!activeChain.value) return;
   const row = activeChain.value.routes.find((r) => r.id === rowId);
   if (!row) return;
+  const nextFrom = patch.fromNodeId ?? row.fromNodeId;
+  const nextTo = patch.toNodeId ?? row.toNodeId;
+  if (nextFrom && nextTo && nextFrom === nextTo) {
+    toast.error('FROM and TO cannot be the same');
+    return;
+  }
   Object.assign(row, patch);
   markDirty();
 };
@@ -563,6 +587,10 @@ const appendHopFromPending = () => {
   if (!activeChain.value) return;
   if (!pendingFromNodeId.value) return;
   if (!selectedNodeId.value) return;
+  if (pendingFromNodeId.value === selectedNodeId.value) {
+    toast.error('FROM and TO cannot be the same');
+    return;
+  }
 
   const row: ChainRouteEntry = {
     id: uuidv4(),
