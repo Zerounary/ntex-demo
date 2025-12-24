@@ -10,14 +10,24 @@
           </h1>
           <p class="text-gray-500 font-medium">Manage and monitor your infrastructure</p>
         </div>
-        <button
-          @click="refreshNodes"
-          :disabled="nodeStore.loading"
-          class="btn-primary flex items-center gap-2.5 px-6 py-2.5"
-        >
-          <div :class="nodeStore.loading ? 'animate-spin' : ''" class="i-carbon-renew text-lg"></div>
-          <span class="text-sm font-semibold tracking-wide">REFRESH</span>
-        </button>
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+            @click="router.push('/flow')"
+          >
+            <div class="i-carbon-direction-right-01 text-lg"></div>
+            <span class="text-sm font-semibold tracking-wide">FLOW BUILDER</span>
+          </button>
+          <button
+            @click="refreshNodes"
+            :disabled="nodeStore.loading"
+            class="btn-primary flex items-center gap-2.5 px-6 py-2.5"
+          >
+            <div :class="nodeStore.loading ? 'animate-spin' : ''" class="i-carbon-renew text-lg"></div>
+            <span class="text-sm font-semibold tracking-wide">REFRESH</span>
+          </button>
+        </div>
       </div>
 
       <div class="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
