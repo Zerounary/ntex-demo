@@ -57,7 +57,7 @@
           <input
             v-model="entryInboundTag"
             type="text"
-            class="input w-full"
+            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/20 focus:border-primary-400 transition-all"
             placeholder="e.g. in_auth"
           />
         </label>
@@ -509,7 +509,7 @@ const normalizeRoutesOrder = (c: ChainDefinition) => {
 };
 
 const load = async () => {
-  if (!props.nodeId) return;
+  if (props.nodeId === undefined || props.nodeId === null) return;
   loading.value = true;
   error.value = null;
   try {
@@ -528,7 +528,7 @@ const load = async () => {
 };
 
 const save = async () => {
-  if (!props.nodeId) return;
+  if (props.nodeId === undefined || props.nodeId === null) return;
   const invalid = chains.value.some((c) =>
     c.routes.some((r) => r.fromNodeId === r.toNodeId)
   );
