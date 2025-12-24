@@ -94,6 +94,26 @@ export interface RoutingConfig {
   rules: RoutingRule[];
 }
 
+export interface ChainRouteEntry {
+  id: string;
+  order: number;
+  fromNodeId: number;
+  toNodeId: number;
+  mode: string;
+  remark?: string;
+}
+
+export interface ChainDefinition {
+  id: string;
+  name: string;
+  uuid: string;
+  protocol: string;
+  routes: ChainRouteEntry[];
+  createdAt: string;
+  updatedAt: string;
+  description?: string;
+}
+
 export interface UserMapping {
   [uuid: string]: string; // uuid -> outbound_tag
 }

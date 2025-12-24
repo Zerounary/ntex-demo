@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig, OutboundConfig, RoutingRule};
+use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 use sea_orm::DatabaseConnection;
 
@@ -16,6 +16,65 @@ pub struct AdminState {
     pub config: AdminConfigStore,
     pub db: DatabaseConnection,
     pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
+}
+
+// ========== 链路（Chain）配置管理 ==========
+
+#[web::get("/api/admin/chains")]
+pub async fn get_chains(
+    state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    match state.config.get_chains(node_id).await {
+        Ok(chains) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": chains
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
+}
+
+#[web::post("/api/admin/chains")]
+pub async fn update_chains(
+    state: State<AdminState>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(body): Json<Vec<ChainDefinition>>,
+) -> HttpResponse {
+    let node_id = match get_node_id_from_query(&params) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    if let Err(e) = state.config.update_chains(node_id, body).await {
+        return HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        }));
+    }
+
+    if let Some(ref mqtt_client) = state.mqtt_client {
+        let _ = mqtt_client.publish_update_notification(node_id, "chains").await;
+        let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+    }
+
+    match state.config.get_chains(node_id).await {
+        Ok(chains) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": chains
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        })),
+    }
 }
 
 #[derive(Deserialize)]

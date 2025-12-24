@@ -5,11 +5,13 @@
 declare module 'vue' {
   export interface GlobalComponents {
     BaseSelect: typeof import('./components/BaseSelect.vue')['default']
+    ChainManagement: typeof import('./components/ChainManagement.vue')['default']
     GraphCanvas: typeof import('./components/GraphCanvas.vue')['default']
     InboundForm: typeof import('./components/InboundForm.vue')['default']
     InboundManagement: typeof import('./components/InboundManagement.vue')['default']
     MaintenanceMode: typeof import('./components/MaintenanceMode.vue')['default']
     NodeCard: typeof import('./components/NodeCard.vue')['default']
+    NodeChainsEditor: typeof import('./components/NodeChainsEditor.vue')['default']
     NodeSelector: typeof import('./components/NodeSelector.vue')['default']
     OutboundForm: typeof import('./components/OutboundForm.vue')['default']
     OutboundManagement: typeof import('./components/OutboundManagement.vue')['default']

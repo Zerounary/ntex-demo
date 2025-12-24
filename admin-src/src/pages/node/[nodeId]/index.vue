@@ -119,7 +119,10 @@
                 </h3>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <!-- CPU -->
-                  <div class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                  <div
+                    v-if="nodeStore.currentNode.cpu_usage !== undefined"
+                    class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all"
+                  >
                     <div class="flex justify-between items-start mb-4">
                       <div class="flex items-center gap-2">
                         <div class="p-2 rounded-lg bg-blue-50 text-blue-600">
@@ -145,7 +148,10 @@
                   </div>
 
                   <!-- Memory -->
-                  <div class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                  <div
+                    v-if="nodeStore.currentNode.mem_usage !== undefined"
+                    class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all"
+                  >
                     <div class="flex justify-between items-start mb-4">
                       <div class="flex items-center gap-2">
                         <div class="p-2 rounded-lg bg-indigo-50 text-indigo-600">
@@ -171,7 +177,10 @@
                   </div>
 
                   <!-- Disk -->
-                  <div class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                  <div
+                    v-if="nodeStore.currentNode.disk_usage !== undefined"
+                    class="bg-white rounded-xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all"
+                  >
                     <div class="flex justify-between items-start mb-4">
                       <div class="flex items-center gap-2">
                         <div class="p-2 rounded-lg bg-purple-50 text-purple-600">

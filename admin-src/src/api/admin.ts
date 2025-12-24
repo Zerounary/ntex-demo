@@ -9,6 +9,7 @@ import type {
   OutboundConfig,
   RoutingConfig,
   RoutingRule,
+  ChainDefinition,
   UserMapping,
   MaintenanceMode,
   UserLog,
@@ -44,6 +45,29 @@ function buildQuery(params: Record<string, any>): string {
     }
   });
   return query.toString();
+}
+
+// ========== 链路（Chain）配置管理 ==========
+
+export async function getChains(nodeId: number): Promise<ChainDefinition[]> {
+  const query = buildQuery({ node_id: nodeId });
+  const response = await request<ChainDefinition[]>(`/api/admin/chains?${query}`);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取链路配置失败');
+}
+
+export async function updateChains(nodeId: number, chains: ChainDefinition[]): Promise<ChainDefinition[]> {
+  const query = buildQuery({ node_id: nodeId });
+  const response = await request<ChainDefinition[]>(`/api/admin/chains?${query}`, {
+    method: 'POST',
+    body: JSON.stringify(chains),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '更新链路配置失败');
 }
 
 // ========== 节点管理 ==========

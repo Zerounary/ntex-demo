@@ -20,6 +20,14 @@
             <span class="text-sm font-semibold tracking-wide">FLOW BUILDER</span>
           </button>
           <button
+            type="button"
+            class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+            @click="router.push('/chains')"
+          >
+            <div class="i-carbon-direction-fork text-lg"></div>
+            <span class="text-sm font-semibold tracking-wide">CHAINS</span>
+          </button>
+          <button
             @click="refreshNodes"
             :disabled="nodeStore.loading"
             class="btn-primary flex items-center gap-2.5 px-6 py-2.5"

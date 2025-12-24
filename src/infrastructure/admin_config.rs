@@ -5,9 +5,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use chrono::Utc;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
 use crate::infrastructure::persistence::{
     admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config, admin_inbound,
+    config_entry,
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
     node_outbound_event_log, node_outbound_latency_log,
 };
@@ -88,6 +90,34 @@ pub struct RoutingRule {
 pub struct RoutingConfig {
     pub domain_strategy: String,
     pub rules: Vec<RoutingRule>,
+}
+
+/// 链路路由表行（用于链式链路维护）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainRouteEntry {
+    pub id: String,
+    pub order: u32,
+    pub from_node_id: u64,
+    pub to_node_id: u64,
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remark: Option<String>,
+}
+
+/// 链路定义（一个链路对应一个 uuid）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainDefinition {
+    pub id: String,
+    pub name: String,
+    pub uuid: String,
+    pub protocol: String,
+    pub routes: Vec<ChainRouteEntry>,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// 节点配置
@@ -636,6 +666,60 @@ impl AdminConfigStore {
             return Err("映射不存在".to_string());
         }
         
+        Ok(())
+    }
+
+    // ========== 链路（Chain）配置管理 ==========
+    fn chains_key(node_id: u64) -> String {
+        format!("admin_chains:{}", node_id)
+    }
+
+    pub async fn get_chains(&self, node_id: u64) -> Result<Vec<ChainDefinition>, String> {
+        let key = Self::chains_key(node_id);
+        let entry = config_entry::Entity::find_by_id(key)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询链路配置失败: {}", e))?;
+
+        let Some(model) = entry else {
+            return Ok(vec![]);
+        };
+
+        let chains: Vec<ChainDefinition> = serde_json::from_value(model.payload)
+            .map_err(|e| format!("解析链路配置失败: {}", e))?;
+        Ok(chains)
+    }
+
+    pub async fn update_chains(&self, node_id: u64, chains: Vec<ChainDefinition>) -> Result<(), String> {
+        let key = Self::chains_key(node_id);
+        let payload: JsonValue = serde_json::to_value(chains)
+            .map_err(|e| format!("序列化链路配置失败: {}", e))?;
+
+        let existing = config_entry::Entity::find_by_id(key.clone())
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询链路配置失败: {}", e))?;
+
+        if let Some(model) = existing {
+            let mut active: config_entry::ActiveModel = model.into();
+            active.payload = Set(payload);
+            active.updated_at = Set(Utc::now().into());
+            active
+                .update(&self.db)
+                .await
+                .map_err(|e| format!("更新链路配置失败: {}", e))?;
+        } else {
+            let active = config_entry::ActiveModel {
+                key: Set(key),
+                payload: Set(payload),
+                updated_at: Set(Utc::now().into()),
+            };
+            active
+                .insert(&self.db)
+                .await
+                .map_err(|e| format!("创建链路配置失败: {}", e))?;
+        }
+
         Ok(())
     }
 

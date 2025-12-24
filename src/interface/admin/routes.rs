@@ -10,6 +10,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::update_node_meta);
     cfg.service(handlers::query_handler);
 
+    // 链路（Chain）配置管理
+    cfg.service(handlers::get_chains);
+    cfg.service(handlers::update_chains);
+
     cfg.service(handlers::refresh_node_network_interfaces);
     
     // 用户管理
