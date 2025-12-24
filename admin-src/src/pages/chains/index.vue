@@ -24,16 +24,7 @@
 
       <div class="mt-4 grid grid-cols-1 md:grid-cols-12 gap-3">
         <div class="md:col-span-5">
-          <BaseSelect
-            v-model="selectedNodeId"
-            :options="nodeOptions"
-            placeholder="Select node"
-            searchable
-          >
-            <template #icon>
-              <div class="i-carbon-cloud-satellite text-lg"></div>
-            </template>
-          </BaseSelect>
+          <NodeSelector v-model="selectedNodeId" />
         </div>
 
         <div class="md:col-span-7 flex items-center justify-end text-xs text-gray-400">
@@ -56,28 +47,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
-import BaseSelect from '@/components/BaseSelect.vue';
 import ChainManagement from '@/components/ChainManagement.vue';
+import NodeSelector from '@/components/NodeSelector.vue';
 
 const router = useRouter();
 const nodeStore = useNodeStore();
 
 const selectedNodeId = ref<number | null>(null);
 
-const nodeOptions = computed(() => {
-  return nodeStore.sortedNodes.map((n) => ({
-    label: `${n.name || `Node ${n.node_id}`} (ID: ${n.node_id})`,
-    value: n.node_id,
-  }));
-});
-
-onMounted(async () => {
-  await nodeStore.fetchNodes();
+const ensureDefaultNode = () => {
   if (nodeStore.sortedNodes.length > 0 && selectedNodeId.value === null) {
     selectedNodeId.value = nodeStore.sortedNodes[0].node_id;
   }
+};
+
+onMounted(async () => {
+  await nodeStore.fetchNodes();
+  ensureDefaultNode();
 });
+
+watch(
+  () => nodeStore.sortedNodes.length,
+  () => {
+    ensureDefaultNode();
+  }
+);
 </script>

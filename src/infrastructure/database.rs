@@ -2,7 +2,7 @@ use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
-    admin_inbound, admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
+    admin_chain, admin_inbound, admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
     cdk_code, config_entry, node_illegal_log, node_online_user_log, node_outbound_event_log,
     node_outbound_latency_log, node_status_log, node_traffic_log, wechat_ticket,
 };
@@ -25,6 +25,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
         schema.create_table_from_entity(admin_user::Entity),
         schema.create_table_from_entity(admin_inbound::Entity),
         schema.create_table_from_entity(admin_outbound::Entity),
+        schema.create_table_from_entity(admin_chain::Entity),
         schema.create_table_from_entity(admin_routing::Entity),
         schema.create_table_from_entity(admin_user_mapping::Entity),
         schema.create_table_from_entity(cdk_code::Entity),

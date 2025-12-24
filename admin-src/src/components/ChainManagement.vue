@@ -5,7 +5,7 @@
         <h2 class="text-2xl font-bold text-gray-900 tracking-tight">Chains</h2>
         <p class="text-sm text-gray-500 mt-1">Maintain chain metadata and route table (like routing rules)</p>
       </div>
-      <div class="flex items-center gap-3">
+      <div class="flex flex-wrap items-center gap-3">
         <button
           type="button"
           class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
@@ -14,6 +14,15 @@
         >
           <div :class="loading ? 'animate-spin' : ''" class="i-carbon-renew text-lg"></div>
           <span>Reload</span>
+        </button>
+        <button
+          type="button"
+          class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+          :disabled="nodesLoading"
+          @click="refreshNodes"
+        >
+          <div :class="nodesLoading ? 'animate-spin' : ''" class="i-carbon-data-base text-lg"></div>
+          <span>Refresh Nodes</span>
         </button>
         <button
           type="button"
@@ -408,6 +417,7 @@ const activeChain = computed(() => {
 });
 
 const selectedNodeId = computed(() => props.selectedNodeId || null);
+const nodesLoading = computed(() => nodeStore.loading);
 
 const getDefaultNodeId = () => nodeStore.sortedNodes[0]?.node_id || 0;
 
@@ -476,6 +486,11 @@ const save = async () => {
 const selectChain = (id: string) => {
   activeChainId.value = id;
   pendingFromNodeId.value = null;
+};
+
+const refreshNodes = async () => {
+  await nodeStore.fetchNodes();
+  toast.success('Node list refreshed');
 };
 
 const createChain = () => {

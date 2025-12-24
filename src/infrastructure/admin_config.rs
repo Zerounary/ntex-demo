@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
 use crate::infrastructure::persistence::{
-    admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config, admin_inbound,
-    config_entry,
+    admin_chain, admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config, admin_inbound,
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
     node_outbound_event_log, node_outbound_latency_log,
 };
@@ -670,13 +669,8 @@ impl AdminConfigStore {
     }
 
     // ========== 链路（Chain）配置管理 ==========
-    fn chains_key(node_id: u64) -> String {
-        format!("admin_chains:{}", node_id)
-    }
-
     pub async fn get_chains(&self, node_id: u64) -> Result<Vec<ChainDefinition>, String> {
-        let key = Self::chains_key(node_id);
-        let entry = config_entry::Entity::find_by_id(key)
+        let entry = admin_chain::Entity::find_by_id(node_id)
             .one(&self.db)
             .await
             .map_err(|e| format!("查询链路配置失败: {}", e))?;
@@ -685,34 +679,33 @@ impl AdminConfigStore {
             return Ok(vec![]);
         };
 
-        let chains: Vec<ChainDefinition> = serde_json::from_value(model.payload)
+        let chains: Vec<ChainDefinition> = serde_json::from_value(model.chains)
             .map_err(|e| format!("解析链路配置失败: {}", e))?;
         Ok(chains)
     }
 
     pub async fn update_chains(&self, node_id: u64, chains: Vec<ChainDefinition>) -> Result<(), String> {
-        let key = Self::chains_key(node_id);
         let payload: JsonValue = serde_json::to_value(chains)
             .map_err(|e| format!("序列化链路配置失败: {}", e))?;
 
-        let existing = config_entry::Entity::find_by_id(key.clone())
+        let existing = admin_chain::Entity::find_by_id(node_id)
             .one(&self.db)
             .await
             .map_err(|e| format!("查询链路配置失败: {}", e))?;
 
         if let Some(model) = existing {
-            let mut active: config_entry::ActiveModel = model.into();
-            active.payload = Set(payload);
+            let mut active: admin_chain::ActiveModel = model.into();
+            active.chains = Set(payload);
             active.updated_at = Set(Utc::now().into());
             active
                 .update(&self.db)
                 .await
                 .map_err(|e| format!("更新链路配置失败: {}", e))?;
         } else {
-            let active = config_entry::ActiveModel {
-                key: Set(key),
-                payload: Set(payload),
-                updated_at: Set(Utc::now().into()),
+            let active = admin_chain::ActiveModel {
+                node_id: Set(node_id),
+                chains: Set(payload),
+                ..Default::default()
             };
             active
                 .insert(&self.db)

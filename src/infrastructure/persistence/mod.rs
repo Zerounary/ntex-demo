@@ -6,6 +6,7 @@ pub mod account_user;
 pub mod admin_node_config;
 pub mod admin_inbound;
 pub mod admin_outbound;
+pub mod admin_chain;
 pub mod admin_routing;
 pub mod admin_user;
 pub mod admin_user_mapping;

@@ -1,6 +1,7 @@
 <template>
-  <div class="node-selector">
+  <div class="node-selector flex gap-2 items-center">
     <BaseSelect
+      class="flex-1"
       :model-value="selectedNodeId"
       :options="nodeOptions"
       placeholder="Select Node"
@@ -11,6 +12,16 @@
         <div class="i-carbon-data-base text-lg"></div>
       </template>
     </BaseSelect>
+
+    <button
+      type="button"
+      class="btn-secondary flex items-center justify-center px-3 aspect-square shadow-sm hover:shadow-md"
+      :disabled="loading"
+      @click="refreshNodes"
+      :title="loading ? 'Refreshing…' : 'Refresh node list'"
+    >
+      <div :class="[loading ? 'animate-spin text-primary-500' : 'text-gray-500']" class="i-carbon-renew text-lg"></div>
+    </button>
   </div>
 </template>
 
@@ -33,7 +44,7 @@ const props = defineProps<Props>();
 const emit = defineEmits<Emits>();
 
 const nodeStore = useNodeStore();
-const { sortedNodes } = storeToRefs(nodeStore);
+const { sortedNodes, loading } = storeToRefs(nodeStore);
 
 const selectedNodeId = ref<number | null>(props.modelValue || null);
 
@@ -57,6 +68,10 @@ const handleChange = (value: any) => {
   selectedNodeId.value = nodeId;
   emit('update:modelValue', nodeId);
   emit('change', nodeId);
+};
+
+const refreshNodes = async () => {
+  await nodeStore.fetchNodes();
 };
 
 // 初始化时加载节点列表
