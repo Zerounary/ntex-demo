@@ -434,7 +434,7 @@ import { useNodeStore } from '@/stores/node';
 import { useToastStore } from '@/stores/toast';
 import BaseSelect from '@/components/BaseSelect.vue';
 import * as adminApi from '@/api/admin';
-import type { ApplyChainResult, ChainDefinition, ChainRouteEntry } from '@/api/types';
+import type { ApplyChainResult, ChainDefinition, ChainRouteEntry, NodeInfo } from '@/api/types';
 
 interface Props {
   nodeId: number;
@@ -470,9 +470,16 @@ const modeOptions = [
   { label: 'Transparent', value: 'transparent' },
 ];
 
+const buildNodeLabel = (node: NodeInfo) => {
+  const base = node.name?.trim() || `Node ${node.node_id}`;
+  const meta = node.node_type ? ` · ${node.node_type}` : '';
+  const maintenance = node.maintenance_mode ? ' (Maintenance)' : '';
+  return `${base}${meta}${maintenance}`;
+};
+
 const nodeOptions = computed(() => {
   return nodeStore.sortedNodes.map((n) => ({
-    label: `Node ${n.node_id} - ${n.node_type} ${n.maintenance_mode ? '(Maintenance)' : ''}`,
+    label: buildNodeLabel(n),
     value: n.node_id,
     icon: n.maintenance_mode ? 'i-carbon-warning-filled text-yellow-500' : 'i-carbon-cloud-satellite',
   }));
@@ -675,9 +682,36 @@ const updateRow = (rowId: string, patch: Partial<ChainRouteEntry>) => {
   if (!activeChain.value) return;
   const row = activeChain.value.routes.find((r) => r.id === rowId);
   if (!row) return;
-  const nextFrom = patch.fromNodeId ?? row.fromNodeId;
-  const nextTo = patch.toNodeId ?? row.toNodeId;
-  if (nextFrom && nextTo && nextFrom === nextTo) {
+  const originalFrom = row.fromNodeId;
+  const originalTo = row.toNodeId;
+
+  const wantsSwapFrom =
+    patch.fromNodeId !== undefined &&
+    patch.fromNodeId === originalTo &&
+    originalFrom !== originalTo &&
+    (patch.toNodeId === undefined || patch.toNodeId === originalTo);
+  const wantsSwapTo =
+    patch.toNodeId !== undefined &&
+    patch.toNodeId === originalFrom &&
+    originalFrom !== originalTo &&
+    (patch.fromNodeId === undefined || patch.fromNodeId === originalFrom);
+
+  if (wantsSwapFrom || wantsSwapTo) {
+    row.fromNodeId = originalTo;
+    row.toNodeId = originalFrom;
+    markDirty();
+    return;
+  }
+
+  const nextFrom = patch.fromNodeId ?? originalFrom;
+  const nextTo = patch.toNodeId ?? originalTo;
+  if (
+    nextFrom !== undefined &&
+    nextTo !== undefined &&
+    nextFrom !== null &&
+    nextTo !== null &&
+    nextFrom === nextTo
+  ) {
     toast.error('FROM and TO cannot be the same');
     return;
   }
