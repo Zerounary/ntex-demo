@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
+use crate::interface::admin::chain_ops;
 use sea_orm::DatabaseConnection;
 
 #[derive(Clone)]
@@ -23,8 +24,6 @@ pub struct ApplyChainRequest {
     pub chain_id: String,
     #[serde(default)]
     pub base_port: Option<u16>,
-    #[serde(default)]
-    pub entry_inbound_tag: Option<String>,
 }
 
 #[web::post("/api/admin/chains/apply")]
@@ -34,251 +33,19 @@ pub async fn apply_chain(
     Json(body): Json<ApplyChainRequest>,
 ) -> HttpResponse {
     let base_port: u16 = body.base_port.unwrap_or(40000);
-    let entry_inbound_tag = body.entry_inbound_tag.clone().unwrap_or_default();
-
-    // Global chains are stored under node_id=0
-    let chains = match state.config.get_chains(0).await {
-        Ok(v) => v,
-        Err(e) => {
-            return HttpResponse::InternalServerError().json(&serde_json::json!({
-                "msg": "error",
-                "error": e
-            }))
-        }
-    };
-
-    let chain = match chains.into_iter().find(|c| c.id == body.chain_id) {
-        Some(c) => c,
-        None => {
-            return HttpResponse::NotFound().json(&serde_json::json!({
-                "msg": "error",
-                "error": "chain not found"
-            }))
-        }
-    };
-
-    if chain.routes.is_empty() {
-        return HttpResponse::BadRequest().json(&serde_json::json!({
+    match chain_ops::apply_chain(&state.config, state.mqtt_client.as_ref(), &body.chain_id, base_port).await {
+        Ok((cid, results)) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": {
+                "chain_id": cid,
+                "applied_nodes": results
+            }
+        })),
+        Err(e) => HttpResponse::BadRequest().json(&serde_json::json!({
             "msg": "error",
-            "error": "chain has no routes"
-        }));
+            "error": e
+        })),
     }
-
-    // Normalize by order
-    let mut hops = chain.routes.clone();
-    hops.sort_by_key(|r| r.order);
-
-    // Validate continuity and no equal from/to
-    for r in &hops {
-        if r.from_node_id == r.to_node_id {
-            return HttpResponse::BadRequest().json(&serde_json::json!({
-                "msg": "error",
-                "error": "invalid route: from == to"
-            }));
-        }
-    }
-
-    // Build ordered node path: start from first.from, then each.to
-    let mut node_path: Vec<u64> = Vec::new();
-    node_path.push(hops[0].from_node_id);
-    for r in &hops {
-        if let Some(last) = node_path.last().copied() {
-            if last != r.from_node_id {
-                return HttpResponse::BadRequest().json(&serde_json::json!({
-                    "msg": "error",
-                    "error": format!("route chain is not continuous at order {}", r.order)
-                }));
-            }
-        }
-        node_path.push(r.to_node_id);
-    }
-
-    // Pre-compute next hop endpoint (public ip + inbound port)
-    // For last node, forward to its first non-chain non-dokodemo inbound port
-    let mut endpoints: Vec<(String, u16)> = Vec::new();
-    for (idx, node_id) in node_path.iter().enumerate() {
-        let ip = match state.config.get_node_public_ip(*node_id).await {
-            Ok(ip) => ip,
-            Err(e) => {
-                return HttpResponse::BadRequest().json(&serde_json::json!({
-                    "msg": "error",
-                    "error": e
-                }))
-            }
-        };
-
-        let port: u16 = if idx == node_path.len() - 1 {
-            match state.config.select_default_forward_port(*node_id).await {
-                Ok(p) => p as u16,
-                Err(e) => {
-                    return HttpResponse::BadRequest().json(&serde_json::json!({
-                        "msg": "error",
-                        "error": e
-                    }))
-                }
-            }
-        } else {
-            base_port.saturating_add(idx as u16)
-        };
-        endpoints.push((ip, port));
-    }
-
-    let mut results: Vec<Value> = Vec::new();
-
-    // For each intermediate node i, create inbound that forwards to node i+1 endpoint
-    for i in 0..(node_path.len() - 1) {
-        let node_id = node_path[i];
-        let (next_ip, next_port) = endpoints[i + 1].clone();
-        let listen_port = endpoints[i].1;
-
-        let tag = format!("chain_{}_{}", chain.id, i + 1);
-
-        let listen = if i == 0 { "127.0.0.1" } else { "0.0.0.0" };
-        let inbound = InboundConfig {
-            tag: tag.clone(),
-            protocol: "dokodemo-door".to_string(),
-            port: listen_port as i32,
-            listen: Some(listen.to_string()),
-            settings: serde_json::json!({
-                "address": next_ip,
-                "port": next_port,
-                "network": ["tcp", "udp"],
-                "followRedirect": false
-            }),
-            stream_settings: None,
-            sniffing: None,
-        };
-
-        let apply_res = match state.config.upsert_inbound(node_id, inbound).await {
-            Ok(_) => {
-                if let Some(ref mqtt_client) = state.mqtt_client {
-                    let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
-                    let _ = mqtt_client.publish_update_notification(node_id, "config").await;
-                }
-                serde_json::json!({
-                    "node_id": node_id,
-                    "tag": tag,
-                    "status": "ok"
-                })
-            }
-            Err(e) => serde_json::json!({
-                "node_id": node_id,
-                "tag": tag,
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(apply_res);
-    }
-
-    // On first node, route traffic from authenticated entry inbound to local chain dokodemo inbound.
-    // This prevents clients from directly connecting to the chain dokodemo inbound.
-    if let Some(first_node_id) = node_path.first().copied() {
-        if entry_inbound_tag.trim().is_empty() {
-            return HttpResponse::BadRequest().json(&serde_json::json!({
-                "msg": "error",
-                "error": "entry_inbound_tag is required"
-            }));
-        }
-
-        let chain_listen_port = endpoints[0].1;
-        let outbound_tag = format!("chain_entry_{}", chain.id);
-
-        let outbound = OutboundConfig {
-            tag: outbound_tag.clone(),
-            protocol: "freedom".to_string(),
-            settings: serde_json::json!({
-                "domainStrategy": "AsIs",
-                "redirect": format!("127.0.0.1:{}", chain_listen_port)
-            }),
-            stream_settings: None,
-        };
-
-        let outbound_res = match state.config.upsert_outbound(first_node_id, outbound).await {
-            Ok(_) => {
-                if let Some(ref mqtt_client) = state.mqtt_client {
-                    let _ = mqtt_client.publish_update_notification(first_node_id, "outbound").await;
-                }
-                serde_json::json!({
-                    "node_id": first_node_id,
-                    "tag": outbound_tag,
-                    "status": "ok"
-                })
-            }
-            Err(e) => serde_json::json!({
-                "node_id": first_node_id,
-                "tag": outbound_tag,
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(outbound_res);
-
-        let routing_res = match state.config.get_routing(first_node_id).await {
-            Ok(mut routing) => {
-                routing.rules.retain(|r| r.outbound_tag.as_deref() != Some(outbound_tag.as_str()));
-                routing.rules.insert(
-                    0,
-                    RoutingRule {
-                        rule_type: "field".to_string(),
-                        inbound_tag: Some(vec![entry_inbound_tag.clone()]),
-                        outbound_tag: Some(outbound_tag.clone()),
-                        domain: None,
-                        ip: None,
-                        port: None,
-                        network: None,
-                        source: None,
-                        protocol: None,
-                    },
-                );
-                match state
-                    .config
-                    .update_routing(first_node_id, None, Some(routing.rules))
-                    .await
-                {
-                    Ok(_) => {
-                        if let Some(ref mqtt_client) = state.mqtt_client {
-                            let _ = mqtt_client.publish_update_notification(first_node_id, "routing").await;
-                            let _ = mqtt_client.publish_update_notification(first_node_id, "config").await;
-                        }
-                        serde_json::json!({
-                            "node_id": first_node_id,
-                            "tag": format!("routing:{}", entry_inbound_tag),
-                            "status": "ok"
-                        })
-                    }
-                    Err(e) => serde_json::json!({
-                        "node_id": first_node_id,
-                        "tag": format!("routing:{}", entry_inbound_tag),
-                        "status": "error",
-                        "error": e
-                    }),
-                }
-            }
-            Err(e) => serde_json::json!({
-                "node_id": first_node_id,
-                "tag": format!("routing:{}", entry_inbound_tag),
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(routing_res);
-    }
-
-    // Notify last node config too (optional) because it may need new inbound selection at runtime
-    if let Some(last_node_id) = node_path.last().copied() {
-        if let Some(ref mqtt_client) = state.mqtt_client {
-            let _ = mqtt_client.publish_update_notification(last_node_id, "config").await;
-        }
-    }
-
-    HttpResponse::Ok().json(&serde_json::json!({
-        "msg": "ok",
-        "data": {
-            "chain_id": chain.id,
-            "applied_nodes": results
-        }
-    }))
 }
 
 // ========== 链路（Chain）配置管理 ==========
@@ -316,11 +83,23 @@ pub async fn update_chains(
         Err(resp) => return resp,
     };
 
+    let old_chains = state.config.get_chains(node_id).await.unwrap_or_default();
+
     if let Err(e) = state.config.update_chains(node_id, body).await {
         return HttpResponse::InternalServerError().json(&serde_json::json!({
             "msg": "error",
             "error": e
         }));
+    }
+
+    if node_id == 0 {
+        let new_chains = state.config.get_chains(0).await.unwrap_or_default();
+        let new_ids: std::collections::HashSet<String> = new_chains.into_iter().map(|c| c.id).collect();
+        for c in old_chains {
+            if !new_ids.contains(&c.id) {
+                let _ = chain_ops::cleanup_chain_artifacts(&state.config, state.mqtt_client.as_ref(), &c.id).await;
+            }
+        }
     }
 
     if node_id != 0 {

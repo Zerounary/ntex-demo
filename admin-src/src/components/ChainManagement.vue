@@ -51,19 +51,8 @@
       class="p-4 rounded-xl border border-gray-100 bg-white shadow-sm"
     >
       <div class="text-sm font-semibold text-gray-800">Apply Settings</div>
-      <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label class="block">
-          <div class="text-xs text-gray-500 mb-1">Entry inbound tag</div>
-          <input
-            v-model="entryInboundTag"
-            type="text"
-            class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/20 focus:border-primary-400 transition-all"
-            placeholder="e.g. in_auth"
-          />
-        </label>
-      </div>
       <div class="mt-2 text-xs text-gray-400">
-        Apply will add a routing rule on the first node: inboundTag = this value -> outbound = chain_entry_* (freedom redirect to local dokodemo).
+        Apply will generate entry inbound on the first node and route it to local chain dokodemo inbound automatically.
       </div>
     </div>
 
@@ -265,7 +254,7 @@
                 <BaseSelect
                   :model-value="activeChain.protocol"
                   :options="protocolOptions"
-                  @update:modelValue="(v) => updateProtocol(v)"
+                  @update:modelValue="(v: string) => updateProtocol(v)"
                 >
                   <template #icon>
                     <div class="i-carbon-security text-lg"></div>
@@ -336,7 +325,7 @@
                         :options="nodeOptions"
                         searchable
                         placeholder="Select node"
-                        @update:modelValue="(v) => updateRow(row.id, { fromNodeId: v })"
+                        @update:modelValue="(v: number) => updateRow(row.id, { fromNodeId: v })"
                       >
                         <template #icon>
                           <div class="i-carbon-data-base text-lg"></div>
@@ -349,7 +338,7 @@
                         :options="nodeOptions"
                         searchable
                         placeholder="Select node"
-                        @update:modelValue="(v) => updateRow(row.id, { toNodeId: v })"
+                        @update:modelValue="(v: number) => updateRow(row.id, { toNodeId: v })"
                       >
                         <template #icon>
                           <div class="i-carbon-data-base text-lg"></div>
@@ -360,7 +349,7 @@
                       <BaseSelect
                         :model-value="row.mode"
                         :options="modeOptions"
-                        @update:modelValue="(v) => updateRow(row.id, { mode: v })"
+                        @update:modelValue="(v: string) => updateRow(row.id, { mode: v })"
                       >
                         <template #icon>
                           <div class="i-carbon-direction-fork text-lg"></div>
@@ -373,7 +362,7 @@
                         type="text"
                         class="w-full px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/20 focus:border-primary-400 transition-all"
                         placeholder="optional"
-                        @input="(e) => updateRow(row.id, { remark: (e.target as HTMLInputElement).value })"
+                        @input="(e: Event) => updateRow(row.id, { remark: (e.target as HTMLInputElement).value })"
                       />
                     </td>
                     <td class="px-4 py-3">
@@ -452,8 +441,6 @@ const dirty = ref(false);
 
 const applying = ref(false);
 const applyResult = ref<ApplyChainResult | null>(null);
-
-const entryInboundTag = ref('');
 
 const chains = ref<ChainDefinition[]>([]);
 const activeChainId = ref<string | null>(null);
@@ -572,17 +559,12 @@ const refreshNodes = async () => {
 const applyActiveChain = async () => {
   if (!isGlobalTemplates.value) return;
   if (!activeChainId.value) return;
-  if (!entryInboundTag.value.trim()) {
-    toast.error('Entry inbound tag is required');
-    return;
-  }
   applying.value = true;
   applyResult.value = null;
   try {
     const res = await adminApi.applyChain({
       chain_id: activeChainId.value,
       base_port: 40000,
-      entry_inbound_tag: entryInboundTag.value.trim(),
     });
     applyResult.value = res;
     toast.success('Chain applied');
@@ -629,9 +611,9 @@ const regenerateUuid = (id: string) => {
   toast.success('UUID regenerated');
 };
 
-const updateProtocol = (v: any) => {
+const updateProtocol = (v: string) => {
   if (!activeChain.value) return;
-  activeChain.value.protocol = String(v);
+  activeChain.value.protocol = v;
   markDirty();
 };
 

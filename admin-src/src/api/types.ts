@@ -117,7 +117,6 @@ export interface ChainDefinition {
 export interface ApplyChainRequest {
   chain_id: string;
   base_port?: number;
-  entry_inbound_tag?: string;
 }
 
 export interface ApplyChainNodeResult {

@@ -148,6 +148,16 @@ impl AdminConfigStore {
     pub fn new(db: DatabaseConnection) -> Self {
         Self { db }
     }
+
+    pub async fn list_node_ids(&self) -> Result<Vec<u64>, String> {
+        admin_node_config::Entity::find()
+            .select_only()
+            .column(admin_node_config::Column::NodeId)
+            .into_tuple::<u64>()
+            .all(&self.db)
+            .await
+            .map_err(|e| format!("查询节点列表失败: {}", e))
+    }
     
     /// 解析百分比值（兼容字符串格式 "50%" 和数值格式 0.5）
     fn parse_percentage(value: Option<&Value>) -> Option<f64> {

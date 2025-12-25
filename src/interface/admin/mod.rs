@@ -1,6 +1,7 @@
 //! 管理服务器模块
 
 pub mod handlers;
+pub mod chain_ops;
 pub mod routes;
 
 use ntex::web::{self, App};
