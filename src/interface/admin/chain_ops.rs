@@ -32,10 +32,10 @@ fn select_unused_port(used_ports: &HashSet<u16>, start: u16, end: u16) -> Option
 fn publish_updates(mqtt: Option<&Arc<MqttClientManager>>, node_id: u64, kinds: &[&str]) {
     if let Some(mqtt) = mqtt {
         let mqtt = mqtt.clone();
-        let kinds: Vec<&str> = kinds.to_vec();
+        let kinds: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
         tokio::spawn(async move {
             for k in kinds {
-                let _ = mqtt.publish_update_notification(node_id, k).await;
+                let _ = mqtt.publish_update_notification(node_id, &k).await;
             }
         });
     }
