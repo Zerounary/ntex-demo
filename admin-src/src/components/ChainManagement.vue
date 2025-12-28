@@ -139,11 +139,8 @@
                       <div class="mt-1 text-[10px] text-gray-400 uppercase tracking-wider font-semibold">UUID</div>
                       <div class="text-xs font-mono text-gray-700 break-all">{{ c.uuid }}</div>
                       <div class="mt-2 flex items-center gap-2">
-                        <span
-                          class="px-2 py-0.5 rounded-full text-[10px] font-semibold border"
-                          :class="c.protocol === 'vmess' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-green-50 text-green-700 border-green-100'"
-                        >
-                          {{ c.protocol.toUpperCase() }}
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-green-50 text-green-700 border-green-100">
+                          TRANSPARENT
                         </span>
                         <span class="text-[10px] text-gray-400">{{ c.routes.length }} hops</span>
                       </div>
@@ -234,7 +231,7 @@
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-bold text-gray-900">Chain Meta</h3>
-                <p class="text-xs text-gray-400 mt-1">Name / protocol / description</p>
+                <p class="text-xs text-gray-400 mt-1">Name / description</p>
               </div>
             </div>
 
@@ -247,19 +244,6 @@
                   class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/20 focus:border-primary-400 transition-all"
                   @input="markDirty"
                 />
-              </div>
-
-              <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1.5">Protocol</label>
-                <BaseSelect
-                  :model-value="activeChain.protocol"
-                  :options="protocolOptions"
-                  @update:modelValue="(v: string) => updateProtocol(v)"
-                >
-                  <template #icon>
-                    <div class="i-carbon-security text-lg"></div>
-                  </template>
-                </BaseSelect>
               </div>
 
               <div class="md:col-span-2">
@@ -307,7 +291,6 @@
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">#</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">From</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">To</th>
-                    <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Mode</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Remark</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
@@ -342,17 +325,6 @@
                       >
                         <template #icon>
                           <div class="i-carbon-data-base text-lg"></div>
-                        </template>
-                      </BaseSelect>
-                    </td>
-                    <td class="px-4 py-3">
-                      <BaseSelect
-                        :model-value="row.mode"
-                        :options="modeOptions"
-                        @update:modelValue="(v: string) => updateRow(row.id, { mode: v })"
-                      >
-                        <template #icon>
-                          <div class="i-carbon-direction-fork text-lg"></div>
                         </template>
                       </BaseSelect>
                     </td>
@@ -398,7 +370,7 @@
                   </tr>
 
                   <tr v-if="activeChain.routes.length === 0" class="border-t border-gray-100">
-                    <td class="px-4 py-8 text-center text-sm text-gray-400" colspan="6">
+                    <td class="px-4 py-8 text-center text-sm text-gray-400" colspan="5">
                       No hops yet
                     </td>
                   </tr>
@@ -446,16 +418,6 @@ const chains = ref<ChainDefinition[]>([]);
 const activeChainId = ref<string | null>(null);
 
 const pendingFromNodeId = ref<number | null>(null);
-
-const protocolOptions = [
-  { label: 'VMess (UUID auth)', value: 'vmess' },
-  { label: 'Transparent', value: 'transparent' },
-];
-
-const modeOptions = [
-  { label: 'VMess', value: 'vmess' },
-  { label: 'Transparent', value: 'transparent' },
-];
 
 const buildNodeLabel = (node: NodeInfo) => {
   const base = node.name?.trim() || `Node ${node.node_id}`;
@@ -534,6 +496,11 @@ const save = async () => {
     const payload = chains.value.map((c) => {
       const clone: ChainDefinition = JSON.parse(JSON.stringify(c));
       normalizeRoutesOrder(clone);
+      clone.protocol = 'transparent';
+      clone.routes = (clone.routes || []).map((r) => ({
+        ...r,
+        mode: 'transparent',
+      }));
       clone.updatedAt = new Date().toISOString();
       return clone;
     });
@@ -581,7 +548,7 @@ const createChain = () => {
     id: uuidv4(),
     name: `Chain ${chains.value.length + 1}`,
     uuid: uuidv4(),
-    protocol: 'vmess',
+    protocol: 'transparent',
     routes: [],
     createdAt: now,
     updatedAt: now,
@@ -611,12 +578,6 @@ const regenerateUuid = (id: string) => {
   toast.success('UUID regenerated');
 };
 
-const updateProtocol = (v: string) => {
-  if (!activeChain.value) return;
-  activeChain.value.protocol = v;
-  markDirty();
-};
-
 const addHop = () => {
   if (!activeChain.value) return;
   const validRoutes = activeChain.value.routes.filter((r) => r.fromNodeId !== r.toNodeId);
@@ -627,7 +588,7 @@ const addHop = () => {
     order: activeChain.value.routes.length + 1,
     fromNodeId,
     toNodeId: getAlternateNodeId(fromNodeId),
-    mode: activeChain.value.protocol || 'vmess',
+    mode: 'transparent',
     remark: '',
   };
   activeChain.value.routes.push(row);
@@ -721,7 +682,7 @@ const appendHopFromPending = () => {
     order: activeChain.value.routes.length + 1,
     fromNodeId: pendingFromNodeId.value,
     toNodeId: selectedNodeId.value,
-    mode: activeChain.value.protocol || 'vmess',
+    mode: 'transparent',
     remark: '',
   };
   activeChain.value.routes.push(row);

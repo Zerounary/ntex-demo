@@ -1,8 +1,7 @@
 use serde_json::Value;
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
+use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 
 fn hop_inbound_prefix(chain_id: &str) -> String {
@@ -15,18 +14,6 @@ fn entry_inbound_tag(chain_id: &str) -> String {
 
 fn entry_outbound_tag(chain_id: &str) -> String {
     format!("chain_entry_{}", chain_id)
-}
-
-fn select_unused_port(used_ports: &HashSet<u16>, start: u16, end: u16) -> Option<u16> {
-    if start == 0 || end == 0 || start > end {
-        return None;
-    }
-    for p in start..=end {
-        if !used_ports.contains(&p) {
-            return Some(p);
-        }
-    }
-    None
 }
 
 fn publish_updates(mqtt: Option<&Arc<MqttClientManager>>, node_id: u64, kinds: &[&str]) {
@@ -54,7 +41,6 @@ pub async fn apply_chain(
         .ok_or_else(|| "chain not found".to_string())?;
 
     let chain_id = chain.id.clone();
-    let chain_uuid = chain.uuid.clone();
 
     if chain.routes.is_empty() {
         return Err("chain has no routes".to_string());
@@ -102,7 +88,7 @@ pub async fn apply_chain(
         let listen_port = endpoints[i].1;
 
         let tag = format!("chain_{}_{}", chain_id, i + 1);
-        let listen = if i == 0 { "127.0.0.1" } else { "0.0.0.0" };
+        let listen = "0.0.0.0";
         let inbound = InboundConfig {
             tag: tag.clone(),
             protocol: "dokodemo-door".to_string(),
@@ -135,147 +121,6 @@ pub async fn apply_chain(
             }),
         };
         results.push(apply_res);
-    }
-
-    if let Some(first_node_id) = node_path.first().copied() {
-        let chain_listen_port = endpoints[0].1;
-        let outbound_tag = entry_outbound_tag(&chain_id);
-        let inbound_tag = entry_inbound_tag(&chain_id);
-
-        let existing_inbounds = config.get_inbounds(first_node_id).await.unwrap_or_default();
-        let mut used_ports: HashSet<u16> = existing_inbounds
-            .iter()
-            .filter(|i| i.port > 0)
-            .filter_map(|i| u16::try_from(i.port).ok())
-            .collect();
-        used_ports.insert(chain_listen_port);
-
-        let start = base_port.saturating_add(1000);
-        let end = base_port.saturating_add(1100);
-        let entry_port = select_unused_port(&used_ports, start, end)
-            .ok_or_else(|| format!("no available port for chain entry inbound in range {}-{}", start, end))?;
-
-        let entry_inbound = InboundConfig {
-            tag: inbound_tag.clone(),
-            protocol: "vmess".to_string(),
-            port: entry_port as i32,
-            listen: Some("0.0.0.0".to_string()),
-            settings: serde_json::json!({
-                "clients": [{
-                    "id": chain_uuid,
-                    "alterId": 0,
-                    "email": format!("chain:{}@local", chain_id),
-                    "security": "auto"
-                }]
-            }),
-            stream_settings: Some(serde_json::json!({
-                "network": "tcp"
-            })),
-            sniffing: None,
-        };
-
-        let entry_inbound_res = match config.upsert_inbound(first_node_id, entry_inbound).await {
-            Ok(_) => {
-                publish_updates(mqtt, first_node_id, &["inbound", "config"]);
-                serde_json::json!({
-                    "node_id": first_node_id,
-                    "tag": inbound_tag,
-                    "port": entry_port,
-                    "status": "ok"
-                })
-            }
-            Err(e) => serde_json::json!({
-                "node_id": first_node_id,
-                "tag": inbound_tag,
-                "port": entry_port,
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(entry_inbound_res);
-
-        let outbound = OutboundConfig {
-            tag: outbound_tag.clone(),
-            protocol: "freedom".to_string(),
-            settings: serde_json::json!({
-                "domainStrategy": "AsIs",
-                "redirect": format!("127.0.0.1:{}", chain_listen_port)
-            }),
-            stream_settings: None,
-        };
-
-        let outbound_res = match config.upsert_outbound(first_node_id, outbound).await {
-            Ok(_) => {
-                publish_updates(mqtt, first_node_id, &["outbound"]);
-                serde_json::json!({
-                    "node_id": first_node_id,
-                    "tag": outbound_tag,
-                    "status": "ok"
-                })
-            }
-            Err(e) => serde_json::json!({
-                "node_id": first_node_id,
-                "tag": outbound_tag,
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(outbound_res);
-
-        let routing_res = match config.get_routing(first_node_id).await {
-            Ok(mut routing) => {
-                routing.rules.retain(|r| {
-                    if r.outbound_tag.as_deref() == Some(outbound_tag.as_str()) {
-                        return false;
-                    }
-                    if let Some(tags) = r.inbound_tag.as_ref() {
-                        return !tags.iter().any(|t| t == &inbound_tag);
-                    }
-                    true
-                });
-                routing.rules.insert(
-                    0,
-                    RoutingRule {
-                        rule_type: "field".to_string(),
-                        inbound_tag: Some(vec![inbound_tag.clone()]),
-                        outbound_tag: Some(outbound_tag.clone()),
-                        domain: None,
-                        ip: None,
-                        port: None,
-                        network: None,
-                        source: None,
-                        protocol: None,
-                    },
-                );
-
-                match config
-                    .update_routing(first_node_id, None, Some(routing.rules))
-                    .await
-                {
-                    Ok(_) => {
-                        publish_updates(mqtt, first_node_id, &["routing", "config"]);
-                        serde_json::json!({
-                            "node_id": first_node_id,
-                            "tag": format!("routing:{}", inbound_tag),
-                            "status": "ok"
-                        })
-                    }
-                    Err(e) => serde_json::json!({
-                        "node_id": first_node_id,
-                        "tag": format!("routing:{}", inbound_tag),
-                        "status": "error",
-                        "error": e
-                    }),
-                }
-            }
-            Err(e) => serde_json::json!({
-                "node_id": first_node_id,
-                "tag": format!("routing:{}", inbound_tag),
-                "status": "error",
-                "error": e
-            }),
-        };
-        results.push(routing_res);
     }
 
     if let Some(last_node_id) = node_path.last().copied() {
