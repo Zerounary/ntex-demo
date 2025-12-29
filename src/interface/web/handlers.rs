@@ -2,6 +2,8 @@ use ntex::http::StatusCode;
 use ntex::web::types::{Json, Query, State};
 use ntex::web::{self, HttpResponse};
 
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+
 use crate::application::accelerator_usecase::AcceleratorUseCase;
 use crate::application::auth_usecase::AuthUseCase;
 use crate::application::cdk_usecase::CdkUseCase;
@@ -11,6 +13,7 @@ use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
     NodeRepositoryImpl,
 };
+use crate::infrastructure::persistence::{accelerator_game, accelerator_game_node_binding, accelerator_node};
 
 use super::AppState;
 use super::dto::{
@@ -19,6 +22,7 @@ use super::dto::{
     CdkRedeemRequestVO, CdkRedeemResponseVO, DashboardVO, LibraryVO, NavigationVO,
     NodeRegisterRequest, ProfileSyncRequest, SettingsMetaVO, TicketRequestVO, TicketStatusQuery,
     WechatTicketVO,
+    GameNodeBindingRequest, GameNodeVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
@@ -267,6 +271,125 @@ pub async fn start_acceleration(
 
     Ok(ApiResponse::success(MessageResponse {
         message: "Acceleration started successfully".into(),
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[web::get("/games/{game_id}/nodes")]
+pub async fn list_game_nodes(
+    state: State<AppState>,
+    path: web::types::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let game_id = path.into_inner();
+
+    let bindings = accelerator_game_node_binding::Entity::find()
+        .filter(accelerator_game_node_binding::Column::GameId.eq(game_id.as_str()))
+        .order_by_asc(accelerator_game_node_binding::Column::CreatedAt)
+        .all(&state.db)
+        .await
+        .map_err(|e| crate::application::errors::UsecaseError::Repository(
+            crate::application::errors::RepositoryError::Persistence(e.to_string()),
+        ))?;
+
+    let node_ids: Vec<String> = bindings.into_iter().map(|b| b.node_id).collect();
+    if node_ids.is_empty() {
+        return Ok(ApiResponse::success(Vec::<GameNodeVO>::new()).into_http(StatusCode::OK));
+    }
+
+    let nodes = accelerator_node::Entity::find()
+        .filter(accelerator_node::Column::Id.is_in(node_ids.clone()))
+        .all(&state.db)
+        .await
+        .map_err(|e| crate::application::errors::UsecaseError::Repository(
+            crate::application::errors::RepositoryError::Persistence(e.to_string()),
+        ))?;
+
+    let node_map: std::collections::HashMap<String, accelerator_node::Model> =
+        nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+    let payload: Vec<GameNodeVO> = node_ids
+        .into_iter()
+        .filter_map(|id| {
+            let n = node_map.get(&id)?;
+            Some(GameNodeVO {
+                node_id: n.id.clone(),
+                vmess_uuid: n.vmess_uuid.clone(),
+                vmess_server: n.vmess_server.clone(),
+                vmess_port: n.vmess_port,
+                vmess_email: n.vmess_email.clone(),
+                udp_proxy: n.udp_proxy.clone(),
+                mode: n.mode.clone(),
+                ping: n.ping,
+                status: n.status.clone(),
+            })
+        })
+        .collect();
+
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
+#[web::post("/games/{game_id}/nodes")]
+pub async fn set_game_nodes(
+    state: State<AppState>,
+    path: web::types::Path<String>,
+    Json(body): Json<GameNodeBindingRequest>,
+) -> Result<HttpResponse, AppError> {
+    let game_id = path.into_inner();
+
+    let game_exists = accelerator_game::Entity::find_by_id(game_id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| crate::application::errors::UsecaseError::Repository(
+            crate::application::errors::RepositoryError::Persistence(e.to_string()),
+        ))?
+        .is_some();
+
+    if !game_exists {
+        return Err(crate::application::errors::UsecaseError::NotFound("game").into());
+    }
+
+    let node_ids = body.node_ids;
+
+    if !node_ids.is_empty() {
+        let existing_nodes = accelerator_node::Entity::find()
+            .filter(accelerator_node::Column::Id.is_in(node_ids.clone()))
+            .all(&state.db)
+            .await
+            .map_err(|e| crate::application::errors::UsecaseError::Repository(
+                crate::application::errors::RepositoryError::Persistence(e.to_string()),
+            ))?;
+
+        if existing_nodes.len() != node_ids.len() {
+            return Err(crate::application::errors::UsecaseError::Validation(
+                "some node_ids do not exist".to_string(),
+            )
+            .into());
+        }
+    }
+
+    accelerator_game_node_binding::Entity::delete_many()
+        .filter(accelerator_game_node_binding::Column::GameId.eq(game_id.as_str()))
+        .exec(&state.db)
+        .await
+        .map_err(|e| crate::application::errors::UsecaseError::Repository(
+            crate::application::errors::RepositoryError::Persistence(e.to_string()),
+        ))?;
+
+    for node_id in node_ids {
+        accelerator_game_node_binding::ActiveModel {
+            game_id: Set(game_id.clone()),
+            node_id: Set(node_id),
+            ..Default::default()
+        }
+        .insert(&state.db)
+        .await
+        .map_err(|e| crate::application::errors::UsecaseError::Repository(
+            crate::application::errors::RepositoryError::Persistence(e.to_string()),
+        ))?;
+    }
+
+    Ok(ApiResponse::success(MessageResponse {
+        message: "Game nodes updated".into(),
     })
     .into_http(StatusCode::OK))
 }

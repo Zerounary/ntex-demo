@@ -8,6 +8,26 @@ use crate::domain::{
     content::{DashboardPayload, LibraryPayload, NavigationConfig, SettingsMeta},
 };
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameNodeBindingRequest {
+    pub node_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameNodeVO {
+    pub node_id: String,
+    pub vmess_uuid: String,
+    pub vmess_server: String,
+    pub vmess_port: i32,
+    pub vmess_email: String,
+    pub udp_proxy: String,
+    pub mode: String,
+    pub ping: i32,
+    pub status: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorBootstrapVO {

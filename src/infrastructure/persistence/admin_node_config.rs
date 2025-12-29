@@ -15,7 +15,6 @@ pub struct Model {
     pub node_speed_limit: u64,
     pub traffic_rate: f64,
     pub sort: u64,
-    pub inbounds: JsonValue,
     #[sea_orm(default_value = "0")]
     pub maintenance_mode: bool,
     #[sea_orm(default_value = "0")]

@@ -203,22 +203,12 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
         .await?;
     
     if node_config_exists.is_none() {
-        let inbounds = json!([{
-            "port": 10086,
-            "protocol": "vmess",
-            "settings": {},
-            "streamSettings": {
-                "network": "tcp"
-            }
-        }]);
-        
         admin_node_config::ActiveModel {
             node_id: Set(node_id),
             node_type: Set("Vmess".to_string()),
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
-            inbounds: Set(inbounds),
             ..Default::default()
         }
         .insert(db)

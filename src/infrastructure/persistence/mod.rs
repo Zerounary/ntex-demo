@@ -1,4 +1,5 @@
 pub mod accelerator_game;
+pub mod accelerator_game_node_binding;
 pub mod accelerator_node;
 pub mod accelerator_profile;
 pub mod accelerator_user;

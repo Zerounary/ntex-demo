@@ -396,87 +396,7 @@ impl AdminConfigStore {
             .await
             .map_err(|e| format!("查询入站失败: {}", e))?;
 
-        if !inbounds.is_empty() {
-            return Ok(inbounds.into_iter().map(Into::into).collect());
-        }
-
-        let node_config = admin_node_config::Entity::find_by_id(node_id)
-            .one(&self.db)
-            .await
-            .map_err(|e| format!("查询节点配置失败: {}", e))?;
-
-        let Some(node_config) = node_config else {
-            return Ok(vec![]);
-        };
-
-        let legacy_inbounds: Vec<Value> = serde_json::from_value(node_config.inbounds.clone())
-            .map_err(|e| format!("解析节点入站配置失败: {}", e))?;
-
-        if legacy_inbounds.is_empty() {
-            return Ok(vec![]);
-        }
-
-        let mut migrated: Vec<InboundConfig> = Vec::new();
-        for (idx, v) in legacy_inbounds.into_iter().enumerate() {
-            let port = v.get("port").and_then(|p| p.as_i64()).unwrap_or(0) as i32;
-            if port <= 0 {
-                continue;
-            }
-
-            let tag = v
-                .get("tag")
-                .and_then(|t| t.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| format!("in_{}_{}", port, idx + 1));
-
-            let protocol = v
-                .get("protocol")
-                .and_then(|p| p.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "vmess".to_string());
-
-            let listen = v.get("listen").and_then(|l| l.as_str()).map(|s| s.to_string());
-            let settings = v.get("settings").cloned().unwrap_or_else(|| json!({}));
-            let stream_settings = v
-                .get("streamSettings")
-                .cloned()
-                .or_else(|| v.get("stream_settings").cloned());
-            let sniffing = v
-                .get("sniffing")
-                .cloned()
-                .or_else(|| v.get("sniffingSettings").cloned());
-
-            let inbound = InboundConfig {
-                tag: tag.clone(),
-                protocol: protocol.clone(),
-                port,
-                listen,
-                settings: settings.clone(),
-                stream_settings: stream_settings.clone(),
-                sniffing: sniffing.clone(),
-            };
-
-            let active_model = admin_inbound::ActiveModel {
-                node_id: Set(node_id),
-                tag: Set(tag),
-                protocol: Set(protocol),
-                port: Set(port),
-                listen: Set(inbound.listen.clone()),
-                settings: Set(settings),
-                stream_settings: Set(stream_settings),
-                sniffing: Set(sniffing),
-                ..Default::default()
-            };
-
-            active_model
-                .insert(&self.db)
-                .await
-                .map_err(|e| format!("添加入站失败: {}", e))?;
-
-            migrated.push(inbound);
-        }
-
-        Ok(migrated)
+        Ok(inbounds.into_iter().map(Into::into).collect())
     }
 
     pub async fn add_inbound(&self, node_id: u64, inbound: InboundConfig) -> Result<(), String> {
@@ -942,25 +862,34 @@ impl AdminConfigStore {
     
     /// 为指定节点创建默认配置（含默认入站与默认上游代理）
     async fn create_default_node_config(&self, node_id: u64) -> Result<admin_node_config::Model, String> {
-        let inbounds = json!([{
-            "port": 10086,
-            "protocol": "vmess",
-            "settings": {},
-            "streamSettings": { "network": "tcp" }
-        }]);
-
-        let inserted_config = admin_node_config::ActiveModel {
+        let active = admin_node_config::ActiveModel {
             node_id: Set(node_id),
             node_type: Set("Vmess".to_string()),
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
-            inbounds: Set(inbounds),
+            ..Default::default()
+        };
+        
+        let inserted_config = active.insert(&self.db).await
+            .map_err(|e| format!("创建默认节点配置失败: {}", e))?;
+
+        admin_inbound::ActiveModel {
+            node_id: Set(node_id),
+            tag: Set("in_10086".to_string()),
+            protocol: Set("vmess".to_string()),
+            port: Set(10086),
+            listen: Set(None),
+            settings: Set(json!({})),
+            stream_settings: Set(Some(json!({
+                "network": "tcp"
+            }))),
+            sniffing: Set(None),
             ..Default::default()
         }
         .insert(&self.db)
         .await
-        .map_err(|e| format!("创建默认节点配置失败: {}", e))?;
+        .map_err(|e| format!("创建默认入站失败: {}", e))?;
 
         // 初始化默认上游代理：block 与 direct
         let default_outbounds = vec![
@@ -1010,25 +939,20 @@ impl AdminConfigStore {
             .await
             .map_err(|e| format!("查询入站失败: {}", e))?;
 
-        let inbounds: Vec<Value> = if !inbounds_from_table.is_empty() {
-            inbounds_from_table
-                .into_iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "tag": m.tag,
-                        "port": m.port,
-                        "protocol": m.protocol,
-                        "listen": m.listen,
-                        "settings": m.settings,
-                        "streamSettings": m.stream_settings,
-                        "sniffing": m.sniffing
-                    })
+        let inbounds: Vec<Value> = inbounds_from_table
+            .into_iter()
+            .map(|m| {
+                serde_json::json!({
+                    "tag": m.tag,
+                    "port": m.port,
+                    "protocol": m.protocol,
+                    "listen": m.listen,
+                    "settings": m.settings,
+                    "streamSettings": m.stream_settings,
+                    "sniffing": m.sniffing
                 })
-                .collect()
-        } else {
-            serde_json::from_value(node_config.inbounds.clone())
-                .map_err(|e| format!("解析节点入站配置失败: {}", e))?
-        };
+            })
+            .collect();
         
         Ok(NodeConfig {
             node_id: node_config.node_id,

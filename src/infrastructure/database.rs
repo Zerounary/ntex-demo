@@ -1,7 +1,7 @@
 use sea_orm::{ConnectionTrait, Database, DatabaseConnection, DbErr, Schema};
 
 use crate::infrastructure::persistence::{
-    accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
+    accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile, accelerator_user, account_user,
     admin_chain, admin_inbound, admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
     cdk_code, config_entry, node_illegal_log, node_online_user_log, node_outbound_event_log,
     node_outbound_latency_log, node_status_log, node_traffic_log, wechat_ticket,
@@ -17,6 +17,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
 
     for table in [
         schema.create_table_from_entity(accelerator_game::Entity),
+        schema.create_table_from_entity(accelerator_game_node_binding::Entity),
         schema.create_table_from_entity(accelerator_node::Entity),
         schema.create_table_from_entity(accelerator_profile::Entity),
         schema.create_table_from_entity(accelerator_user::Entity),
@@ -157,6 +158,28 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
                 log::warn!("修改 node_status_logs 字段类型失败: {} - {}", sql, e);
             }
         }
+
+        // 移除遗留字段：inbounds（已由 admin_inbound 子表替代）
+        let drop_inbounds_sqls = vec![
+            "ALTER TABLE admin_node_configs DROP COLUMN IF EXISTS inbounds",
+            "ALTER TABLE admin_node_configs DROP COLUMN inbounds",
+        ];
+        for sql in drop_inbounds_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("移除 admin_node_configs.inbounds 字段失败（可能已移除或数据库版本不支持）: {} - {}", sql, e);
+            }
+        }
+
+        // accelerator_game_node_bindings.node_id 由 u64 -> String（绑定 accelerator_nodes.id）
+        let alter_bind_node_id_sqls = vec![
+            "ALTER TABLE accelerator_game_node_bindings MODIFY COLUMN node_id VARCHAR(128) NOT NULL",
+            "ALTER TABLE accelerator_game_node_bindings MODIFY COLUMN node_id TEXT NOT NULL",
+        ];
+        for sql in alter_bind_node_id_sqls {
+            if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
+                log::warn!("修改 accelerator_game_node_bindings.node_id 字段类型失败（可能已是字符串或表不存在）: {} - {}", sql, e);
+            }
+        }
     }
     
     // PostgreSQL 迁移
@@ -203,6 +226,36 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
         for sql in alter_log_type_sqls {
             if let Err(e) = db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await {
                 log::warn!("修改 node_status_logs 字段类型失败: {} - {}", sql, e);
+            }
+        }
+
+        // 移除遗留字段：inbounds（已由 admin_inbound 子表替代）
+        let drop_inbounds_sql = "ALTER TABLE admin_node_configs DROP COLUMN IF EXISTS inbounds";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(
+                backend,
+                drop_inbounds_sql.to_string(),
+            ))
+            .await
+        {
+            log::warn!(
+                "移除 admin_node_configs.inbounds 字段失败（可能已移除）: {} - {}",
+                drop_inbounds_sql,
+                e
+            );
+        }
+
+        // accelerator_game_node_bindings.node_id 由 u64 -> String（绑定 accelerator_nodes.id）
+        let alter_bind_node_id_sqls = vec![
+            "ALTER TABLE accelerator_game_node_bindings ALTER COLUMN node_id TYPE VARCHAR(128) USING node_id::text",
+            "ALTER TABLE accelerator_game_node_bindings ALTER COLUMN node_id TYPE TEXT USING node_id::text",
+        ];
+        for sql in alter_bind_node_id_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                    .await
+            {
+                log::warn!("修改 accelerator_game_node_bindings.node_id 字段类型失败（可能已是字符串或表不存在）: {} - {}", sql, e);
             }
         }
     }
