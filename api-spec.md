@@ -201,3 +201,163 @@ This project now centralizes every frontend data request in `src/api/`. Each hel
 }
 ```
 
+## 8. Accelerator 用户认证（accelerator_users）
+
+本节为 **accelerator_users** 提供基础认证能力：注册、登录、获取当前用户、修改资料、修改密码、登出。
+
+### 8.1 鉴权方式（Bearer Token）
+
+- **Header:** `Authorization: Bearer <token>`
+- **Token 来源：** `POST /api/auth/accelerator/login` 成功后返回。
+- **受保护接口：** `me/profile/password/logout`。
+
+当 token 缺失/无效/过期时，服务端返回 `401 Unauthorized`（见 `UsecaseError::Unauthorized` 的映射）。
+
+### 8.2 注册
+
+- **Endpoint:** `POST /api/auth/accelerator/register`
+
+Request:
+
+```jsonc
+{
+  "userId": "9777888",
+  "name": "User",
+  "password": "secret"
+}
+```
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": { "message": "User registered" },
+  "error": null
+}
+```
+
+### 8.3 登录
+
+- **Endpoint:** `POST /api/auth/accelerator/login`
+
+Request:
+
+```jsonc
+{
+  "userId": "9777888",
+  "password": "secret",
+  "remember": true
+}
+```
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "token": "<uuid-token>",
+    "user": {
+      "id": "9777888",
+      "name": "User",
+      "validUntil": "2025/12/31"
+    }
+  },
+  "error": null
+}
+```
+
+### 8.4 当前用户信息（需要登录）
+
+- **Endpoint:** `GET /api/auth/accelerator/me`
+- **Auth:** Bearer token
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "id": "9777888",
+    "name": "User",
+    "validUntil": "2025/12/31"
+  },
+  "error": null
+}
+```
+
+### 8.5 修改资料（需要登录）
+
+- **Endpoint:** `POST /api/auth/accelerator/profile`
+- **Auth:** Bearer token
+
+Request:
+
+```jsonc
+{ "name": "New Name" }
+```
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": {
+    "id": "9777888",
+    "name": "New Name",
+    "validUntil": "2025/12/31"
+  },
+  "error": null
+}
+```
+
+### 8.6 修改密码（需要登录）
+
+- **Endpoint:** `POST /api/auth/accelerator/password`
+- **Auth:** Bearer token
+
+Request:
+
+```jsonc
+{
+  "oldPassword": "secret",
+  "newPassword": "new-secret"
+}
+```
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": { "message": "Password updated" },
+  "error": null
+}
+```
+
+### 8.7 登出（需要登录）
+
+- **Endpoint:** `POST /api/auth/accelerator/logout`
+- **Auth:** Bearer token
+
+Response:
+
+```jsonc
+{
+  "success": true,
+  "data": { "message": "Logged out" },
+  "error": null
+}
+```
+
+### 8.8 本地默认账号（seed）
+
+默认 seed 会创建以下账号（便于本地联调）：
+
+```text
+userId: 9777888
+password: secret
+```
+

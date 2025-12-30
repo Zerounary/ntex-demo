@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_node, accelerator_profile, accelerator_user, account_user,
+    accelerator_user_credential,
     admin_inbound, admin_node_config, admin_outbound, admin_routing, admin_user, admin_user_mapping,
     config_entry,
 };
@@ -72,10 +73,22 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
 
     let user_count = accelerator_user::Entity::find().count(db).await?;
     if user_count == 0 {
+        let now = Utc::now();
+        let user_id = "9777888".to_string();
         accelerator_user::ActiveModel {
-            id: Set("9777888".to_string()),
+            id: Set(user_id.clone()),
             name: Set("User".to_string()),
-            valid_until: Set((Utc::now() + Duration::days(365)).into()),
+            valid_until: Set((now + Duration::days(365)).into()),
+        }
+        .insert(db)
+        .await?;
+
+        // 默认密码与 account_users 一致：secret
+        accelerator_user_credential::ActiveModel {
+            user_id: Set(user_id),
+            password_hash: Set(hash_password("secret")),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
         }
         .insert(db)
         .await?;

@@ -1,5 +1,6 @@
 pub mod dto;
 pub mod errors;
+pub mod auth;
 pub mod handlers;
 pub mod routes;
 

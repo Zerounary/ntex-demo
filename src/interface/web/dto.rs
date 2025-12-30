@@ -28,6 +28,43 @@ pub struct GameNodeVO {
     pub status: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserRegisterRequestVO {
+    pub user_id: String,
+    pub name: String,
+    pub password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserLoginRequestVO {
+    pub user_id: String,
+    pub password: String,
+    pub remember: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserLoginResponseVO {
+    pub success: bool,
+    pub token: String,
+    pub user: UserVO,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserUpdateProfileRequestVO {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserChangePasswordRequestVO {
+    pub old_password: String,
+    pub new_password: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorBootstrapVO {

@@ -3,6 +3,8 @@ use ntex::web::types::{Json, Query, State};
 use ntex::web::{self, HttpResponse};
 
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::application::accelerator_usecase::AcceleratorUseCase;
 use crate::application::auth_usecase::AuthUseCase;
@@ -16,10 +18,12 @@ use crate::infrastructure::persistence::repositories::{
 };
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, acceleration_session,
+    accelerator_user, accelerator_user_credential, accelerator_user_session,
 };
 use crate::interface::admin::chain_ops;
 
 use super::AppState;
+use super::auth::AuthedAcceleratorUser;
 use super::dto::{
     AcceleratorBootstrapVO, AccountLoginRequestVO, AccountLoginResponseVO,
     AccountValidationRequestVO, AccountValidationResponseVO, CdkCodeVO, CdkGenerateRequestVO,
@@ -28,8 +32,16 @@ use super::dto::{
     WechatTicketVO,
     GameNodeBindingRequest, GameNodeVO,
     SessionStartRequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
+    AcceleratorUserRegisterRequestVO, AcceleratorUserLoginRequestVO, AcceleratorUserLoginResponseVO,
+    AcceleratorUserUpdateProfileRequestVO, AcceleratorUserChangePasswordRequestVO, UserVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
+
+fn hash_password(input: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 #[web::get("/accelerator/bootstrap")]
 pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpResponse, AppError> {
@@ -352,6 +364,159 @@ pub async fn account_login(
     Ok(ApiResponse::success(AccountLoginResponseVO::from(response)).into_http(StatusCode::OK))
 }
 
+#[web::post("/auth/accelerator/register")]
+pub async fn accelerator_user_register(
+    state: State<AppState>,
+    Json(body): Json<AcceleratorUserRegisterRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    if body.user_id.trim().is_empty() {
+        return Err(UsecaseError::Validation("user_id is required".to_string()).into());
+    }
+    if body.password.trim().is_empty() {
+        return Err(UsecaseError::Validation("password is required".to_string()).into());
+    }
+
+    let exists = accelerator_user::Entity::find_by_id(body.user_id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .is_some();
+    if exists {
+        return Err(UsecaseError::Validation("user already exists".to_string()).into());
+    }
+
+    let now = chrono::Utc::now();
+    accelerator_user::ActiveModel {
+        id: Set(body.user_id.clone()),
+        name: Set(body.name),
+        valid_until: Set(now.into()),
+    }
+    .insert(&state.db)
+    .await
+    .map_err(|e| {
+        UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+            e.to_string(),
+        ))
+    })?;
+
+    accelerator_user_credential::ActiveModel {
+        user_id: Set(body.user_id),
+        password_hash: Set(hash_password(&body.password)),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+    }
+    .insert(&state.db)
+    .await
+    .map_err(|e| {
+        UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+            e.to_string(),
+        ))
+    })?;
+
+    Ok(ApiResponse::success(MessageResponse {
+        message: "User registered".into(),
+    })
+    .into_http(StatusCode::CREATED))
+}
+
+#[web::post("/auth/accelerator/login")]
+pub async fn accelerator_user_login(
+    state: State<AppState>,
+    Json(body): Json<AcceleratorUserLoginRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let cred = accelerator_user_credential::Entity::find_by_id(body.user_id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
+
+    if cred.password_hash != hash_password(&body.password) {
+        return Err(UsecaseError::Unauthorized.into());
+    }
+
+    let user = accelerator_user::Entity::find_by_id(body.user_id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
+
+    let now = chrono::Utc::now();
+    let ttl_days = if body.remember { 30 } else { 1 };
+    let expires_at = now + chrono::Duration::days(ttl_days);
+    let token = Uuid::new_v4().to_string();
+
+    accelerator_user_session::ActiveModel {
+        token: Set(token.clone()),
+        user_id: Set(body.user_id),
+        expires_at: Set(expires_at.into()),
+        created_at: Set(now.into()),
+    }
+    .insert(&state.db)
+    .await
+    .map_err(|e| {
+        UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+            e.to_string(),
+        ))
+    })?;
+
+    let domain_user: crate::domain::accelerator::AcceleratorUser = user.into();
+
+    Ok(ApiResponse::success(AcceleratorUserLoginResponseVO {
+        success: true,
+        token,
+        user: UserVO::from(domain_user),
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[web::get("/auth/accelerator/me")]
+pub async fn accelerator_user_me(user: AuthedAcceleratorUser) -> Result<HttpResponse, AppError> {
+    Ok(ApiResponse::success(UserVO::from(user.user)).into_http(StatusCode::OK))
+}
+
+#[web::post("/auth/accelerator/profile")]
+pub async fn accelerator_user_update_profile(
+    state: State<AppState>,
+    user: AuthedAcceleratorUser,
+    Json(body): Json<AcceleratorUserUpdateProfileRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let model = accelerator_user::Entity::find_by_id(user.user.id)
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
+
+    let mut active: accelerator_user::ActiveModel = model.into();
+    active.name = Set(body.name);
+    let updated = active
+        .update(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    let domain_user: crate::domain::accelerator::AcceleratorUser = updated.into();
+    Ok(ApiResponse::success(UserVO::from(domain_user)).into_http(StatusCode::OK))
+}
+
 #[web::post("/nodes/register")]
 pub async fn register_node(
     state: State<AppState>,
@@ -461,8 +626,66 @@ pub async fn validate_account(
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
     let response = usecase.validate_account(body.into()).await?;
-    Ok(ApiResponse::success(AccountValidationResponseVO::from(response))
-        .into_http(StatusCode::OK))
+    Ok(ApiResponse::success(AccountValidationResponseVO::from(response)).into_http(StatusCode::OK))
+}
+
+#[web::post("/auth/accelerator/password")]
+pub async fn accelerator_user_change_password(
+    state: State<AppState>,
+    user: AuthedAcceleratorUser,
+    Json(body): Json<AcceleratorUserChangePasswordRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let model = accelerator_user_credential::Entity::find_by_id(user.user.id)
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
+
+    if model.password_hash != hash_password(&body.old_password) {
+        return Err(UsecaseError::Unauthorized.into());
+    }
+
+    let now = chrono::Utc::now();
+    let mut active: accelerator_user_credential::ActiveModel = model.into();
+    active.password_hash = Set(hash_password(&body.new_password));
+    active.updated_at = Set(now.into());
+    active
+        .update(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    Ok(ApiResponse::success(MessageResponse {
+        message: "Password updated".into(),
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[web::post("/auth/accelerator/logout")]
+pub async fn accelerator_user_logout(
+    state: State<AppState>,
+    user: AuthedAcceleratorUser,
+) -> Result<HttpResponse, AppError> {
+    accelerator_user_session::Entity::delete_by_id(user.token)
+        .exec(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    Ok(ApiResponse::success(MessageResponse {
+        message: "Logged out".into(),
+    })
+    .into_http(StatusCode::OK))
 }
 
 #[web::post("/accelerator/start")]
@@ -470,7 +693,7 @@ pub async fn start_acceleration(
     state: State<AppState>,
     Json(body): Json<AccountValidationRequestVO>,
 ) -> Result<HttpResponse, AppError> {
-    // 验证账号是否付费或过期
+    // ... (rest of the code remains the same)
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
