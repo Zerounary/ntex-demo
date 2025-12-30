@@ -17,14 +17,14 @@ pub struct Model {
     pub status: String,
     #[sea_orm(column_type = "String(Some(16))")]
     pub bill_type: String,
-    #[sea_orm(column_type = "Timestamp")]
+    #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub started_at: DateTimeUtc,
-    #[sea_orm(column_type = "Timestamp")]
+    #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub last_activity_at: DateTimeUtc,
-    #[sea_orm(column_type = "Timestamp")]
+    #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub last_accounted_at: DateTimeUtc,
     pub billed_minutes: i64,
-    #[sea_orm(nullable, column_type = "Timestamp")]
+    #[sea_orm(nullable, column_type = "DateTime", default_expr = "Expr::cust(\"NULL\")")]
     pub ended_at: Option<DateTimeUtc>,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
