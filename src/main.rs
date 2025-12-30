@@ -8,9 +8,17 @@ use dotenv::dotenv;
 use env_logger::Env;
 use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
 use interface::admin;
-use log::{error, info};
+use log::{error, info, warn};
+use sea_orm::{
+    sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
+};
+use std::env;
+use std::sync::Arc;
 
 use crate::config::AppConfig;
+
+use crate::infrastructure::persistence::{acceleration_session, node_online_user_log, user_wallet};
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
@@ -27,7 +35,7 @@ async fn main() -> std::io::Result<()> {
         Ok(db) => {
             info!("数据库连接成功");
             db
-        }
+        },
         Err(e) => {
             error!("数据库连接失败: {}", e);
             error!("数据库 URL: {}", config.database_url);
@@ -75,6 +83,16 @@ async fn main() -> std::io::Result<()> {
     
     // 创建 MQTT 客户端 Arc 引用
     let mqtt_client_arc = std::sync::Arc::new(mqtt_client);
+
+    // 启动分钟计费后台任务（不依赖客户端心跳）
+    {
+        let db_clone = db.clone();
+        let admin_config_clone = admin_config.clone();
+        let mqtt_clone = mqtt_client_arc.clone();
+        tokio::spawn(async move {
+            run_minute_billing_daemon(db_clone, admin_config_clone, mqtt_clone).await;
+        });
+    }
     
     // 启动管理服务器（端口 667）
     let admin_config_clone = admin_config.clone();
@@ -109,4 +127,352 @@ async fn main() -> std::io::Result<()> {
 
 fn to_io_error(err: impl std::error::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
+}
+
+async fn run_minute_billing_daemon(
+    db: sea_orm::DatabaseConnection,
+    admin_config: admin_config::AdminConfigStore,
+    mqtt: Arc<mqtt_client::MqttClientManager>,
+) {
+    let tick_seconds: u64 = env::var("BILLING_TICK_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let online_grace_seconds: i64 = env::var("BILLING_ONLINE_GRACE_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(90);
+
+    let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(tick_seconds));
+
+    loop {
+        ticker.tick().await;
+
+        let now = chrono::Utc::now();
+        let online_cutoff = now - chrono::Duration::seconds(online_grace_seconds);
+
+        let sessions = match acceleration_session::Entity::find()
+            .filter(acceleration_session::Column::Status.eq("active"))
+            .filter(acceleration_session::Column::BillType.eq("minute"))
+            .order_by_asc(acceleration_session::Column::LastAccountedAt)
+            .all(&db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                error!("[billing] query active minute sessions failed: {}", e);
+                continue;
+            }
+        };
+
+        for session in sessions {
+            let session_id = session.session_id.clone();
+            let node_id = session.node_id;
+            let admin_user_id = session.admin_user_id;
+            let user_id = session.user_id.clone();
+            let last_accounted_at: chrono::DateTime<chrono::Utc> = session.last_accounted_at.into();
+            let last_activity_at: chrono::DateTime<chrono::Utc> = session.last_activity_at.into();
+
+            // 基于节点 onlineusers 上报判断是否仍在线（不依赖客户端上报）
+            let last_seen: Option<chrono::DateTime<chrono::Utc>> = match node_online_user_log::Entity::find()
+                .filter(node_online_user_log::Column::NodeId.eq(node_id))
+                .filter(node_online_user_log::Column::UserId.eq(admin_user_id))
+                .order_by_desc(node_online_user_log::Column::CreatedAt)
+                .one(&db)
+                .await
+            {
+                Ok(v) => v.map(|m| m.created_at.into()),
+                Err(e) => {
+                    error!(
+                        "[billing] query online user log failed: session_id={}, err={}",
+                        session_id, e
+                    );
+                    None
+                }
+            };
+
+            if let Some(last_seen_ts) = last_seen.clone() {
+                if last_seen_ts > last_activity_at {
+                    let mut s = acceleration_session::ActiveModel {
+                        session_id: Set(session_id.clone()),
+                        ..Default::default()
+                    };
+                    s.last_activity_at = Set(last_seen_ts.into());
+                    s.updated_at = Set(now.into());
+                    let _ = s.update(&db).await;
+                }
+            }
+
+            let last_activity_ts = last_seen.unwrap_or(now);
+            if last_seen.is_none() || last_activity_ts < online_cutoff {
+                // 认为用户已不在线，停止会话（timeout/offline stop）
+                let updated = match acceleration_session::Entity::update_many()
+                    .col_expr(acceleration_session::Column::Status, Expr::value("stopped"))
+                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
+                    .col_expr(
+                        acceleration_session::Column::LastActivityAt,
+                        Expr::value(last_activity_ts),
+                    )
+                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
+                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
+                    .filter(acceleration_session::Column::Status.eq("active"))
+                    .exec(&db)
+                    .await
+                {
+                    Ok(r) => r.rows_affected,
+                    Err(e) => {
+                        warn!("[billing] offline stop update failed: session_id={}, err={}", session_id, e);
+                        0
+                    }
+                };
+
+                if updated > 0 {
+                    let _ = admin_config.delete_user(node_id, admin_user_id).await;
+                    let _ = mqtt.publish_update_notification(node_id, "user").await;
+                    let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+                    let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+                    let _ = mqtt.publish_update_notification(node_id, "config").await;
+                    info!("[billing] session stopped due to offline: session_id={}", session_id);
+                }
+
+                continue;
+            }
+
+            let elapsed = now.signed_duration_since(last_accounted_at);
+            let minutes_to_charge: i64 = elapsed.num_minutes();
+            if minutes_to_charge <= 0 {
+                continue;
+            }
+
+            let txn = match db.begin().await {
+                Ok(t) => t,
+                Err(e) => {
+                    error!("[billing] begin txn failed: session_id={}, err={}", session_id, e);
+                    continue;
+                }
+            };
+
+            // 幂等/并发保护：在事务内重新读取 session，确认仍为 active 且 last_accounted_at 未变化
+            let session_in_txn = match acceleration_session::Entity::find_by_id(session_id.clone())
+                .one(&txn)
+                .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("[billing] session recheck failed: session_id={}, err={}", session_id, e);
+                    let _ = txn.rollback().await;
+                    continue;
+                }
+            };
+
+            let Some(session_in_txn) = session_in_txn else {
+                let _ = txn.rollback().await;
+                continue;
+            };
+
+            if session_in_txn.status != "active" {
+                let _ = txn.rollback().await;
+                continue;
+            }
+
+            if session_in_txn.last_accounted_at != session.last_accounted_at {
+                let _ = txn.rollback().await;
+                continue;
+            }
+
+            let wallet = match user_wallet::Entity::find_by_id(user_id.clone()).one(&txn).await {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("[billing] wallet query failed: user_id={}, err={}", user_id, e);
+                    let _ = txn.rollback().await;
+                    continue;
+                }
+            };
+
+            let mut should_revoke = false;
+            let mut status_after: Option<String> = None;
+
+            let Some(wallet) = wallet else {
+                let last_activity_ts = last_seen.unwrap_or(now);
+                let updated = match acceleration_session::Entity::update_many()
+                    .col_expr(
+                        acceleration_session::Column::Status,
+                        Expr::value("insufficient_balance"),
+                    )
+                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
+                    .col_expr(
+                        acceleration_session::Column::LastActivityAt,
+                        Expr::value(last_activity_ts),
+                    )
+                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
+                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
+                    .filter(acceleration_session::Column::Status.eq("active"))
+                    .filter(acceleration_session::Column::LastAccountedAt.eq(session.last_accounted_at))
+                    .exec(&txn)
+                    .await
+                {
+                    Ok(r) => r.rows_affected,
+                    Err(e) => {
+                        error!(
+                            "[billing] session stop(insufficient, no wallet) update failed: session_id={}, err={}",
+                            session_id, e
+                        );
+                        0
+                    }
+                };
+
+                if updated == 0 {
+                    let _ = txn.rollback().await;
+                    continue;
+                }
+
+                if txn.commit().await.is_err() {
+                    continue;
+                }
+
+                should_revoke = true;
+                status_after = Some("insufficient_balance".to_string());
+                let _ = admin_config.delete_user(node_id, admin_user_id).await;
+                let _ = mqtt.publish_update_notification(node_id, "user").await;
+                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                info!(
+                    "[billing] session stopped: session_id={}, status={}",
+                    session_id,
+                    status_after.unwrap()
+                );
+                continue;
+            };
+
+            let remaining = wallet.remaining_minutes;
+            if remaining <= 0 {
+                let last_activity_ts = last_seen.unwrap_or(now);
+                let updated = match acceleration_session::Entity::update_many()
+                    .col_expr(
+                        acceleration_session::Column::Status,
+                        Expr::value("insufficient_balance"),
+                    )
+                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
+                    .col_expr(
+                        acceleration_session::Column::LastActivityAt,
+                        Expr::value(last_activity_ts),
+                    )
+                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
+                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
+                    .filter(acceleration_session::Column::Status.eq("active"))
+                    .filter(acceleration_session::Column::LastAccountedAt.eq(session.last_accounted_at))
+                    .exec(&txn)
+                    .await
+                {
+                    Ok(r) => r.rows_affected,
+                    Err(e) => {
+                        error!(
+                            "[billing] session stop(insufficient, empty wallet) update failed: session_id={}, err={}",
+                            session_id, e
+                        );
+                        0
+                    }
+                };
+
+                if updated == 0 {
+                    let _ = txn.rollback().await;
+                    continue;
+                }
+
+                if txn.commit().await.is_err() {
+                    continue;
+                }
+
+                let _ = admin_config.delete_user(node_id, admin_user_id).await;
+                let _ = mqtt.publish_update_notification(node_id, "user").await;
+                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                continue;
+            }
+
+            let charge = minutes_to_charge.min(remaining);
+
+            let mut w: user_wallet::ActiveModel = wallet.into();
+            w.remaining_minutes = Set(remaining - charge);
+            w.updated_at = Set(now.into());
+            if w.update(&txn).await.is_err() {
+                let _ = txn.rollback().await;
+                continue;
+            }
+
+            let last_activity_ts = last_seen.unwrap_or(now);
+            let new_last_accounted_at = last_accounted_at + chrono::Duration::minutes(charge);
+            let new_billed = session_in_txn.billed_minutes + charge;
+
+            if charge < minutes_to_charge {
+                should_revoke = true;
+                status_after = Some("insufficient_balance".to_string());
+            }
+
+            let mut updater = acceleration_session::Entity::update_many()
+                .col_expr(acceleration_session::Column::BilledMinutes, Expr::value(new_billed))
+                .col_expr(
+                    acceleration_session::Column::LastAccountedAt,
+                    Expr::value(new_last_accounted_at),
+                )
+                .col_expr(
+                    acceleration_session::Column::LastActivityAt,
+                    Expr::value(last_activity_ts),
+                )
+                .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now));
+
+            if should_revoke {
+                updater = updater
+                    .col_expr(
+                        acceleration_session::Column::Status,
+                        Expr::value("insufficient_balance"),
+                    )
+                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now));
+            }
+
+            let updated = match updater
+                .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
+                .filter(acceleration_session::Column::Status.eq("active"))
+                .filter(acceleration_session::Column::LastAccountedAt.eq(session.last_accounted_at))
+                .exec(&txn)
+                .await
+            {
+                Ok(r) => r.rows_affected,
+                Err(e) => {
+                    error!("[billing] session billing update failed: session_id={}, err={}", session_id, e);
+                    0
+                }
+            };
+
+            if updated == 0 {
+                let _ = txn.rollback().await;
+                continue;
+            }
+
+            if txn.commit().await.is_err() {
+                continue;
+            }
+
+            if should_revoke {
+                let _ = admin_config.delete_user(node_id, admin_user_id).await;
+                let _ = mqtt.publish_update_notification(node_id, "user").await;
+                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                info!(
+                    "[billing] session stopped: session_id={}, status=insufficient_balance",
+                    session_id
+                );
+            } else {
+                info!(
+                    "[billing] session billed: session_id={}, minutes_charged={}, remaining_minutes={}",
+                    session_id,
+                    minutes_to_charge,
+                    remaining - charge
+                );
+            }
+        }
+    }
 }

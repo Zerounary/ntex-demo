@@ -417,5 +417,180 @@
 - CDK 用例：`src/application/cdk_usecase.rs`
 - Admin 配置存储（写 DB）：`src/infrastructure/admin_config.rs`
 - 会话表实体：`src/infrastructure/persistence/acceleration_session.rs`
+
+---
+
+## 9. 验证步骤（手工 / 最短闭环）
+
+本节用于在本地/测试环境手工验证：
+
+- 分钟钱包充值（CDK minute）
+- 会话 start/stop 正常
+- `main.rs` 后台分钟计费 daemon 会扣减 `user_wallets.remaining_minutes`
+- 离线 / 余额不足时自动停止会话并撤销节点侧用户（best effort）
+
+### 9.1 环境变量（建议）
+
+两进程必须共享同一个数据库：
+
+- `DATABASE_URL`：例如 `mysql://user:pass@127.0.0.1:3306/ntex_demo`
+
+可选（为了更容易观察扣费/离线 stop）：
+
+- `BILLING_TICK_SECONDS=5`
+- `BILLING_ONLINE_GRACE_SECONDS=30`
+
+client_api 端口：
+
+- `PORT=8080`（默认）
+
+### 9.2 启动进程
+
+启动顺序建议：先 `main.rs`，再 `client_api`。
+
+1. 启动管理端（含 MQTT broker + MQTT client + billing daemon）：
+
+```bash
+cargo run
+```
+
+2. 启动 Web API（client_api）：
+
+```bash
+cargo run --bin client_api
+```
+
+### 9.3 生成测试数据：节点 + minute CDK + 兑换
+
+以下 curl 示例默认 client_api 在 `http://127.0.0.1:8080`。
+
+#### 9.3.1 注册一个节点
+
+`POST /api/nodes/register`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/api/nodes/register" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id":"1",
+    "vmessUuid":"00000000-0000-0000-0000-000000000001",
+    "vmessServer":"example.com",
+    "vmessPort":443,
+    "vmessEmail":"u1@example.com",
+    "udpProxy":"off",
+    "mode":"vmess",
+    "ping":10,
+    "status":"online"
+  }'
+```
+
+#### 9.3.2 生成一张 minute CDK（例如 5 分钟）
+
+`POST /api/cdk/generate`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/api/cdk/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"cdkType":"minute","count":1,"durationMinutes":5}'
+```
+
+返回结果里会包含 `code`，把它复制出来备用。
+
+#### 9.3.3 兑换 CDK（例：userId = u1）
+
+`POST /api/cdk/redeem`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/api/cdk/redeem" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"<PUT_CODE_HERE>","userId":"u1"}'
+```
+
+兑换成功后，minute 类型会返回 `remainingMinutes`。
+
+#### 9.3.4 校验账号（确认 billingMode/余额）
+
+`POST /api/account/validate`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/api/account/validate" \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"u1"}'
+```
+
+预期：
+
+- `billingMode` 为 `minute`
+- `remainingMinutes > 0`
+
+### 9.4 开始会话（创建 active session + 下发节点用户/映射）
+
+`POST /api/accelerator/session/start`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/api/accelerator/session/start" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId":"u1",
+    "gameId":"g1",
+    "nodeId":1,
+    "outboundTag":"default"
+  }'
+```
+
+预期返回：
+
+- `sessionId`
+- `uuid`（下发到节点侧的用户 UUID）
+- `billType`（`minute` 或 `pass`）
+- minute 模式会带 `remainingMinutes`
+
+### 9.5 让 billing daemon 认为“用户在线”（关键）
+
+分钟计费 daemon 不依赖客户端心跳，它只看 `node_online_user_logs`。
+
+`node_online_user_logs` 由节点通过 MQTT 上报 onlineusers 写入（`main.rs` 的 MQTT 通路会调用 `AdminConfigStore::handle_online_users_report`）。
+
+因此验证在线最简方式：
+
+1. 让节点（或你的 node 端）持续上报 onlineusers
+2. 确认数据库表 `node_online_user_logs` 中，存在：
+   - `node_id = session.node_id`
+   - `user_id = session.admin_user_id`
+   - `created_at` 在 `BILLING_ONLINE_GRACE_SECONDS` 时间窗口内持续刷新
+
+> 说明：这里的 `user_id` 指的是 `acceleration_sessions.admin_user_id`（节点上报里的 uid），不是业务侧的 `acceleration_sessions.user_id`（例如 u1）。
+
+### 9.6 观察扣费
+
+保持用户“在线”一段时间（至少跨过 1 分钟的计费窗口）后：
+
+- `user_wallets.remaining_minutes` 会下降
+- `acceleration_sessions.billed_minutes` 会上升
+- `acceleration_sessions.last_accounted_at` 会推进
+
+同时 `main.rs` 日志会打印类似：
+
+- `session billed: ... minutes_charged=... remaining_minutes=...`
+
+### 9.7 触发自动停机：余额不足 / 离线
+
+#### 9.7.1 余额不足
+
+minute 余额不足时，daemon 会将会话置为 `insufficient_balance` 并撤销节点侧用户（best effort）：
+
+- `acceleration_sessions.status = insufficient_balance`
+- `acceleration_sessions.ended_at` 写入
+- `AdminConfigStore::delete_user(node_id, admin_user_id)` 被调用
+- MQTT 更新通知 best effort 发送到：`user/outbound/inbound/config`
+
+#### 9.7.2 离线
+
+如果 `node_online_user_logs` 在 `BILLING_ONLINE_GRACE_SECONDS` 内不再刷新，则认为用户离线并自动 stop：
+
+- `acceleration_sessions.status = stopped`
+- `acceleration_sessions.ended_at` 写入
+- 同样会撤销节点侧用户并发送 MQTT 更新（best effort）
+
 - 钱包表实体：`src/infrastructure/persistence/user_wallet.rs`
 - 设计文档：`BILLING_PLAN.md`

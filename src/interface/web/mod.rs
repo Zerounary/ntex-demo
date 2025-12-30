@@ -6,8 +6,10 @@ pub mod routes;
 use ntex::web::{self, App};
 use ntex_files as fs;
 use sea_orm::DatabaseConnection;
+ use std::sync::Arc;
 
 use crate::infrastructure::admin_config::AdminConfigStore;
+ use crate::infrastructure::mqtt_client::MqttPublisher;
 
 use self::routes::configure;
 
@@ -15,11 +17,20 @@ use self::routes::configure;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub admin_config: AdminConfigStore,
+    pub mqtt_publisher: Option<Arc<MqttPublisher>>,
 }
 
 impl AppState {
-    pub fn new(db: DatabaseConnection, admin_config: AdminConfigStore) -> Self {
-        Self { db, admin_config }
+    pub fn new(
+        db: DatabaseConnection,
+        admin_config: AdminConfigStore,
+        mqtt_publisher: Option<Arc<MqttPublisher>>,
+    ) -> Self {
+        Self {
+            db,
+            admin_config,
+            mqtt_publisher,
+        }
     }
 }
 

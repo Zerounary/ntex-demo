@@ -30,6 +30,11 @@ pub struct MqttClientManager {
     db: DatabaseConnection,
 }
 
+pub struct MqttPublisher {
+    client: Arc<AsyncClient>,
+    shutdown_flag: Arc<tokio::sync::Notify>,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct NodePresence {
     last_seen: Instant,
@@ -1225,5 +1230,177 @@ impl MqttClientManager {
         self.shutdown_flag.notify_one();
         let _ = self.client.disconnect().await;
         info!("✅ MQTT 客户端已关闭");
+    }
+}
+
+impl MqttPublisher {
+    pub async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        let broker_host = env::var("MQTT_BROKER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let broker_port = env::var("MQTT_BROKER_PORT")
+            .unwrap_or_else(|_| "1883".to_string())
+            .parse::<u16>()
+            .unwrap_or(1883);
+
+        let client_id = format!(
+            "xrayr-client-api-publisher-{}",
+            uuid::Uuid::new_v4().to_string()[..8].to_string()
+        );
+
+        let mut mqttoptions = MqttOptions::new(client_id, broker_host.clone(), broker_port);
+        mqttoptions.set_keep_alive(Duration::from_secs(60));
+        mqttoptions.set_clean_session(true);
+
+        let mqtt_username = env::var("MQTT_USERNAME").unwrap_or_else(|_| "manage".to_string());
+        let mqtt_password = env::var("MQTT_PASSWORD").unwrap_or_else(|_| "manage_password_123".to_string());
+        mqttoptions.set_credentials(&mqtt_username, &mqtt_password);
+
+        let max_packet_size = 100 * 1024 * 1024;
+        mqttoptions.set_max_packet_size(max_packet_size, max_packet_size);
+
+        let tls_ca_path = env::var("MQTT_TLS_CA")
+            .or_else(|_| {
+                if let Ok(content) = fs::read_to_string("config.toml") {
+                    if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                        if let Some(capath) = config
+                            .get("v4")
+                            .and_then(|v4| v4.get("v4-1"))
+                            .and_then(|v4_1| v4_1.get("tls"))
+                            .and_then(|tls| tls.get("capath"))
+                            .and_then(|v| v.as_str())
+                        {
+                            return Ok(capath.to_string());
+                        }
+                    }
+                }
+                Err(env::VarError::NotPresent)
+            })
+            .ok();
+
+        if let Some(ca_path) = &tls_ca_path {
+            let tls_cert_path = env::var("MQTT_TLS_CERT")
+                .or_else(|_| {
+                    if let Ok(content) = fs::read_to_string("config.toml") {
+                        if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                            if let Some(certpath) = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("v4-1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("certpath"))
+                                .and_then(|v| v.as_str())
+                            {
+                                return Ok(certpath.to_string());
+                            }
+                        }
+                    }
+                    Err(env::VarError::NotPresent)
+                })
+                .ok();
+
+            let tls_key_path = env::var("MQTT_TLS_KEY")
+                .or_else(|_| {
+                    if let Ok(content) = fs::read_to_string("config.toml") {
+                        if let Ok(config) = toml::from_str::<toml::Value>(&content) {
+                            if let Some(keypath) = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("v4-1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("keypath"))
+                                .and_then(|v| v.as_str())
+                            {
+                                return Ok(keypath.to_string());
+                            }
+                        }
+                    }
+                    Err(env::VarError::NotPresent)
+                })
+                .ok();
+
+            let ca_cert_bytes = fs::read(ca_path)?;
+            let client_auth = if let (Some(cert_path), Some(key_path)) = (&tls_cert_path, &tls_key_path) {
+                let cert_bytes = fs::read(cert_path)?;
+                let key_bytes = fs::read(key_path)?;
+                Some((cert_bytes, key_bytes))
+            } else {
+                None
+            };
+
+            let tls_config = rumqttc::TlsConfiguration::Simple {
+                ca: ca_cert_bytes,
+                alpn: None,
+                client_auth,
+            };
+            mqttoptions.set_transport(Transport::tls_with_config(tls_config));
+        }
+
+        let (client, mut eventloop) = AsyncClient::new(mqttoptions, 32);
+        let client = Arc::new(client);
+        let shutdown_flag = Arc::new(tokio::sync::Notify::new());
+
+        let shutdown_clone = shutdown_flag.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_clone.notified() => {
+                        break;
+                    }
+                    ev = eventloop.poll() => {
+                        match ev {
+                            Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                                info!("✅ [MQTT Publisher] 连接已确认");
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                warn!("⚠️  [MQTT Publisher] eventloop 错误: {}", e);
+                                time::sleep(Duration::from_millis(200)).await;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        time::sleep(Duration::from_millis(200)).await;
+        info!("📡 [MQTT Publisher] 已启动: {}:{}", broker_host, broker_port);
+
+        Ok(Self {
+            client,
+            shutdown_flag,
+        })
+    }
+
+    pub async fn publish_update_notification(
+        &self,
+        node_id: u64,
+        update_type: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let topic = format!("xrayr/node/{}/update/{}", node_id, update_type);
+        let message = serde_json::json!({
+            "type": update_type,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs(),
+            "action": "update"
+        });
+
+        let message_json = serde_json::to_string(&message)?;
+        match self
+            .client
+            .publish(&topic, QoS::AtLeastOnce, false, message_json.as_bytes())
+            .await
+        {
+            Ok(_) => {
+                info!("📢 [MQTT Publisher] 已推送更新通知: {} (type={})", topic, update_type);
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ [MQTT Publisher] 推送更新通知失败: {}, 错误: {}", topic, e);
+                Err(format!("推送更新通知失败: {}", e).into())
+            }
+        }
+    }
+
+    pub async fn shutdown(&self) {
+        self.shutdown_flag.notify_one();
+        let _ = self.client.disconnect().await;
     }
 }

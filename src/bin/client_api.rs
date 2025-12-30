@@ -14,7 +14,8 @@ use env_logger::Env;
 use infrastructure::{admin_config, database, seed};
 use interface::web;
 use interface::web::AppState;
-use log::{error, info};
+use log::{error, info, warn};
+use std::sync::Arc;
 
 use crate::config::AppConfig;
 
@@ -58,7 +59,16 @@ async fn main() -> std::io::Result<()> {
     info!("数据库种子数据执行成功");
 
     let admin_config = admin_config::AdminConfigStore::new(db.clone());
-    let state = AppState::new(db.clone(), admin_config);
+
+    let mqtt_publisher = match infrastructure::mqtt_client::MqttPublisher::start().await {
+        Ok(p) => Some(Arc::new(p)),
+        Err(e) => {
+            warn!("MQTT publisher 启动失败（将继续运行，但节点配置刷新可能有延迟）: {}", e);
+            None
+        }
+    };
+
+    let state = AppState::new(db.clone(), admin_config, mqtt_publisher);
 
     info!("正在启动客户端 Web 服务器 (端口 {})...", config.port);
 

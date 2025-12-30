@@ -92,6 +92,12 @@ pub async fn session_start(
             .delete_user(existing.node_id, existing.admin_user_id)
             .await;
 
+        if let Some(mqtt) = state.mqtt_publisher.as_ref() {
+            let _ = mqtt.publish_update_notification(existing.node_id, "user").await;
+            let _ = mqtt.publish_update_notification(existing.node_id, "inbound").await;
+            let _ = mqtt.publish_update_notification(existing.node_id, "outbound").await;
+        }
+
         let mut active: acceleration_session::ActiveModel = existing.into();
         active.status = Set("stopped".to_string());
         active.ended_at = Set(Some(chrono::Utc::now().into()));
@@ -108,6 +114,12 @@ pub async fn session_start(
             chain_base_port.unwrap_or(40000),
         )
         .await;
+
+        // 链路相关的 inbound/config 变更，需要通知节点刷新
+        if let Some(mqtt) = state.mqtt_publisher.as_ref() {
+            let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+            let _ = mqtt.publish_update_notification(node_id, "config").await;
+        }
     }
 
     let uuid = uuid::Uuid::new_v4().to_string();
@@ -129,6 +141,16 @@ pub async fn session_start(
         .add_mapping(node_id, admin_uuid.clone(), outbound_tag.clone())
         .await
         .map_err(|e| UsecaseError::Validation(format!("add_mapping failed: {}", e)))?;
+
+    // 3) 推送节点刷新通知（仅服务端）
+    if let Some(mqtt) = state.mqtt_publisher.as_ref() {
+        // 参考 admin 接口行为：add_user -> user 更新，add_mapping -> outbound 更新
+        let _ = mqtt.publish_update_notification(node_id, "user").await;
+        let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+        // 某些节点实现对 inbound/config 也敏感，额外触发一次（best effort）
+        let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+        let _ = mqtt.publish_update_notification(node_id, "config").await;
+    }
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -201,6 +223,13 @@ pub async fn session_stop(
         .admin_config
         .delete_user(model.node_id, model.admin_user_id)
         .await;
+
+    if let Some(mqtt) = state.mqtt_publisher.as_ref() {
+        let _ = mqtt.publish_update_notification(model.node_id, "user").await;
+        let _ = mqtt.publish_update_notification(model.node_id, "inbound").await;
+        let _ = mqtt.publish_update_notification(model.node_id, "outbound").await;
+        let _ = mqtt.publish_update_notification(model.node_id, "config").await;
+    }
 
     let mut active: acceleration_session::ActiveModel = model.into();
     let now = chrono::Utc::now();
