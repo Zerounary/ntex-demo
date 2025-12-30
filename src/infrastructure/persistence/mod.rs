@@ -19,5 +19,7 @@ pub mod node_outbound_event_log;
 pub mod node_outbound_latency_log;
 pub mod node_status_log;
 pub mod node_traffic_log;
+pub mod user_wallet;
+pub mod acceleration_session;
 pub mod repositories;
 pub mod wechat_ticket;

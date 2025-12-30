@@ -96,7 +96,8 @@ pub struct CdkRedeemResponse {
     pub success: bool,
     pub message: String,
     pub duration_minutes: i64,
-    pub valid_until: DateTime<Utc>,
+    pub valid_until: Option<DateTime<Utc>>,
+    pub remaining_minutes: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,6 +110,8 @@ pub struct AccountValidationResponse {
     pub is_valid: bool,
     pub is_paid: bool,
     pub valid_until: Option<DateTime<Utc>>,
+    pub remaining_minutes: i64,
+    pub billing_mode: String,
     pub message: String,
 }
 

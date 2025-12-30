@@ -2,10 +2,11 @@
 
 use ntex::http::StatusCode;
 use ntex::web::types::{Json, Query, State};
-use ntex::web::{self, HttpResponse};
+use ntex::web::{self, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::env;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
@@ -19,6 +20,27 @@ pub struct AdminState {
     pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
 }
 
+fn require_admin_token(req: &HttpRequest) -> Result<(), HttpResponse> {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() {
+        return Ok(());
+    }
+
+    let provided = req
+        .headers()
+        .get("X-Admin-Token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if provided != expected {
+        return Err(HttpResponse::Unauthorized().json(&serde_json::json!({
+            "msg": "error",
+            "error": "unauthorized"
+        })));
+    }
+    Ok(())
+}
+
 #[derive(Deserialize)]
 pub struct ApplyChainRequest {
     pub chain_id: String,
@@ -29,9 +51,13 @@ pub struct ApplyChainRequest {
 #[web::post("/api/admin/chains/apply")]
 pub async fn apply_chain(
     state: State<AdminState>,
+    req: HttpRequest,
     Query(_params): Query<HashMap<String, String>>,
     Json(body): Json<ApplyChainRequest>,
 ) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
     let base_port: u16 = body.base_port.unwrap_or(40000);
     match chain_ops::apply_chain(&state.config, state.mqtt_client.as_ref(), &body.chain_id, base_port).await {
         Ok((cid, results)) => HttpResponse::Ok().json(&serde_json::json!({
@@ -593,9 +619,13 @@ fn default_dt() -> u64 { 0 }
 #[web::post("/api/admin/user")]
 pub async fn add_user(
     state: State<AdminState>,
+    req: HttpRequest,
     Query(params): Query<HashMap<String, String>>,
     Json(body): Json<AddUserRequest>,
 ) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
     let node_id = match get_node_id_from_query(&params) {
         Ok(id) => id,
         Err(resp) => return resp,
@@ -707,9 +737,13 @@ pub async fn update_user(
 #[web::delete("/api/admin/user/{id}")]
 pub async fn delete_user(
     state: State<AdminState>,
+    req: HttpRequest,
     Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<u64>,
 ) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
     let node_id = match get_node_id_from_query(&params) {
         Ok(id) => id,
         Err(resp) => return resp,
@@ -1107,9 +1141,13 @@ pub struct AddMappingRequest {
 #[web::post("/api/admin/mapping")]
 pub async fn add_mapping(
     state: State<AdminState>,
+    req: HttpRequest,
     Query(params): Query<HashMap<String, String>>,
     Json(body): Json<AddMappingRequest>,
 ) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
     let node_id = match get_node_id_from_query(&params) {
         Ok(id) => id,
         Err(resp) => return resp,
@@ -1185,9 +1223,13 @@ pub async fn update_mapping(
 #[web::delete("/api/admin/mapping/{uuid}")]
 pub async fn delete_mapping(
     state: State<AdminState>,
+    req: HttpRequest,
     Query(params): Query<HashMap<String, String>>,
     path: web::types::Path<String>,
 ) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
     let node_id = match get_node_id_from_query(&params) {
         Ok(id) => id,
         Err(resp) => return resp,

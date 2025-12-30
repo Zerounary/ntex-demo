@@ -46,6 +46,9 @@ pub trait AuthRepository: Send + Sync {
         user_id: &str,
         valid_until: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), RepositoryError>;
+
+    async fn get_remaining_minutes(&self, user_id: &str) -> Result<i64, RepositoryError>;
+    async fn add_remaining_minutes(&self, user_id: &str, minutes: i64) -> Result<i64, RepositoryError>;
 }
 
 #[async_trait]

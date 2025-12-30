@@ -23,6 +23,7 @@ use super::accelerator_user;
 use super::account_user;
 use super::cdk_code;
 use super::config_entry;
+use super::user_wallet;
 use super::wechat_ticket;
 
 static GAME_CACHE: Lazy<Cache<&'static str, Vec<Game>>> = Lazy::new(|| {
@@ -430,6 +431,52 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
         Ok(())
     }
+
+    async fn get_remaining_minutes(&self, user_id: &str) -> Result<i64, RepositoryError> {
+        let wallet = user_wallet::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(wallet.map(|w| w.remaining_minutes).unwrap_or(0))
+    }
+
+    async fn add_remaining_minutes(&self, user_id: &str, minutes: i64) -> Result<i64, RepositoryError> {
+        if minutes <= 0 {
+            return Err(RepositoryError::Persistence("minutes must be positive".into()));
+        }
+
+        let existing = user_wallet::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+
+        match existing {
+            Some(model) => {
+                let current = model.remaining_minutes;
+                let mut active: user_wallet::ActiveModel = model.into();
+                let next = current + minutes;
+                active.remaining_minutes = Set(next);
+                active.updated_at = Set(Utc::now().into());
+                active
+                    .update(self.db)
+                    .await
+                    .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+                Ok(next)
+            }
+            None => {
+                let active = user_wallet::ActiveModel {
+                    user_id: Set(user_id.to_string()),
+                    remaining_minutes: Set(minutes),
+                    updated_at: Set(Utc::now().into()),
+                };
+                active
+                    .insert(self.db)
+                    .await
+                    .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+                Ok(minutes)
+            }
+        }
+    }
 }
 
 fn ticket_into_active(ticket: &WechatTicket) -> wechat_ticket::ActiveModel {
@@ -573,7 +620,8 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
             success: true,
             message: "CDK redeemed successfully".into(),
             duration_minutes: cdk.duration_minutes,
-            valid_until,
+            valid_until: Some(valid_until),
+            remaining_minutes: None,
         })
     }
 

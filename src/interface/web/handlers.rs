@@ -9,11 +9,15 @@ use crate::application::auth_usecase::AuthUseCase;
 use crate::application::cdk_usecase::CdkUseCase;
 use crate::application::content_usecase::ContentUseCase;
 use crate::application::node_usecase::NodeUseCase;
+use crate::application::errors::UsecaseError;
 use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
     NodeRepositoryImpl,
 };
-use crate::infrastructure::persistence::{accelerator_game, accelerator_game_node_binding, accelerator_node};
+use crate::infrastructure::persistence::{
+    accelerator_game, accelerator_game_node_binding, accelerator_node, acceleration_session,
+};
+use crate::interface::admin::chain_ops;
 
 use super::AppState;
 use super::dto::{
@@ -23,6 +27,7 @@ use super::dto::{
     NodeRegisterRequest, ProfileSyncRequest, SettingsMetaVO, TicketRequestVO, TicketStatusQuery,
     WechatTicketVO,
     GameNodeBindingRequest, GameNodeVO,
+    SessionStartRequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
@@ -33,6 +38,187 @@ pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpRespons
     let usecase = AcceleratorUseCase::new(repo, node_repo);
     let payload = usecase.bootstrap().await?;
     Ok(ApiResponse::success(AcceleratorBootstrapVO::from(payload)).into_http(StatusCode::OK))
+}
+
+#[web::post("/accelerator/session/start")]
+pub async fn session_start(
+    state: State<AppState>,
+    Json(body): Json<SessionStartRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = body.user_id;
+    let game_id = body.game_id;
+    let node_id = body.node_id;
+    let outbound_tag = body.outbound_tag;
+    let chain_id = body.chain_id;
+    let chain_base_port = body.chain_base_port;
+
+    let cdk_repo = CdkRepositoryImpl::new(&state.db);
+    let auth_repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
+
+    let validation = usecase
+        .validate_account(AccountValidationRequestVO {
+            user_id: user_id.clone(),
+        }
+        .into())
+        .await?;
+
+    if !validation.is_valid {
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "ACCOUNT_VALIDATION_FAILED",
+            validation.message,
+        )
+        .into_http(StatusCode::FORBIDDEN));
+    }
+
+    if validation.billing_mode == "minute" && validation.remaining_minutes < 1 {
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "INSUFFICIENT_BALANCE",
+            "remaining minutes is insufficient".to_string(),
+        )
+        .into_http(StatusCode::FORBIDDEN));
+    }
+
+    // 单用户同一时刻只允许一个 active 会话：存在则先 stop（best effort）
+    if let Ok(Some(existing)) = acceleration_session::Entity::find()
+        .filter(acceleration_session::Column::UserId.eq(user_id.as_str()))
+        .filter(acceleration_session::Column::Status.eq("active"))
+        .order_by_desc(acceleration_session::Column::StartedAt)
+        .one(&state.db)
+        .await
+    {
+        let _ = state
+            .admin_config
+            .delete_user(existing.node_id, existing.admin_user_id)
+            .await;
+
+        let mut active: acceleration_session::ActiveModel = existing.into();
+        active.status = Set("stopped".to_string());
+        active.ended_at = Set(Some(chrono::Utc::now().into()));
+        active.updated_at = Set(chrono::Utc::now().into());
+        let _ = active.update(&state.db).await;
+    }
+
+    // 可选：确保链路端口存在
+    if let Some(chain_id) = &chain_id {
+        let _ = chain_ops::apply_chain(
+            &state.admin_config,
+            None,
+            chain_id,
+            chain_base_port.unwrap_or(40000),
+        )
+        .await;
+    }
+
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let st = if validation.billing_mode == "pass" { 5u64 } else { 1u64 };
+
+    // 1) 写 DB 下发用户到节点（add_user）
+    let admin_user = state
+        .admin_config
+        .add_user(node_id, uuid, st, 0)
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("add_user failed: {}", e)))?;
+
+    let admin_user_id = admin_user.id;
+    let admin_uuid = admin_user.uuid;
+
+    // 2) 写 DB 下发映射（add_mapping）
+    state
+        .admin_config
+        .add_mapping(node_id, admin_uuid.clone(), outbound_tag.clone())
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("add_mapping failed: {}", e)))?;
+
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
+
+    let mapped_outbound_tag = outbound_tag;
+
+    let bill_type = validation.billing_mode.clone();
+
+    let model = acceleration_session::ActiveModel {
+        session_id: Set(session_id.clone()),
+        user_id: Set(user_id),
+        game_id: Set(game_id),
+        node_id: Set(node_id),
+        admin_user_id: Set(admin_user_id),
+        uuid: Set(admin_uuid.clone()),
+        outbound_tag: Set(mapped_outbound_tag),
+        status: Set("active".to_string()),
+        bill_type: Set(bill_type.clone()),
+        started_at: Set(now.into()),
+        last_activity_at: Set(now.into()),
+        last_accounted_at: Set(now.into()),
+        billed_minutes: Set(0),
+        ended_at: Set(None),
+        created_at: Set(now.into()),
+        updated_at: Set(now.into()),
+    };
+
+    model
+        .insert(&state.db)
+        .await
+        .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?;
+
+    let remaining_minutes = if bill_type == "minute" {
+        Some(validation.remaining_minutes)
+    } else {
+        None
+    };
+
+    Ok(ApiResponse::success(SessionStartResponseVO {
+        session_id,
+        uuid: admin_uuid,
+        bill_type,
+        remaining_minutes,
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[web::post("/accelerator/session/stop")]
+pub async fn session_stop(
+    state: State<AppState>,
+    Json(body): Json<SessionStopRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let Some(model) = acceleration_session::Entity::find_by_id(body.session_id.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?
+    else {
+        return Err(UsecaseError::NotFound("session").into());
+    };
+
+    if model.status != "active" {
+        return Ok(ApiResponse::success(SessionStopResponseVO {
+            status: model.status,
+            billed_minutes: model.billed_minutes,
+        })
+        .into_http(StatusCode::OK));
+    }
+
+    let _ = state
+        .admin_config
+        .delete_user(model.node_id, model.admin_user_id)
+        .await;
+
+    let mut active: acceleration_session::ActiveModel = model.into();
+    let now = chrono::Utc::now();
+    active.status = Set("stopped".to_string());
+    active.last_activity_at = Set(now.into());
+    active.ended_at = Set(Some(now.into()));
+    active.updated_at = Set(now.into());
+
+    let updated = active
+        .update(&state.db)
+        .await
+        .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?;
+
+    Ok(ApiResponse::success(SessionStopResponseVO {
+        status: updated.status,
+        billed_minutes: updated.billed_minutes,
+    })
+    .into_http(StatusCode::OK))
 }
 
 #[web::post("/accelerator/profiles")]

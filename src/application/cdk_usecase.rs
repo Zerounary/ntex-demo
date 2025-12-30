@@ -59,16 +59,42 @@ where
             .await?
             .ok_or_else(|| UsecaseError::Validation("user not found".into()))?;
 
+        let cdk = self
+            .cdk_repo
+            .get_cdk_by_code(&request.code)
+            .await?
+            .ok_or_else(|| UsecaseError::Validation("CDK not found".into()))?;
+
         // 兑换CDK
         let response = self.cdk_repo.redeem_cdk(request.clone()).await?;
 
-        // 更新用户有效期
+        if cdk.cdk_type == crate::domain::cdk::CdkType::Minute {
+            let remaining = self
+                .auth_repo
+                .add_remaining_minutes(&request.user_id, response.duration_minutes)
+                .await?;
+
+            return Ok(CdkRedeemResponse {
+                success: true,
+                message: format!(
+                    "CDK redeemed successfully. Remaining minutes: {}",
+                    remaining
+                ),
+                duration_minutes: response.duration_minutes,
+                valid_until: None,
+                remaining_minutes: Some(remaining),
+            });
+        }
+
+        // Day/Month/Year: 更新用户有效期
+        let redeemed_until = response
+            .valid_until
+            .ok_or_else(|| UsecaseError::Validation("missing valid_until for non-minute cdk".into()))?;
+
         let new_valid_until = if user.valid_until > chrono::Utc::now() {
-            // 如果用户还有有效期，累加时间
             user.valid_until + chrono::Duration::minutes(response.duration_minutes)
         } else {
-            // 如果用户已过期，从当前时间开始计算
-            response.valid_until
+            redeemed_until
         };
 
         self.auth_repo
@@ -82,7 +108,8 @@ where
                 new_valid_until.format("%Y-%m-%d %H:%M:%S")
             ),
             duration_minutes: response.duration_minutes,
-            valid_until: new_valid_until,
+            valid_until: Some(new_valid_until),
+            remaining_minutes: None,
         })
     }
 
@@ -106,13 +133,24 @@ where
 
         let now = chrono::Utc::now();
         let is_paid = user.valid_until > now;
-        let is_valid = is_paid;
+        let remaining_minutes = self.auth_repo.get_remaining_minutes(&request.user_id).await?;
+        let is_valid = is_paid || remaining_minutes > 0;
+
+        let billing_mode = if is_paid {
+            "pass".to_string()
+        } else if remaining_minutes > 0 {
+            "minute".to_string()
+        } else {
+            "none".to_string()
+        };
 
         let message = if is_paid {
             format!(
                 "Account is valid until {}",
                 user.valid_until.format("%Y-%m-%d %H:%M:%S")
             )
+        } else if remaining_minutes > 0 {
+            format!("Account has remaining minutes: {}", remaining_minutes)
         } else {
             "Account has expired or is not paid".to_string()
         };
@@ -121,6 +159,8 @@ where
             is_valid,
             is_paid,
             valid_until: Some(user.valid_until),
+            remaining_minutes,
+            billing_mode,
             message,
         })
     }

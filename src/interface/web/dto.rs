@@ -313,7 +313,8 @@ pub struct CdkRedeemResponseVO {
     pub success: bool,
     pub message: String,
     pub duration_minutes: i64,
-    pub valid_until: String,
+    pub valid_until: Option<String>,
+    pub remaining_minutes: Option<i64>,
 }
 
 impl From<CdkRedeemResponse> for CdkRedeemResponseVO {
@@ -322,7 +323,10 @@ impl From<CdkRedeemResponse> for CdkRedeemResponseVO {
             success: value.success,
             message: value.message,
             duration_minutes: value.duration_minutes,
-            valid_until: value.valid_until.format("%Y-%m-%d %H:%M:%S").to_string(),
+            valid_until: value
+                .valid_until
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            remaining_minutes: value.remaining_minutes,
         }
     }
 }
@@ -371,12 +375,49 @@ impl From<AccountValidationRequestVO> for AccountValidationRequest {
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStartRequestVO {
+    pub user_id: String,
+    pub game_id: String,
+    pub node_id: u64,
+    pub outbound_tag: String,
+    #[serde(default)]
+    pub chain_id: Option<String>,
+    #[serde(default)]
+    pub chain_base_port: Option<u16>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStartResponseVO {
+    pub session_id: String,
+    pub uuid: String,
+    pub bill_type: String,
+    pub remaining_minutes: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStopRequestVO {
+    pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStopResponseVO {
+    pub status: String,
+    pub billed_minutes: i64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountValidationResponseVO {
     pub is_valid: bool,
     pub is_paid: bool,
     pub valid_until: Option<String>,
+    pub remaining_minutes: i64,
+    pub billing_mode: String,
     pub message: String,
 }
 
@@ -386,6 +427,8 @@ impl From<AccountValidationResponse> for AccountValidationResponseVO {
             is_valid: value.is_valid,
             is_paid: value.is_paid,
             valid_until: value.valid_until.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
+            remaining_minutes: value.remaining_minutes,
+            billing_mode: value.billing_mode,
             message: value.message,
         }
     }
