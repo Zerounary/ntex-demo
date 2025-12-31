@@ -301,10 +301,7 @@
 {
   "userId": "user_123",
   "gameId": "game_abc",
-  "nodeId": 1,
-  "outboundTag": "ss-out-1",
-  "chainId": null,
-  "chainBasePort": null
+  "nodeId": 1
 }
 ```
 
@@ -325,8 +322,6 @@
 - `billType` 对应 `billing_mode`：
   - `pass`：会员放行
   - `minute`：分钟计费
-- `outboundTag` 用于决定节点侧将该用户流量导向哪个上游（与 `admin_user_mapping` 对应）。
-- `chainId/chainBasePort` 为可选链路参数（多跳链路）；若传入，服务端会写入链路相关 inbounds。
 
 #### 5.3.2 停止会话
 
@@ -337,6 +332,16 @@
 ```json
 {
   "sessionId": "..."
+}
+```
+
+或（不传 `sessionId`，按三元组停止当前 active 会话）：
+
+```json
+{
+  "userId": "user_123",
+  "gameId": "game_abc",
+  "nodeId": 1
 }
 ```
 
@@ -377,7 +382,6 @@
 2. 用户选择：
    - 游戏（`gameId`）
    - 节点（`nodeId`）
-   - 出站（`outboundTag`）
 3. 调用 `POST /api/accelerator/session/start`
 4. 得到 `sessionId/uuid/billType`：
    - `uuid` 用于节点侧识别该用户（后续也可用于排障/追踪）
@@ -533,8 +537,7 @@ curl -sS -X POST "http://127.0.0.1:8080/api/accelerator/session/start" \
   -d '{
     "userId":"u1",
     "gameId":"g1",
-    "nodeId":1,
-    "outboundTag":"default"
+    "nodeId":1
   }'
 ```
 

@@ -418,11 +418,6 @@ pub struct SessionStartRequestVO {
     pub user_id: String,
     pub game_id: String,
     pub node_id: u64,
-    pub outbound_tag: String,
-    #[serde(default)]
-    pub chain_id: Option<String>,
-    #[serde(default)]
-    pub chain_base_port: Option<u16>,
 }
 
 #[derive(Debug, Serialize)]

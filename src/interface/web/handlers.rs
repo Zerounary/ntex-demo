@@ -3,8 +3,11 @@ use ntex::web::types::{Json, Query, State};
 use ntex::web::{self, HttpResponse};
 
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::env;
 use uuid::Uuid;
+use log::{info, error};
 
 use crate::application::accelerator_usecase::AcceleratorUseCase;
 use crate::application::auth_usecase::AuthUseCase;
@@ -20,7 +23,6 @@ use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, acceleration_session,
     accelerator_user, accelerator_user_credential, accelerator_user_session,
 };
-use crate::interface::admin::chain_ops;
 
 use super::AppState;
 use super::auth::AuthedAcceleratorUser;
@@ -36,6 +38,213 @@ use super::dto::{
     AcceleratorUserUpdateProfileRequestVO, AcceleratorUserChangePasswordRequestVO, UserVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
+
+#[derive(Debug, Deserialize, Default)]
+struct AdminUserDTO {
+    pub id: u64,
+    pub uuid: String,
+    pub st: u64,
+    pub dt: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminApiResponse<T> {
+    pub msg: String,
+    #[serde(default)]
+    pub data: Option<T>,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AdminAddUserRequest {
+    pub uuid: String,
+    pub st: u64,
+    pub dt: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AdminAddMappingRequest {
+    pub uuid: String,
+    pub outbound_tag: String,
+}
+
+fn main_admin_base_url() -> String {
+    env::var("MAIN_ADMIN_BASE_URL")
+        .or_else(|_| env::var("ADMIN_BASE_URL"))
+        .unwrap_or_else(|_| "http://127.0.0.1:667".to_string())
+}
+
+fn main_admin_token() -> Option<String> {
+    env::var("MAIN_ADMIN_TOKEN")
+        .or_else(|_| env::var("ADMIN_TOKEN"))
+        .ok()
+        .filter(|v| !v.is_empty())
+}
+
+async fn main_admin_add_user(
+    node_id: u64,
+    uuid: String,
+    st: u64,
+    dt: u64,
+) -> Result<AdminUserDTO, UsecaseError> {
+    let base = main_admin_base_url();
+    info!(
+        "[session_start] -> POST {}/api/admin/user?node_id={} uuid={} st={} dt={}",
+        base, node_id, uuid, st, dt
+    );
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(format!("{}/api/admin/user", base))
+        .query(&[("node_id", node_id)])
+        .json(&AdminAddUserRequest {
+            uuid: uuid.clone(),
+            st,
+            dt,
+        });
+    if let Some(token) = main_admin_token() {
+        req = req.header("X-Admin-Token", token);
+    }
+    let resp = req.send().await.map_err(|e| {
+        error!(
+            "[session_start] admin add_user request failed: node_id={}, uuid={}, err={}",
+            node_id, uuid, e
+        );
+        UsecaseError::Validation(format!("main_admin add_user request failed: {}", e))
+    })?;
+    let status = resp.status();
+    let payload = resp
+        .json::<AdminApiResponse<AdminUserDTO>>()
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("main_admin add_user invalid response: {}", e)))?;
+
+    if !status.is_success() {
+        error!(
+            "[session_start] admin add_user failed: status={} msg={:?} error={:?}",
+            status, payload.message, payload.error
+        );
+        return Err(UsecaseError::Validation(format!(
+            "main_admin add_user failed: status={}, msg={:?}, error={:?}",
+            status,
+            payload.message,
+            payload.error
+        )));
+    }
+    if payload.msg != "ok" {
+        error!(
+            "[session_start] admin add_user failed: msg={} error={:?}",
+            payload.msg, payload.error
+        );
+        return Err(UsecaseError::Validation(format!(
+            "main_admin add_user failed: msg={}, error={:?}",
+            payload.msg, payload.error
+        )));
+    }
+    let data = payload.data.ok_or_else(|| {
+        error!("[session_start] admin add_user missing data");
+        UsecaseError::Validation("main_admin add_user missing data".to_string())
+    })?;
+    info!(
+        "[session_start] <- admin add_user success: node_id={} admin_user_id={}",
+        node_id, data.id
+    );
+    Ok(data)
+}
+
+async fn main_admin_add_mapping(
+    node_id: u64,
+    uuid: String,
+    outbound_tag: String,
+) -> Result<(), UsecaseError> {
+    let base = main_admin_base_url();
+    info!(
+        "[session_start] -> POST {}/api/admin/mapping?node_id={} uuid={} outbound_tag={}",
+        base, node_id, uuid, outbound_tag
+    );
+    let client = reqwest::Client::new();
+    let mut req = client
+        .post(format!("{}/api/admin/mapping", base))
+        .query(&[("node_id", node_id)])
+        .json(&AdminAddMappingRequest {
+            uuid: uuid.clone(),
+            outbound_tag: outbound_tag.clone(),
+        });
+    if let Some(token) = main_admin_token() {
+        req = req.header("X-Admin-Token", token);
+    }
+    let resp = req.send().await.map_err(|e| {
+        error!(
+            "[session_start] admin add_mapping request failed: node_id={} uuid={} err={}",
+            node_id, uuid, e
+        );
+        UsecaseError::Validation(format!("main_admin add_mapping request failed: {}", e))
+    })?;
+    let status = resp.status();
+    let payload = resp
+        .json::<AdminApiResponse<serde_json::Value>>()
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("main_admin add_mapping invalid response: {}", e)))?;
+
+    if !status.is_success() || payload.msg != "ok" {
+        error!(
+            "[session_start] admin add_mapping failed: status={} msg={} error={:?}",
+            status, payload.msg, payload.error
+        );
+        return Err(UsecaseError::Validation(format!(
+            "main_admin add_mapping failed: status={}, msg={}, error={:?}",
+            status, payload.msg, payload.error
+        )));
+    }
+    info!(
+        "[session_start] <- admin add_mapping success: node_id={} uuid={} outbound_tag={}",
+        node_id, uuid, outbound_tag
+    );
+    Ok(())
+}
+
+async fn main_admin_delete_user(node_id: u64, admin_user_id: u64) -> Result<(), UsecaseError> {
+    let base = main_admin_base_url();
+    info!(
+        "[session] -> DELETE {}/api/admin/user/{}?node_id={}",
+        base, admin_user_id, node_id
+    );
+    let client = reqwest::Client::new();
+    let mut req = client
+        .delete(format!("{}/api/admin/user/{}", base, admin_user_id))
+        .query(&[("node_id", node_id)]);
+    if let Some(token) = main_admin_token() {
+        req = req.header("X-Admin-Token", token);
+    }
+    let resp = req.send().await.map_err(|e| {
+        error!(
+            "[session] admin delete_user request failed: node_id={} admin_user_id={} err={}",
+            node_id, admin_user_id, e
+        );
+        UsecaseError::Validation(format!("main_admin delete_user request failed: {}", e))
+    })?;
+    let status = resp.status();
+    let payload = resp
+        .json::<AdminApiResponse<serde_json::Value>>()
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("main_admin delete_user invalid response: {}", e)))?;
+    if !status.is_success() || payload.msg != "ok" {
+        error!(
+            "[session] admin delete_user failed: status={} msg={} error={:?}",
+            status, payload.msg, payload.error
+        );
+        return Err(UsecaseError::Validation(format!(
+            "main_admin delete_user failed: status={}, msg={}, error={:?}",
+            status, payload.msg, payload.error
+        )));
+    }
+    info!(
+        "[session] <- admin delete_user success: node_id={} admin_user_id={}",
+        node_id, admin_user_id
+    );
+    Ok(())
+}
 
 fn hash_password(input: &str) -> String {
     let mut hasher = Sha256::new();
@@ -60,9 +269,7 @@ pub async fn session_start(
     let user_id = body.user_id;
     let game_id = body.game_id;
     let node_id = body.node_id;
-    let outbound_tag = body.outbound_tag;
-    let chain_id = body.chain_id;
-    let chain_base_port = body.chain_base_port;
+    let outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
 
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
@@ -99,16 +306,11 @@ pub async fn session_start(
         .one(&state.db)
         .await
     {
-        let _ = state
-            .admin_config
-            .delete_user(existing.node_id, existing.admin_user_id)
-            .await;
-
-        if let Some(mqtt) = state.mqtt_publisher.as_ref() {
-            let _ = mqtt.publish_update_notification(existing.node_id, "user").await;
-            let _ = mqtt.publish_update_notification(existing.node_id, "inbound").await;
-            let _ = mqtt.publish_update_notification(existing.node_id, "outbound").await;
-        }
+        info!(
+            "[session_start] best-effort stop existing session_id={} node_id={}",
+            existing.session_id, existing.node_id
+        );
+        let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
 
         let mut active: acceleration_session::ActiveModel = existing.into();
         active.status = Set("stopped".to_string());
@@ -117,52 +319,17 @@ pub async fn session_start(
         let _ = active.update(&state.db).await;
     }
 
-    // 可选：确保链路端口存在
-    if let Some(chain_id) = &chain_id {
-        let _ = chain_ops::apply_chain(
-            &state.admin_config,
-            None,
-            chain_id,
-            chain_base_port.unwrap_or(40000),
-        )
-        .await;
-
-        // 链路相关的 inbound/config 变更，需要通知节点刷新
-        if let Some(mqtt) = state.mqtt_publisher.as_ref() {
-            let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-            let _ = mqtt.publish_update_notification(node_id, "config").await;
-        }
-    }
-
     let uuid = uuid::Uuid::new_v4().to_string();
     let st = if validation.billing_mode == "pass" { 5u64 } else { 1u64 };
 
-    // 1) 写 DB 下发用户到节点（add_user）
-    let admin_user = state
-        .admin_config
-        .add_user(node_id, uuid, st, 0)
-        .await
-        .map_err(|e| UsecaseError::Validation(format!("add_user failed: {}", e)))?;
+    // 1) 调用 main.rs Admin HTTP：下发用户到节点（add_user）
+    let admin_user = main_admin_add_user(node_id, uuid, st, 0).await?;
 
     let admin_user_id = admin_user.id;
     let admin_uuid = admin_user.uuid;
 
-    // 2) 写 DB 下发映射（add_mapping）
-    state
-        .admin_config
-        .add_mapping(node_id, admin_uuid.clone(), outbound_tag.clone())
-        .await
-        .map_err(|e| UsecaseError::Validation(format!("add_mapping failed: {}", e)))?;
-
-    // 3) 推送节点刷新通知（仅服务端）
-    if let Some(mqtt) = state.mqtt_publisher.as_ref() {
-        // 参考 admin 接口行为：add_user -> user 更新，add_mapping -> outbound 更新
-        let _ = mqtt.publish_update_notification(node_id, "user").await;
-        let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-        // 某些节点实现对 inbound/config 也敏感，额外触发一次（best effort）
-        let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-        let _ = mqtt.publish_update_notification(node_id, "config").await;
-    }
+    // 2) 调用 main.rs Admin HTTP：下发映射（add_mapping）
+    main_admin_add_mapping(node_id, admin_uuid.clone(), outbound_tag.clone()).await?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -216,8 +383,8 @@ pub async fn session_stop(
     Json(body): Json<SessionStopRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     let Some(model) = acceleration_session::Entity::find_by_id(body.session_id.clone())
-        .one(&state.db)
-        .await
+            .one(&state.db)
+            .await
         .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?
     else {
         return Err(UsecaseError::NotFound("session").into());
@@ -231,17 +398,11 @@ pub async fn session_stop(
         .into_http(StatusCode::OK));
     }
 
-    let _ = state
-        .admin_config
-        .delete_user(model.node_id, model.admin_user_id)
-        .await;
-
-    if let Some(mqtt) = state.mqtt_publisher.as_ref() {
-        let _ = mqtt.publish_update_notification(model.node_id, "user").await;
-        let _ = mqtt.publish_update_notification(model.node_id, "inbound").await;
-        let _ = mqtt.publish_update_notification(model.node_id, "outbound").await;
-        let _ = mqtt.publish_update_notification(model.node_id, "config").await;
-    }
+    info!(
+        "[session_stop] deleting admin user: session_id={} node_id={} admin_user_id={}",
+        model.session_id, model.node_id, model.admin_user_id
+    );
+    let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
 
     let mut active: acceleration_session::ActiveModel = model.into();
     let now = chrono::Utc::now();

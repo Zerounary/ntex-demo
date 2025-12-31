@@ -20,11 +20,15 @@ use sea_orm::DatabaseConnection;
 /// 响应等待器
 type ResponseWaiter = tokio::sync::oneshot::Sender<Value>;
 
+/// 节点拉取配置等待器（用于强一致等待节点实际拉取最新配置）
+type PullWaiter = tokio::sync::oneshot::Sender<()>;
+
 /// MQTT 客户端管理器
 pub struct MqttClientManager {
     client: Arc<AsyncClient>,
     shutdown_flag: Arc<tokio::sync::Notify>,
     response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+    pull_waiters: Arc<Mutex<HashMap<String, Vec<PullWaiter>>>>,
     presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
     admin_config: AdminConfigStore,
     db: DatabaseConnection,
@@ -197,17 +201,31 @@ impl MqttClientManager {
         // 创建响应等待器映射
         let response_waiters = Arc::new(Mutex::new(HashMap::<String, ResponseWaiter>::new()));
 
+        // 创建节点拉取配置等待器映射
+        let pull_waiters = Arc::new(Mutex::new(HashMap::<String, Vec<PullWaiter>>::new()));
+
         let presence = Arc::new(Mutex::new(HashMap::<u64, NodePresence>::new()));
         
         // 启动事件循环任务（必须在订阅之前启动，以便处理连接和订阅确认）
         let client_clone = client_arc.clone();
         let shutdown_clone = shutdown_flag.clone();
         let response_waiters_clone = response_waiters.clone();
+        let pull_waiters_clone = pull_waiters.clone();
         let admin_config_clone = admin_config.clone();
         let db_clone = db.clone();
         let presence_clone = presence.clone();
         tokio::spawn(async move {
-            Self::run_event_loop(eventloop, client_clone, shutdown_clone, response_waiters_clone, presence_clone, admin_config_clone, db_clone).await;
+            Self::run_event_loop(
+                eventloop,
+                client_clone,
+                shutdown_clone,
+                response_waiters_clone,
+                pull_waiters_clone,
+                presence_clone,
+                admin_config_clone,
+                db_clone,
+            )
+            .await;
         });
 
         let shutdown_clone = shutdown_flag.clone();
@@ -237,10 +255,76 @@ impl MqttClientManager {
             client: client_arc,
             shutdown_flag,
             response_waiters,
+            pull_waiters,
             presence,
             admin_config,
             db,
         })
+    }
+
+    fn pull_wait_key(node_id: u64, action: &str) -> String {
+        format!("{}:{}", node_id, action)
+    }
+
+    async fn notify_pull_waiters(
+        pull_waiters: &Arc<Mutex<HashMap<String, Vec<PullWaiter>>>>,
+        node_id: u64,
+        action: &str,
+    ) {
+        match action {
+            "user" | "outbound" | "inbound" | "config" | "routing" => {}
+            _ => return,
+        }
+
+        let key = Self::pull_wait_key(node_id, action);
+        let waiters = {
+            let mut map = pull_waiters.lock().await;
+            map.remove(&key)
+        };
+
+        if let Some(waiters) = waiters {
+            for w in waiters {
+                let _ = w.send(());
+            }
+        }
+    }
+
+    /// 等待节点拉取指定类型的配置。
+    ///
+    /// 节点收到 update 通知后，会通过 request(action=user/outbound/...) 来拉取数据。
+    /// 这里等待该 request 被服务端观察到，作为“已同步”的信号。
+    pub async fn wait_for_node_pull(
+        &self,
+        node_id: u64,
+        action: &str,
+        timeout_secs: u64,
+    ) -> Result<(), String> {
+        let key = Self::pull_wait_key(node_id, action);
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut map = self.pull_waiters.lock().await;
+            map.entry(key.clone()).or_default().push(tx);
+        }
+
+        match time::timeout(Duration::from_secs(timeout_secs), rx).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err("waiter closed".to_string()),
+            Err(_) => {
+                // 清理已经关闭的 sender（rx drop 会导致 tx.is_closed() == true）
+                let mut map = self.pull_waiters.lock().await;
+                if let Some(list) = map.get_mut(&key) {
+                    list.retain(|w| !w.is_closed());
+                    if list.is_empty() {
+                        map.remove(&key);
+                    }
+                }
+                Err(format!(
+                    "timeout waiting node pull: node_id={}, action={}, timeout={}s",
+                    node_id, action, timeout_secs
+                ))
+            }
+        }
     }
     
     /// 运行事件循环，处理消息
@@ -249,6 +333,7 @@ impl MqttClientManager {
         _client: Arc<AsyncClient>,
         shutdown_flag: Arc<tokio::sync::Notify>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        pull_waiters: Arc<Mutex<HashMap<String, Vec<PullWaiter>>>>,
         presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
         admin_config: AdminConfigStore,
         db: DatabaseConnection,
@@ -268,6 +353,7 @@ impl MqttClientManager {
                             }
                             let client_clone = _client.clone();
                             let response_waiters_clone = response_waiters.clone();
+                            let pull_waiters_clone = pull_waiters.clone();
                             let presence_clone = presence.clone();
                             // 检查 payload 大小（最大 100MB，与 broker 配置一致）
                             if publish.payload.len() > 104857600 {
@@ -278,7 +364,17 @@ impl MqttClientManager {
                             } else {
                                 let admin_config_clone = admin_config.clone();
                                 let db_clone = db.clone();
-                                Self::handle_message(client_clone, response_waiters_clone, presence_clone, admin_config_clone, db_clone, publish.topic, publish.payload).await;
+                                Self::handle_message(
+                                    client_clone,
+                                    response_waiters_clone,
+                                    pull_waiters_clone,
+                                    presence_clone,
+                                    admin_config_clone,
+                                    db_clone,
+                                    publish.topic,
+                                    publish.payload,
+                                )
+                                .await;
                             }
                         }
                         Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
@@ -455,6 +551,7 @@ impl MqttClientManager {
     async fn handle_message(
         client: Arc<AsyncClient>,
         response_waiters: Arc<Mutex<HashMap<String, ResponseWaiter>>>,
+        pull_waiters: Arc<Mutex<HashMap<String, Vec<PullWaiter>>>>,
         presence: Arc<Mutex<HashMap<u64, NodePresence>>>,
         admin_config: AdminConfigStore,
         _db: DatabaseConnection,
@@ -621,6 +718,10 @@ impl MqttClientManager {
                 return;
             }
         };
+
+        // 节点收到 update 通知后，会通过 request(action=user/outbound/...) 拉取配置。
+        // 这里在观察到拉取请求时，唤醒强一致等待器。
+        Self::notify_pull_waiters(&pull_waiters, node_id_u64, action).await;
         
         // 生成响应（异步方法）
         // 对于 config 请求，需要检查是否包含硬件信息

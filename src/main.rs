@@ -14,7 +14,7 @@ use sea_orm::{
     TransactionTrait,
 };
 use std::env;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use crate::config::AppConfig;
 
@@ -23,6 +23,7 @@ use crate::infrastructure::persistence::{acceleration_session, node_online_user_
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    ensure_rustls_crypto_provider();
     // 配置日志过滤器：降低 rumqttd 路由模块的日志级别，避免正常路由信息被记录为 ERROR
     // 如果环境变量 RUST_LOG 未设置，使用默认值：全局 info，rumqttd 相关模块为 warn
     let default_filter = "info,rumqttd::router::routing=off,rumqttd=off";
@@ -127,6 +128,15 @@ async fn main() -> std::io::Result<()> {
 
 fn to_io_error(err: impl std::error::Error) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Other, err.to_string())
+}
+
+fn ensure_rustls_crypto_provider() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("failed to install rustls ring crypto provider");
+    });
 }
 
 async fn run_minute_billing_daemon(

@@ -7,6 +7,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
+use std::time::Instant;
+use log::{info, error};
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
@@ -39,6 +41,18 @@ fn require_admin_token(req: &HttpRequest) -> Result<(), HttpResponse> {
         })));
     }
     Ok(())
+}
+
+fn parse_sync_from_query(params: &HashMap<String, String>) -> (bool, u64) {
+    let sync = params
+        .get("sync")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let timeout_secs = params
+        .get("sync_timeout")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(5);
+    (sync, timeout_secs)
 }
 
 #[derive(Deserialize)]
@@ -630,6 +644,12 @@ pub async fn add_user(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+
+    let (sync, sync_timeout) = parse_sync_from_query(&params);
+    info!(
+        "[admin:add_user] node_id={} uuid={} st={} dt={} sync={} timeout={}s",
+        node_id, body.uuid, body.st, body.dt, sync, sync_timeout
+    );
     
     // 检查维护模式
     let maintenance_mode = match state.config.get_maintenance_mode(node_id).await {
@@ -664,11 +684,44 @@ pub async fn add_user(
     
     match state.config.add_user(node_id, body.uuid.clone(), body.st, body.dt).await {
         Ok(user) => {
-            // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
                 let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+
+                if sync {
+                    let wait_start = Instant::now();
+                    info!(
+                        "[admin:add_user] waiting node pull: node_id={} action=user timeout={}s",
+                        node_id, sync_timeout
+                    );
+                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                        error!(
+                            "[admin:add_user] node pull timeout node_id={} action=user elapsed={:?} err={}",
+                            node_id,
+                            wait_start.elapsed(),
+                            e
+                        );
+                        let _ = state.config.delete_user(node_id, user.id).await;
+                        let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+                        let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+                        let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
+                        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }));
+                    }
+                    info!(
+                        "[admin:add_user] node pull confirmed: node_id={} action=user elapsed={:?}",
+                        node_id,
+                        wait_start.elapsed()
+                    );
+                }
+            } else if sync {
+                return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "MQTT 未连接，无法启用 sync"
+                }));
             }
-            
+
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
                 "data": user,
@@ -676,9 +729,41 @@ pub async fn add_user(
             }))
         }
         Err(_e) => {
-            // 用户已存在，尝试查找并返回
             if let Ok(users) = state.config.get_users(node_id).await {
                 if let Some(user) = users.iter().find(|u| u.uuid == body.uuid).cloned() {
+                    if let Some(ref mqtt_client) = state.mqtt_client {
+                        let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+                        if sync {
+                            let wait_start = Instant::now();
+                            info!(
+                                "[admin:add_user] waiting existing user pull: node_id={} uuid={} timeout={}s",
+                                node_id, body.uuid, sync_timeout
+                            );
+                            if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                                error!(
+                                    "[admin:add_user] node pull timeout for existing user: node_id={} elapsed={:?} err={}",
+                                    node_id,
+                                    wait_start.elapsed(),
+                                    e
+                                );
+                                return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+                                    "msg": "error",
+                                    "error": e
+                                }));
+                            }
+                            info!(
+                                "[admin:add_user] node pull confirmed for existing user: node_id={} elapsed={:?}",
+                                node_id,
+                                wait_start.elapsed()
+                            );
+                        }
+                    } else if sync {
+                        return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": "MQTT 未连接，无法启用 sync"
+                        }));
+                    }
+
                     return HttpResponse::Ok().json(&serde_json::json!({
                         "msg": "ok",
                         "data": user,
@@ -748,7 +833,13 @@ pub async fn delete_user(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+
     let id = path.into_inner();
+    let (sync, sync_timeout) = parse_sync_from_query(&params);
+    info!(
+        "[admin:delete_user] node_id={} user_id={} sync={} timeout={}s",
+        node_id, id, sync, sync_timeout
+    );
     
     match state.config.delete_user(node_id, id).await {
         Ok(_) => {
@@ -757,6 +848,58 @@ pub async fn delete_user(
                 let _ = mqtt_client.publish_update_notification(node_id, "user").await;
                 let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
                 let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+
+                if sync {
+                    let wait_start = Instant::now();
+                    info!(
+                        "[admin:delete_user] waiting node pull: node_id={} action=user timeout={}s",
+                        node_id, sync_timeout
+                    );
+                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                        error!(
+                            "[admin:delete_user] node pull timeout action=user node_id={} elapsed={:?} err={}",
+                            node_id,
+                            wait_start.elapsed(),
+                            e
+                        );
+                        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }));
+                    }
+                    info!(
+                        "[admin:delete_user] node pull confirmed: node_id={} action=user elapsed={:?}",
+                        node_id,
+                        wait_start.elapsed()
+                    );
+                    let wait_start = Instant::now();
+                    info!(
+                        "[admin:delete_user] waiting node pull: node_id={} action=outbound timeout={}s",
+                        node_id, sync_timeout
+                    );
+                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
+                        error!(
+                            "[admin:delete_user] node pull timeout action=outbound node_id={} elapsed={:?} err={}",
+                            node_id,
+                            wait_start.elapsed(),
+                            e
+                        );
+                        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }));
+                    }
+                    info!(
+                        "[admin:delete_user] node pull confirmed: node_id={} action=outbound elapsed={:?}",
+                        node_id,
+                        wait_start.elapsed()
+                    );
+                }
+            } else if sync {
+                return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "MQTT 未连接，无法启用 sync"
+                }));
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1152,12 +1295,48 @@ pub async fn add_mapping(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+
+    let (sync, sync_timeout) = parse_sync_from_query(&params);
+    info!(
+        "[admin:add_mapping] node_id={} uuid={} outbound_tag={} sync={} timeout={}s",
+        node_id, body.uuid, body.outbound_tag, sync, sync_timeout
+    );
     
     match state.config.add_mapping(node_id, body.uuid.clone(), body.outbound_tag.clone()).await {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {
                 let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+
+                if sync {
+                    let wait_start = Instant::now();
+                    info!(
+                        "[admin:add_mapping] waiting node pull: node_id={} action=outbound timeout={}s",
+                        node_id, sync_timeout
+                    );
+                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
+                        error!(
+                            "[admin:add_mapping] node pull timeout node_id={} action=outbound elapsed={:?} err={}",
+                            node_id,
+                            wait_start.elapsed(),
+                            e
+                        );
+                        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+                            "msg": "error",
+                            "error": e
+                        }));
+                    }
+                    info!(
+                        "[admin:add_mapping] node pull confirmed: node_id={} action=outbound elapsed={:?}",
+                        node_id,
+                        wait_start.elapsed()
+                    );
+                }
+            } else if sync {
+                return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "MQTT 未连接，无法启用 sync"
+                }));
             }
             
             let mut data = serde_json::Map::new();
