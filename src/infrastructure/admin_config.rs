@@ -1103,6 +1103,14 @@ impl AdminConfigStore {
     
     /// 处理流量上报
     pub async fn handle_traffic_report(&self, node_id: u64, data_array: &Vec<Value>) -> Result<(), String> {
+        let now = Utc::now();
+        let _ = admin_node_config::Entity::update_many()
+            .col_expr(admin_node_config::Column::IsOnline, Expr::value(true))
+            .col_expr(admin_node_config::Column::LastSeenAt, Expr::value(now))
+            .filter(admin_node_config::Column::NodeId.eq(node_id))
+            .exec(&self.db)
+            .await;
+
         for item in data_array {
             let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
             let upload = item
@@ -1156,6 +1164,14 @@ impl AdminConfigStore {
     
     /// 处理节点状态上报
     pub async fn handle_node_status_report(&self, node_id: u64, status_data: &Value) -> Result<(), String> {
+        let now_seen = Utc::now();
+        let _ = admin_node_config::Entity::update_many()
+            .col_expr(admin_node_config::Column::IsOnline, Expr::value(true))
+            .col_expr(admin_node_config::Column::LastSeenAt, Expr::value(now_seen))
+            .filter(admin_node_config::Column::NodeId.eq(node_id))
+            .exec(&self.db)
+            .await;
+
         // 解析使用率（兼容字符串格式 "50%" 和数值格式 0.5）
         let cpu = Self::parse_percentage(status_data.get("cpu")).unwrap_or(0.0).clamp(0.0, 1.0);
         let mem = Self::parse_percentage(status_data.get("mem")).unwrap_or(0.0).clamp(0.0, 1.0);
@@ -1228,6 +1244,14 @@ impl AdminConfigStore {
     pub async fn handle_online_users_report(&self, node_id: u64, users_array: &Vec<Value>) -> Result<(), String> {
         let mut online_count = 0;
         let now = Utc::now();
+
+        let _ = admin_node_config::Entity::update_many()
+            .col_expr(admin_node_config::Column::IsOnline, Expr::value(true))
+            .col_expr(admin_node_config::Column::LastSeenAt, Expr::value(now))
+            .filter(admin_node_config::Column::NodeId.eq(node_id))
+            .exec(&self.db)
+            .await;
+
         let mut refreshed_sessions: u64 = 0;
         
         for item in users_array {

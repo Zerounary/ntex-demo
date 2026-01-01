@@ -22,7 +22,7 @@ use crate::infrastructure::persistence::repositories::{
 };
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, acceleration_session,
-    accelerator_user, accelerator_user_credential, accelerator_user_session,
+    accelerator_user, accelerator_user_credential, accelerator_user_session, admin_node_config,
 };
 
 use super::AppState;
@@ -349,6 +349,35 @@ pub async fn session_start(
             "remaining minutes is insufficient".to_string(),
         )
         .into_http(StatusCode::FORBIDDEN));
+    }
+
+    // 节点离线时禁止启动（避免误停已有 active session）
+    let node_cfg = admin_node_config::Entity::find_by_id(node_id)
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    let offline_after_seconds = env::var("NODE_OFFLINE_AFTER_SECONDS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(60)
+        .max(1);
+    let offline_threshold = chrono::Utc::now() - chrono::Duration::seconds(offline_after_seconds);
+
+    let is_online = node_cfg.as_ref().map(|n| n.is_online).unwrap_or(false);
+    let last_seen_at = node_cfg.as_ref().and_then(|n| n.last_seen_at);
+    let is_fresh = last_seen_at.map(|ts| ts >= offline_threshold).unwrap_or(false);
+
+    if !is_online || !is_fresh {
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "NODE_OFFLINE",
+            format!("node {} is offline", node_id),
+        )
+        .into_http(StatusCode::SERVICE_UNAVAILABLE));
     }
 
     // 单用户同一时刻只允许一个 active 会话：存在则先 stop（best effort）
