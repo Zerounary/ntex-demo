@@ -39,7 +39,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
     let node_count = accelerator_node::Entity::find().count(db).await?;
     if node_count == 0 {
         let nodes = vec![accelerator_node::ActiveModel {
-            id: Set("node-chrome-test".to_string()),
+            id: Set("1".to_string()),
             vmess_uuid: Set("9acea125-3ca7-1212-2121-000000010135".to_string()),
             vmess_server: Set("123.206.203.43".to_string()),
             vmess_port: Set(11111),
@@ -62,7 +62,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             id: Set("profile-chrome-test".to_string()),
             game_id: Set("7".to_string()),
             display_name: Set("Chrome · 调试隧道".to_string()),
-            node_id: Set("node-chrome-test".to_string()),
+            node_id: Set("1".to_string()),
             status: Set("空闲".to_string()),
         }];
 

@@ -98,6 +98,7 @@ impl From<BootstrapPayload> for AcceleratorBootstrapVO {
                     id: p.id,
                     game_id: p.game_id,
                     display_name: p.display_name,
+                    node_id: p.node_id,
                     process_name: game.process_name.clone(),
                     vmess_uuid: node.vmess_uuid.clone(),
                     vmess_server: node.vmess_server.clone(),
@@ -148,6 +149,8 @@ pub struct ProfileVO {
     pub id: String,
     pub game_id: String,
     pub display_name: String,
+    #[serde(default)]
+    pub node_id: String,
     pub process_name: String,
     pub vmess_uuid: String,
     pub vmess_server: String,
@@ -332,14 +335,13 @@ impl From<CdkGenerateRequestVO> for CdkGenerateRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CdkRedeemRequestVO {
     pub code: String,
-    pub user_id: String,
 }
 
 impl From<CdkRedeemRequestVO> for CdkRedeemRequest {
     fn from(value: CdkRedeemRequestVO) -> Self {
         Self {
             code: value.code,
-            user_id: value.user_id,
+            user_id: "".to_string(), // This will be overridden in the handler
         }
     }
 }

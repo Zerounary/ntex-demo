@@ -896,7 +896,9 @@ pub async fn redeem_cdk(
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-    let response = usecase.redeem_cdk(body.into()).await?;
+    let mut request: crate::domain::cdk::CdkRedeemRequest = body.into();
+    request.user_id = user.user.id.clone();
+    let response = usecase.redeem_cdk(request).await?;
     Ok(ApiResponse::success(CdkRedeemResponseVO::from(response)).into_http(StatusCode::OK))
 }
 
