@@ -213,8 +213,8 @@ async fn run_minute_billing_daemon(
                 }
             }
 
-            let last_activity_ts = last_seen.unwrap_or(now);
-            if last_seen.is_none() || last_activity_ts < online_cutoff {
+            let last_activity_ts = last_seen.clone().unwrap_or(last_activity_at);
+            if last_activity_ts < online_cutoff {
                 // 认为用户已不在线，停止会话（timeout/offline stop）
                 let updated = match acceleration_session::Entity::update_many()
                     .col_expr(acceleration_session::Column::Status, Expr::value("stopped"))
@@ -237,6 +237,15 @@ async fn run_minute_billing_daemon(
                 };
 
                 if updated > 0 {
+                    info!(
+                        "[billing] offline stop: session_id={}, node_id={}, admin_user_id={}, last_seen={:?}, last_activity_ts={}, online_cutoff={} ",
+                        session_id,
+                        node_id,
+                        admin_user_id,
+                        last_seen,
+                        last_activity_ts,
+                        online_cutoff
+                    );
                     let _ = admin_config.delete_user(node_id, admin_user_id).await;
                     let _ = mqtt.publish_update_notification(node_id, "user").await;
                     let _ = mqtt.publish_update_notification(node_id, "outbound").await;

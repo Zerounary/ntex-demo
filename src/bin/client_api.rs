@@ -15,13 +15,14 @@ use infrastructure::{admin_config, database, seed};
 use interface::web;
 use interface::web::AppState;
 use log::{error, info, warn};
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use crate::config::AppConfig;
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
+    ensure_rustls_crypto_provider();
 
     let default_filter = "info,rumqttd::router::routing=off,rumqttd=off";
     env_logger::Builder::from_env(Env::default().default_filter_or(default_filter)).init();
@@ -86,4 +87,13 @@ async fn main() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+fn ensure_rustls_crypto_provider() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("failed to install rustls ring crypto provider");
+    });
 }
