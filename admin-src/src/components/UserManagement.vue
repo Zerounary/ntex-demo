@@ -8,13 +8,24 @@
         </h2>
         <p class="text-sm text-gray-500 mt-1">Configure node users and limits</p>
       </div>
-      <button
-        @click="showAddForm = true"
-        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
-      >
-        <div class="i-carbon-add text-lg"></div>
-        <span>Add User</span>
-      </button>
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
+          @click="refreshUsers"
+          :disabled="refreshing"
+          title="Refresh"
+        >
+          <div class="i-carbon-renew w-5 h-5" :class="refreshing ? 'animate-spin' : ''"></div>
+        </button>
+        <button
+          @click="showAddForm = true"
+          class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+        >
+          <div class="i-carbon-add text-lg"></div>
+          <span>Add User</span>
+        </button>
+      </div>
     </div>
 
     <!-- 加载状态 -->
@@ -163,12 +174,28 @@ const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingUser = ref<User | null>(null);
+const refreshing = ref(false);
 
 onMounted(() => {
   if (nodeStore.currentNodeId) {
     adminStore.fetchUsers(nodeStore.currentNodeId);
   }
 });
+
+const refreshUsers = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await adminStore.fetchUsers(id);
+    if (adminStore.usersError) {
+      toastStore.error(adminStore.usersError);
+    }
+  } finally {
+    refreshing.value = false;
+  }
+};
 
 const editUser = (user: User) => {
   editingUser.value = user;

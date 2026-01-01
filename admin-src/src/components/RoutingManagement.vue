@@ -8,13 +8,24 @@
         </h2>
         <p class="text-sm text-gray-500 mt-1">Configure traffic routing rules</p>
       </div>
-      <button
-        @click="showAddRuleForm = true"
-        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
-      >
-        <div class="i-carbon-add text-lg"></div>
-        <span>Add Rule</span>
-      </button>
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
+          @click="refreshRouting"
+          :disabled="refreshing"
+          title="Refresh"
+        >
+          <div class="i-carbon-renew w-5 h-5" :class="refreshing ? 'animate-spin' : ''"></div>
+        </button>
+        <button
+          @click="showAddRuleForm = true"
+          class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+        >
+          <div class="i-carbon-add text-lg"></div>
+          <span>Add Rule</span>
+        </button>
+      </div>
     </div>
 
     <!-- 加载状态 -->
@@ -168,6 +179,7 @@ const toastStore = useToastStore();
 const showAddRuleForm = ref(false);
 const editingRuleIndex = ref<number | null>(null);
 const domainStrategy = ref('AsIs');
+const refreshing = ref(false);
 
 const domainStrategyOptions = [
   { label: 'AsIs', value: 'AsIs' },
@@ -186,6 +198,21 @@ onMounted(() => {
     adminStore.fetchRouting(nodeStore.currentNodeId);
   }
 });
+
+const refreshRouting = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await adminStore.fetchRouting(id);
+    if (adminStore.routingError) {
+      toastStore.error(adminStore.routingError);
+    }
+  } finally {
+    refreshing.value = false;
+  }
+};
 
 watch(
   () => adminStore.routing,

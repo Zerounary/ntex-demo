@@ -7,13 +7,24 @@
         </h2>
         <p class="text-sm text-gray-500 mt-1">Manage inbound listeners</p>
       </div>
-      <button
-        @click="showAddForm = true"
-        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
-      >
-        <div class="i-carbon-add text-lg"></div>
-        <span>Add Inbound</span>
-      </button>
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
+          @click="refreshInbounds"
+          :disabled="refreshing"
+          title="Refresh"
+        >
+          <div class="i-carbon-renew w-5 h-5" :class="refreshing ? 'animate-spin' : ''"></div>
+        </button>
+        <button
+          @click="showAddForm = true"
+          class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+        >
+          <div class="i-carbon-add text-lg"></div>
+          <span>Add Inbound</span>
+        </button>
+      </div>
     </div>
 
     <div v-if="adminStore.inboundsLoading" class="flex items-center justify-center py-20">
@@ -138,6 +149,7 @@ const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingInbound = ref<InboundConfig | null>(null);
+const refreshing = ref(false);
 
 const formatInboundConfig = (inbound: InboundConfig) => {
   const config: Record<string, unknown> = {
@@ -166,6 +178,21 @@ onMounted(() => {
     adminStore.fetchInbounds(nodeStore.currentNodeId);
   }
 });
+
+const refreshInbounds = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await adminStore.fetchInbounds(id);
+    if (adminStore.inboundsError) {
+      toastStore.error(adminStore.inboundsError);
+    }
+  } finally {
+    refreshing.value = false;
+  }
+};
 
 const editInbound = (inbound: InboundConfig) => {
   editingInbound.value = inbound;

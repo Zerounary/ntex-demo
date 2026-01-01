@@ -8,13 +8,24 @@
         </h2>
         <p class="text-sm text-gray-500 mt-1">Map users to specific outbound proxies</p>
       </div>
-      <button
-        @click="showAddForm = true"
-        class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
-      >
-        <div class="i-carbon-add text-lg"></div>
-        <span>Add Mapping</span>
-      </button>
+      <div class="flex items-center gap-3">
+        <button
+          type="button"
+          class="w-9 h-9 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 hover:bg-gray-100/50 transition-colors disabled:opacity-50"
+          @click="refreshMapping"
+          :disabled="refreshing"
+          title="Refresh"
+        >
+          <div class="i-carbon-renew w-5 h-5" :class="refreshing ? 'animate-spin' : ''"></div>
+        </button>
+        <button
+          @click="showAddForm = true"
+          class="btn-primary flex items-center gap-2 shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+        >
+          <div class="i-carbon-add text-lg"></div>
+          <span>Add Mapping</span>
+        </button>
+      </div>
     </div>
 
     <!-- 加载状态 -->
@@ -167,6 +178,7 @@ const toastStore = useToastStore();
 
 const showAddForm = ref(false);
 const editingUuid = ref<string | null>(null);
+const refreshing = ref(false);
 
 const form = ref({
   uuid: '',
@@ -185,6 +197,21 @@ onMounted(() => {
     adminStore.fetchOutbounds(nodeStore.currentNodeId);
   }
 });
+
+const refreshMapping = async () => {
+  const id = nodeStore.currentNodeId;
+  if (!id) return;
+  if (refreshing.value) return;
+  refreshing.value = true;
+  try {
+    await adminStore.fetchOutbounds(id);
+    if (adminStore.outboundsError) {
+      toastStore.error(adminStore.outboundsError);
+    }
+  } finally {
+    refreshing.value = false;
+  }
+};
 
 const editMapping = (uuid: string, outboundTag: string) => {
   editingUuid.value = uuid;
