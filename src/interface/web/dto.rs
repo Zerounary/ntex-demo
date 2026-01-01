@@ -401,13 +401,12 @@ impl From<CdkCode> for CdkCodeVO {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountValidationRequestVO {
-    pub user_id: String,
 }
 
 impl From<AccountValidationRequestVO> for AccountValidationRequest {
-    fn from(value: AccountValidationRequestVO) -> Self {
+    fn from(_value: AccountValidationRequestVO) -> Self {
         Self {
-            user_id: value.user_id,
+            user_id: "".to_string(), // This will be overridden in the handler
         }
     }
 }

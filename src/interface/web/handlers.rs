@@ -16,6 +16,7 @@ use crate::application::cdk_usecase::CdkUseCase;
 use crate::application::content_usecase::ContentUseCase;
 use crate::application::node_usecase::NodeUseCase;
 use crate::application::errors::UsecaseError;
+use crate::domain::cdk::AccountValidationRequest;
 use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
     NodeRepositoryImpl,
@@ -330,10 +331,9 @@ pub async fn session_start(
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
 
     let validation = usecase
-        .validate_account(AccountValidationRequestVO {
+        .validate_account(AccountValidationRequest {
             user_id: user_id.clone(),
-        }
-        .into())
+        })
         .await?;
 
     if !validation.is_valid {
@@ -890,6 +890,7 @@ pub async fn generate_cdks(
 #[web::post("/cdk/redeem")]
 pub async fn redeem_cdk(
     state: State<AppState>,
+    user: AuthedAcceleratorUser,
     Json(body): Json<CdkRedeemRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
@@ -916,12 +917,17 @@ pub async fn list_cdks(
 #[web::post("/account/validate")]
 pub async fn validate_account(
     state: State<AppState>,
+    user: AuthedAcceleratorUser,
     Json(body): Json<AccountValidationRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-    let response = usecase.validate_account(body.into()).await?;
+    
+    let mut request: AccountValidationRequest = body.into();
+    request.user_id = user.user.id.clone();
+    
+    let response = usecase.validate_account(request).await?;
     Ok(ApiResponse::success(AccountValidationResponseVO::from(response)).into_http(StatusCode::OK))
 }
 
@@ -987,13 +993,18 @@ pub async fn accelerator_user_logout(
 #[web::post("/accelerator/start")]
 pub async fn start_acceleration(
     state: State<AppState>,
+    user: AuthedAcceleratorUser,
     Json(body): Json<AccountValidationRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     // ... (rest of the code remains the same)
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-    let validation = usecase.validate_account(body.into()).await?;
+    
+    let mut request: AccountValidationRequest = body.into();
+    request.user_id = user.user.id.clone();
+    
+    let validation = usecase.validate_account(request).await?;
 
     if !validation.is_valid {
         return Ok(ApiResponse::<MessageResponse>::error(
