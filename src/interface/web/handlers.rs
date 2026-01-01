@@ -5,6 +5,7 @@ use ntex::web::{self, HttpResponse};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 use log::{info, error};
@@ -69,6 +70,17 @@ struct AdminAddUserRequest {
 struct AdminAddMappingRequest {
     pub uuid: String,
     pub outbound_tag: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminOutboundConfigDTO {
+    pub tag: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct AdminOutboundsDataDTO {
+    #[serde(default)]
+    pub outbounds: Vec<AdminOutboundConfigDTO>,
 }
 
 fn main_admin_base_url() -> String {
@@ -204,6 +216,47 @@ async fn main_admin_add_mapping(
     Ok(())
 }
 
+async fn main_admin_get_outbound_tags(node_id: u64) -> Result<Vec<String>, UsecaseError> {
+    let base = main_admin_base_url();
+    let client = reqwest::Client::new();
+    let mut req = client
+        .get(format!("{}/api/admin/query", base))
+        .query(&[
+            ("node_id", node_id.to_string()),
+            ("act", "outbound".to_string()),
+        ]);
+    if let Some(token) = main_admin_token() {
+        req = req.header("X-Admin-Token", token);
+    }
+    let resp = req.send().await.map_err(|e| {
+        error!(
+            "[session_start] admin query outbounds request failed: node_id={}, err={}",
+            node_id, e
+        );
+        UsecaseError::Validation(format!("main_admin query outbounds request failed: {}", e))
+    })?;
+    let status = resp.status();
+    let payload = resp
+        .json::<AdminApiResponse<AdminOutboundsDataDTO>>()
+        .await
+        .map_err(|e| {
+            UsecaseError::Validation(format!("main_admin query outbounds invalid response: {}", e))
+        })?;
+
+    if !status.is_success() || payload.msg != "ok" {
+        error!(
+            "[session_start] admin query outbounds failed: status={} msg={} error={:?}",
+            status, payload.msg, payload.error
+        );
+        return Err(UsecaseError::Validation(format!(
+            "main_admin query outbounds failed: status={}, msg={}, error={:?}",
+            status, payload.msg, payload.error
+        )));
+    }
+    let data = payload.data.unwrap_or_default();
+    Ok(data.outbounds.into_iter().map(|o| o.tag).collect())
+}
+
 async fn main_admin_delete_user(node_id: u64, admin_user_id: u64) -> Result<(), UsecaseError> {
     let base = main_admin_base_url();
     info!(
@@ -269,7 +322,7 @@ pub async fn session_start(
     let user_id = body.user_id;
     let game_id = body.game_id;
     let node_id = body.node_id;
-    let outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
+    let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
 
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
@@ -328,13 +381,60 @@ pub async fn session_start(
     let admin_user_id = admin_user.id;
     let admin_uuid = admin_user.uuid;
 
+    let outbounds = main_admin_get_outbound_tags(node_id).await?;
+    let mut candidates: Vec<String> = outbounds
+        .into_iter()
+        .filter(|t| t != "block" && t != "direct" && t != "vmess_loopback")
+        .collect();
+    candidates.sort();
+
+    let mapped_outbound_tag = if candidates.iter().any(|t| t == &desired_outbound_tag) {
+        desired_outbound_tag.clone()
+    } else {
+        let active_sessions = acceleration_session::Entity::find()
+            .filter(acceleration_session::Column::NodeId.eq(node_id))
+            .filter(acceleration_session::Column::Status.eq("active"))
+            .all(&state.db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
+
+        let mut counts: HashMap<String, u64> = HashMap::new();
+        for s in active_sessions {
+            *counts.entry(s.outbound_tag).or_insert(0) += 1;
+        }
+
+        let mut best_tag: Option<String> = None;
+        let mut best_count: u64 = u64::MAX;
+        for t in &candidates {
+            let c = counts.get(t).copied().unwrap_or(0);
+            if c < best_count {
+                best_count = c;
+                best_tag = Some(t.clone());
+            }
+        }
+
+        best_tag.ok_or_else(|| {
+            UsecaseError::Validation(format!(
+                "no available outbound tag for node_id={} (excluded block/direct/vmess_loopback)",
+                node_id
+            ))
+        })?
+    };
+
+    info!(
+        "[session_start] selected outbound_tag: node_id={} desired={} selected={}",
+        node_id, desired_outbound_tag, mapped_outbound_tag
+    );
+
     // 2) 调用 main.rs Admin HTTP：下发映射（add_mapping）
-    main_admin_add_mapping(node_id, admin_uuid.clone(), outbound_tag.clone()).await?;
+    main_admin_add_mapping(node_id, admin_uuid.clone(), mapped_outbound_tag.clone()).await?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
-
-    let mapped_outbound_tag = outbound_tag;
 
     let bill_type = validation.billing_mode.clone();
 

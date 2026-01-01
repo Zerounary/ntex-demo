@@ -12,6 +12,7 @@ use crate::infrastructure::persistence::{
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
     node_outbound_event_log, node_outbound_latency_log,
 };
+use log::{info, warn};
 
 /// 用户配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1218,6 +1219,8 @@ impl AdminConfigStore {
     /// 处理在线用户上报
     pub async fn handle_online_users_report(&self, node_id: u64, users_array: &Vec<Value>) -> Result<(), String> {
         let mut online_count = 0;
+        let now = Utc::now();
+        let mut refreshed_sessions: u64 = 0;
         
         for item in users_array {
             let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1228,6 +1231,33 @@ impl AdminConfigStore {
             }
             
             online_count += 1;
+
+            let updated = match crate::infrastructure::persistence::acceleration_session::Entity::update_many()
+                .col_expr(
+                    crate::infrastructure::persistence::acceleration_session::Column::LastActivityAt,
+                    Expr::value(now),
+                )
+                .col_expr(
+                    crate::infrastructure::persistence::acceleration_session::Column::UpdatedAt,
+                    Expr::value(now),
+                )
+                .filter(crate::infrastructure::persistence::acceleration_session::Column::NodeId.eq(node_id))
+                .filter(crate::infrastructure::persistence::acceleration_session::Column::AdminUserId.eq(user_id))
+                .filter(crate::infrastructure::persistence::acceleration_session::Column::Status.eq("active"))
+                .filter(crate::infrastructure::persistence::acceleration_session::Column::BillType.eq("minute"))
+                .exec(&self.db)
+                .await
+            {
+                Ok(r) => r.rows_affected,
+                Err(e) => {
+                    warn!(
+                        "[onlineusers] refresh session activity failed: node_id={}, admin_user_id={}, err={}",
+                        node_id, user_id, e
+                    );
+                    0
+                }
+            };
+            refreshed_sessions += updated;
             
             // 检查上一条记录是否有变化（比较 user_id 和 user_ip）
             let should_insert = if let Ok(Some(last_log)) = node_online_user_log::Entity::find()
@@ -1258,6 +1288,15 @@ impl AdminConfigStore {
             
             node_online_user_log::Entity::insert(log).exec(&self.db).await
                 .map_err(|e| format!("存储在线用户记录失败: {}", e))?;
+        }
+
+        if refreshed_sessions > 0 {
+            info!(
+                "[onlineusers] heartbeat refreshed: node_id={} snapshot_users={} refreshed_sessions={}",
+                node_id,
+                users_array.len(),
+                refreshed_sessions
+            );
         }
         
         // 更新节点配置表的在线用户数

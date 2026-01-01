@@ -18,7 +18,9 @@ use std::sync::{Arc, Once};
 
 use crate::config::AppConfig;
 
-use crate::infrastructure::persistence::{acceleration_session, node_online_user_log, user_wallet};
+use crate::infrastructure::persistence::{
+    acceleration_session, node_online_user_log, node_traffic_log, user_wallet,
+};
 
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
@@ -153,6 +155,11 @@ async fn run_minute_billing_daemon(
         .and_then(|v| v.parse().ok())
         .unwrap_or(90);
 
+    let connect_grace_seconds: i64 = env::var("BILLING_CONNECT_GRACE_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(180);
+
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(tick_seconds));
 
     loop {
@@ -182,6 +189,7 @@ async fn run_minute_billing_daemon(
             let user_id = session.user_id.clone();
             let last_accounted_at: chrono::DateTime<chrono::Utc> = session.last_accounted_at.into();
             let last_activity_at: chrono::DateTime<chrono::Utc> = session.last_activity_at.into();
+            let started_at: chrono::DateTime<chrono::Utc> = session.started_at.into();
 
             // 基于节点 onlineusers 上报判断是否仍在线（不依赖客户端上报）
             let last_seen: Option<chrono::DateTime<chrono::Utc>> = match node_online_user_log::Entity::find()
@@ -201,19 +209,89 @@ async fn run_minute_billing_daemon(
                 }
             };
 
-            if let Some(last_seen_ts) = last_seen.clone() {
-                if last_seen_ts > last_activity_at {
-                    let mut s = acceleration_session::ActiveModel {
-                        session_id: Set(session_id.clone()),
-                        ..Default::default()
-                    };
-                    s.last_activity_at = Set(last_seen_ts.into());
-                    s.updated_at = Set(now.into());
-                    let _ = s.update(&db).await;
+            let started_at_db: sea_orm::prelude::DateTimeUtc = started_at.into();
+            let has_traffic = match node_traffic_log::Entity::find()
+                .filter(node_traffic_log::Column::NodeId.eq(node_id))
+                .filter(node_traffic_log::Column::UserId.eq(admin_user_id))
+                .filter(node_traffic_log::Column::CreatedAt.gte(started_at_db))
+                .order_by_desc(node_traffic_log::Column::CreatedAt)
+                .one(&db)
+                .await
+            {
+                Ok(Some(m)) => m.upload > 0 || m.download > 0,
+                Ok(None) => false,
+                Err(e) => {
+                    warn!(
+                        "[billing] query traffic log failed: session_id={}, err={}",
+                        session_id, e
+                    );
+                    false
                 }
+            };
+
+            let last_activity_ts = match last_seen.clone() {
+                Some(last_seen_ts) => {
+                    if last_seen_ts > last_activity_at {
+                        let mut s = acceleration_session::ActiveModel {
+                            session_id: Set(session_id.clone()),
+                            ..Default::default()
+                        };
+                        s.last_activity_at = Set(last_seen_ts.into());
+                        s.updated_at = Set(now.into());
+                        let _ = s.update(&db).await;
+                        last_seen_ts
+                    } else {
+                        last_activity_at
+                    }
+                }
+                None => last_activity_at,
+            };
+
+            let unconfirmed_tolerance = chrono::Duration::seconds(2);
+            let confirmed_usage = has_traffic
+                || last_seen.is_some()
+                || last_activity_ts > started_at + unconfirmed_tolerance;
+
+            if !confirmed_usage {
+                let connect_deadline = started_at + chrono::Duration::seconds(connect_grace_seconds);
+                if now < connect_deadline {
+                    continue;
+                }
+
+                let updated = match acceleration_session::Entity::update_many()
+                    .col_expr(acceleration_session::Column::Status, Expr::value("stopped"))
+                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
+                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
+                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
+                    .filter(acceleration_session::Column::Status.eq("active"))
+                    .exec(&db)
+                    .await
+                {
+                    Ok(r) => r.rows_affected,
+                    Err(e) => {
+                        warn!(
+                            "[billing] no-connect stop update failed: session_id={}, err={}",
+                            session_id, e
+                        );
+                        0
+                    }
+                };
+
+                if updated > 0 {
+                    let _ = admin_config.delete_user(node_id, admin_user_id).await;
+                    let _ = mqtt.publish_update_notification(node_id, "user").await;
+                    let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+                    let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+                    let _ = mqtt.publish_update_notification(node_id, "config").await;
+                    info!(
+                        "[billing] session stopped due to no-traffic: session_id={}, admin_user_id={}",
+                        session_id, admin_user_id
+                    );
+                }
+
+                continue;
             }
 
-            let last_activity_ts = last_seen.clone().unwrap_or(last_activity_at);
             if last_activity_ts < online_cutoff {
                 // 认为用户已不在线，停止会话（timeout/offline stop）
                 let updated = match acceleration_session::Entity::update_many()
