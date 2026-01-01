@@ -415,7 +415,6 @@ impl From<AccountValidationRequestVO> for AccountValidationRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartRequestVO {
-    pub user_id: String,
     pub game_id: String,
     pub node_id: u64,
 }

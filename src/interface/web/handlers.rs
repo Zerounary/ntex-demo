@@ -317,9 +317,10 @@ pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpRespons
 #[web::post("/accelerator/session/start")]
 pub async fn session_start(
     state: State<AppState>,
+    user: AuthedAcceleratorUser,
     Json(body): Json<SessionStartRequestVO>,
 ) -> Result<HttpResponse, AppError> {
-    let user_id = body.user_id;
+    let user_id = user.user.id;
     let game_id = body.game_id;
     let node_id = body.node_id;
     let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
@@ -509,6 +510,7 @@ pub async fn session_start(
 #[web::post("/accelerator/session/stop")]
 pub async fn session_stop(
     state: State<AppState>,
+    user: AuthedAcceleratorUser,
     Json(body): Json<SessionStopRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     let Some(model) = acceleration_session::Entity::find_by_id(body.session_id.clone())
@@ -518,6 +520,10 @@ pub async fn session_stop(
     else {
         return Err(UsecaseError::NotFound("session").into());
     };
+
+    if model.user_id != user.user.id {
+        return Err(UsecaseError::Unauthorized.into());
+    }
 
     if model.status != "active" {
         return Ok(ApiResponse::success(SessionStopResponseVO {
