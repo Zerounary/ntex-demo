@@ -1105,8 +1105,16 @@ impl AdminConfigStore {
     pub async fn handle_traffic_report(&self, node_id: u64, data_array: &Vec<Value>) -> Result<(), String> {
         for item in data_array {
             let user_id = item.get("uid").and_then(|v| v.as_u64()).unwrap_or(0);
-            let upload = item.get("upload").and_then(|v| v.as_u64()).unwrap_or(0);
-            let download = item.get("download").and_then(|v| v.as_u64()).unwrap_or(0);
+            let upload = item
+                .get("upload")
+                .or_else(|| item.get("u"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let download = item
+                .get("download")
+                .or_else(|| item.get("d"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
             
             if user_id == 0 {
                 continue;
