@@ -69,7 +69,7 @@ pub struct AcceleratorUserChangePasswordRequestVO {
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorBootstrapVO {
     pub games: Vec<GameVO>,
-    pub profiles: Vec<ProfileVO>,
+    pub profiles: Vec<ProfileListVO>,
     pub user: Option<UserVO>,
 }
 
@@ -87,24 +87,18 @@ impl From<BootstrapPayload> for AcceleratorBootstrapVO {
             .map(|g| (g.id.clone(), g.clone()))
             .collect();
 
-        // 组装 ProfileVO，从 Profile + Node + Game 组合
-        let profiles: Vec<ProfileVO> = value
+        // 组装 ProfileListVO：仅用于前端节点列表展示（不包含 vmess_server 等敏感配置）
+        let profiles: Vec<ProfileListVO> = value
             .profiles
             .into_iter()
             .filter_map(|p| {
                 let node = node_map.get(&p.node_id)?;
                 let game = game_map.get(&p.game_id)?;
-                Some(ProfileVO {
+                Some(ProfileListVO {
                     id: p.id,
                     game_id: p.game_id,
                     display_name: p.display_name,
                     node_id: p.node_id,
-                    process_name: game.process_name.clone(),
-                    vmess_uuid: node.vmess_uuid.clone(),
-                    vmess_server: node.vmess_server.clone(),
-                    vmess_port: node.vmess_port,
-                    vmess_email: node.vmess_email.clone(),
-                    udp_proxy: node.udp_proxy.clone(),
                     mode: node.mode.clone(),
                     status: p.status,
                     region: game.region.clone(),
@@ -157,6 +151,20 @@ pub struct ProfileVO {
     pub vmess_port: i32,
     pub vmess_email: String,
     pub udp_proxy: String,
+    pub mode: String,
+    pub status: String,
+    pub region: String,
+    pub ping: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileListVO {
+    pub id: String,
+    pub game_id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub node_id: String,
     pub mode: String,
     pub status: String,
     pub region: String,
@@ -427,6 +435,7 @@ pub struct SessionStartResponseVO {
     pub uuid: String,
     pub bill_type: String,
     pub remaining_minutes: Option<i64>,
+    pub profile: ProfileVO,
 }
 
 #[derive(Debug, Deserialize)]

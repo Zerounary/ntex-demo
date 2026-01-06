@@ -22,8 +22,9 @@ use crate::infrastructure::persistence::repositories::{
     NodeRepositoryImpl,
 };
 use crate::infrastructure::persistence::{
-    accelerator_game, accelerator_game_node_binding, accelerator_node, acceleration_session,
-    accelerator_user, accelerator_user_credential, accelerator_user_session, admin_node_config,
+    accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile,
+    acceleration_session, accelerator_user, accelerator_user_credential, accelerator_user_session,
+    admin_node_config,
 };
 
 use super::AppState;
@@ -468,10 +469,11 @@ pub async fn session_start(
 
     let bill_type = validation.billing_mode.clone();
 
+    let game_id_clone = game_id.clone();
     let model = acceleration_session::ActiveModel {
         session_id: Set(session_id.clone()),
         user_id: Set(user_id),
-        game_id: Set(game_id),
+        game_id: Set(game_id_clone.clone()),
         node_id: Set(node_id),
         admin_user_id: Set(admin_user_id),
         uuid: Set(admin_uuid.clone()),
@@ -498,11 +500,62 @@ pub async fn session_start(
         None
     };
 
+    let node_id_str = node_id.to_string();
+    let profile = accelerator_profile::Entity::find()
+        .filter(accelerator_profile::Column::GameId.eq(game_id_clone.as_str()))
+        .filter(accelerator_profile::Column::NodeId.eq(node_id_str.as_str()))
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or_else(|| UsecaseError::NotFound("profile"))?;
+
+    let node = accelerator_node::Entity::find_by_id(node_id_str.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or_else(|| UsecaseError::NotFound("node"))?;
+
+    let game = accelerator_game::Entity::find_by_id(game_id_clone.clone())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or_else(|| UsecaseError::NotFound("game"))?;
+
+    let profile_vo = crate::interface::web::dto::ProfileVO {
+        id: profile.id,
+        game_id: profile.game_id,
+        display_name: profile.display_name,
+        node_id: profile.node_id,
+        process_name: game.process_name,
+        vmess_uuid: admin_uuid,
+        vmess_server: node.vmess_server,
+        vmess_port: node.vmess_port,
+        vmess_email: node.vmess_email,
+        udp_proxy: node.udp_proxy,
+        mode: node.mode,
+        status: profile.status,
+        region: game.region,
+        ping: node.ping,
+    };
+
     Ok(ApiResponse::success(SessionStartResponseVO {
         session_id,
-        uuid: admin_uuid,
+        uuid: profile_vo.vmess_uuid.clone(),
         bill_type,
         remaining_minutes,
+        profile: profile_vo,
     })
     .into_http(StatusCode::OK))
 }

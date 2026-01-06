@@ -41,10 +41,10 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
         let nodes = vec![accelerator_node::ActiveModel {
             id: Set("1".to_string()),
             vmess_uuid: Set("9acea125-3ca7-1212-2121-000000010135".to_string()),
-            vmess_server: Set("123.206.203.43".to_string()),
-            vmess_port: Set(11111),
+            vmess_server: Set("127.0.0.1".to_string()),
+            vmess_port: Set(10086),
             vmess_email: Set("lol-kr@acc.local".to_string()),
-            udp_proxy: Set("123.206.203.43:10810".to_string()),
+            udp_proxy: Set("127.0.0.1:10086".to_string()),
             mode: Set("进程模式".to_string()),
             ping: Set(5),
             status: Set("active".to_string()),
