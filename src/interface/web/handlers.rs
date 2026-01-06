@@ -2,7 +2,10 @@ use ntex::http::StatusCode;
 use ntex::web::types::{Json, Query, State};
 use ntex::web::{self, HttpResponse};
 
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -39,6 +42,7 @@ use super::dto::{
     SessionStartRequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
     AcceleratorUserRegisterRequestVO, AcceleratorUserLoginRequestVO, AcceleratorUserLoginResponseVO,
     AcceleratorUserUpdateProfileRequestVO, AcceleratorUserChangePasswordRequestVO, UserVO,
+    PagedResponseVO, SearchItemVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
@@ -314,6 +318,339 @@ pub async fn accelerator_bootstrap(state: State<AppState>) -> Result<HttpRespons
     let usecase = AcceleratorUseCase::new(repo, node_repo);
     let payload = usecase.bootstrap().await?;
     Ok(ApiResponse::success(AcceleratorBootstrapVO::from(payload)).into_http(StatusCode::OK))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GamesQuery {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    pub keyword: Option<String>,
+    pub region: Option<String>,
+    pub status: Option<String>,
+}
+
+#[web::get("/accelerator/games")]
+pub async fn accelerator_games(
+    state: State<AppState>,
+    Query(query): Query<GamesQuery>,
+) -> Result<HttpResponse, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(12).clamp(1, 100);
+
+    let mut cond = Condition::all();
+    if let Some(keyword) = query.keyword.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(
+            Condition::any()
+                .add(accelerator_game::Column::Name.contains(keyword))
+                .add(accelerator_game::Column::Region.contains(keyword))
+                .add(accelerator_game::Column::Status.contains(keyword))
+                .add(accelerator_game::Column::ProcessName.contains(keyword)),
+        );
+    }
+    if let Some(region) = query.region.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(accelerator_game::Column::Region.contains(region));
+    }
+    if let Some(status) = query.status.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(accelerator_game::Column::Status.eq(status));
+    }
+
+    let base = accelerator_game::Entity::find()
+        .filter(cond)
+        .order_by_desc(accelerator_game::Column::Id);
+
+    let total = base
+        .clone()
+        .count(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    let items = base
+        .paginate(&state.db, page_size)
+        .fetch_page(page - 1)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .into_iter()
+        .map(|m| crate::interface::web::dto::GameVO {
+            id: m.id,
+            name: m.name,
+            icon: m.icon,
+            status: m.status,
+            ping: m.ping,
+        })
+        .collect();
+
+    Ok(ApiResponse::success(PagedResponseVO {
+        items,
+        page,
+        page_size,
+        total,
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnouncementsQuery {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    pub keyword: Option<String>,
+}
+
+#[web::get("/dashboard/announcements")]
+pub async fn dashboard_announcements(
+    state: State<AppState>,
+    Query(query): Query<AnnouncementsQuery>,
+) -> Result<HttpResponse, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(10).clamp(1, 100);
+
+    let config = ConfigRepositoryImpl::new(&state.db);
+    let usecase = ContentUseCase::new(config);
+    let payload: DashboardVO = usecase.dashboard().await?;
+
+    let keyword = query.keyword.unwrap_or_default();
+    let keyword = keyword.trim().to_lowercase();
+
+    let mut items: Vec<crate::domain::content::Announcement> = payload
+        .announcements
+        .into_iter()
+        .filter(|a| {
+            if keyword.is_empty() {
+                return true;
+            }
+            a.title.to_lowercase().contains(&keyword)
+        })
+        .collect();
+
+    items.sort_by(|a, b| b.id.cmp(&a.id));
+    let total = items.len() as u64;
+    let start = ((page - 1) * page_size) as usize;
+    let end = (start + page_size as usize).min(items.len());
+    let page_items = if start >= items.len() {
+        vec![]
+    } else {
+        items[start..end].to_vec()
+    };
+
+    Ok(ApiResponse::success(PagedResponseVO {
+        items: page_items,
+        page,
+        page_size,
+        total,
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryGamesQuery {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+    pub category: Option<String>,
+    pub keyword: Option<String>,
+    pub region: Option<String>,
+    pub status: Option<String>,
+}
+
+#[web::get("/library/games")]
+pub async fn library_games(
+    state: State<AppState>,
+    Query(query): Query<LibraryGamesQuery>,
+) -> Result<HttpResponse, AppError> {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(24).clamp(1, 100);
+
+    let mut cond = Condition::all();
+    if let Some(keyword) = query.keyword.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(
+            Condition::any()
+                .add(accelerator_game::Column::Name.contains(keyword))
+                .add(accelerator_game::Column::Region.contains(keyword))
+                .add(accelerator_game::Column::Status.contains(keyword))
+                .add(accelerator_game::Column::ProcessName.contains(keyword)),
+        );
+    }
+    if let Some(region) = query.region.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(accelerator_game::Column::Region.contains(region));
+    }
+    if let Some(status) = query.status.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        cond = cond.add(accelerator_game::Column::Status.eq(status));
+    }
+    if let Some(category) = query.category.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        if category != "全部" {
+            cond = cond.add(
+                Condition::any()
+                    .add(accelerator_game::Column::Region.contains(category))
+                    .add(accelerator_game::Column::Name.contains(category)),
+            );
+        }
+    }
+
+    let base = accelerator_game::Entity::find()
+        .filter(cond)
+        .order_by_desc(accelerator_game::Column::Id);
+
+    let total = base
+        .clone()
+        .count(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    let items = base
+        .paginate(&state.db, page_size)
+        .fetch_page(page - 1)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .into_iter()
+        .map(|m| crate::interface::web::dto::GameVO {
+            id: m.id,
+            name: m.name,
+            icon: m.icon,
+            status: m.status,
+            ping: m.ping,
+        })
+        .collect();
+
+    Ok(ApiResponse::success(PagedResponseVO {
+        items,
+        page,
+        page_size,
+        total,
+    })
+    .into_http(StatusCode::OK))
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchQuery {
+    pub keyword: String,
+    pub limit: Option<u64>,
+}
+
+#[web::get("/accelerator/search")]
+pub async fn accelerator_search(
+    state: State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<HttpResponse, AppError> {
+    let keyword = query.keyword.trim();
+    if keyword.is_empty() {
+        return Ok(ApiResponse::success(Vec::<SearchItemVO>::new()).into_http(StatusCode::OK));
+    }
+    let limit = query.limit.unwrap_or(10).clamp(1, 50) as usize;
+
+    let mut results: Vec<SearchItemVO> = Vec::new();
+
+    // games
+    let games = accelerator_game::Entity::find()
+        .filter(
+            Condition::any()
+                .add(accelerator_game::Column::Name.contains(keyword))
+                .add(accelerator_game::Column::Region.contains(keyword)),
+        )
+        .order_by_desc(accelerator_game::Column::Id)
+        .limit(limit as u64)
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?;
+
+    for g in games {
+        results.push(SearchItemVO {
+            kind: "game".to_string(),
+            id: g.id.clone(),
+            label: format!("{} · {}", g.name, g.region),
+            game_id: Some(g.id),
+            node_id: None,
+            region: Some(g.region),
+            mode: None,
+        });
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    if results.len() < limit {
+        let profiles = accelerator_profile::Entity::find()
+            .filter(
+                Condition::any()
+                    .add(accelerator_profile::Column::DisplayName.contains(keyword))
+                    .add(accelerator_profile::Column::NodeId.contains(keyword)),
+            )
+            .order_by_desc(accelerator_profile::Column::Id)
+            .limit((limit - results.len()) as u64)
+            .all(&state.db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
+
+        // preload games/nodes for enrichment
+        let game_models = accelerator_game::Entity::find()
+            .all(&state.db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
+        let game_map: HashMap<String, accelerator_game::Model> =
+            game_models.into_iter().map(|m| (m.id.clone(), m)).collect();
+
+        let node_models = accelerator_node::Entity::find()
+            .all(&state.db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
+        let node_map: HashMap<String, accelerator_node::Model> =
+            node_models.into_iter().map(|m| (m.id.clone(), m)).collect();
+
+        for p in profiles {
+            let game = game_map.get(&p.game_id);
+            let node = node_map.get(&p.node_id);
+            results.push(SearchItemVO {
+                kind: "profile".to_string(),
+                id: p.id.clone(),
+                label: match game {
+                    Some(g) => format!("{} · {}", g.name, p.display_name),
+                    None => p.display_name.clone(),
+                },
+                game_id: Some(p.game_id.clone()),
+                node_id: Some(p.node_id.clone()),
+                region: game.map(|g| g.region.clone()),
+                mode: node.map(|n| n.mode.clone()),
+            });
+            if results.len() >= limit {
+                break;
+            }
+        }
+    }
+
+    Ok(ApiResponse::success(results).into_http(StatusCode::OK))
 }
 
 #[web::post("/accelerator/session/start")]

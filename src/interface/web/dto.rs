@@ -171,6 +171,30 @@ pub struct ProfileListVO {
     pub ping: i32,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PagedResponseVO<T>
+where
+    T: Serialize,
+{
+    pub items: Vec<T>,
+    pub page: u64,
+    pub page_size: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchItemVO {
+    pub kind: String,
+    pub id: String,
+    pub label: String,
+    pub game_id: Option<String>,
+    pub node_id: Option<String>,
+    pub region: Option<String>,
+    pub mode: Option<String>,
+}
+
 // ProfileVO 现在通过 BootstrapPayload 的 From 实现来组装
 // 这里保留一个简单的实现用于向后兼容（如果需要）
 impl From<Profile> for ProfileVO {
