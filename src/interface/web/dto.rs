@@ -452,6 +452,18 @@ pub struct SessionStartRequestVO {
     pub node_id: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStartV2RequestVO {
+    pub game_id: String,
+    #[serde(default)]
+    pub node_id: Option<u64>,
+    #[serde(default)]
+    pub chain_id: Option<String>,
+    #[serde(default)]
+    pub base_port: Option<u16>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartResponseVO {

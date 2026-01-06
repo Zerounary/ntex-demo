@@ -12,6 +12,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(handlers::accelerator_search)
             .service(handlers::sync_profiles)
             .service(handlers::session_start)
+            .service(handlers::session_start_v2)
             .service(handlers::session_stop)
             .service(handlers::accelerator_user_register)
             .service(handlers::accelerator_user_login)
