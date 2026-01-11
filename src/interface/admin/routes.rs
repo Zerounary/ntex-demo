@@ -10,6 +10,13 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::update_node_meta);
     cfg.service(handlers::query_handler);
 
+    // 游戏配置（Game Config）
+    cfg.service(handlers::list_games);
+    cfg.service(handlers::list_accelerator_nodes);
+    cfg.service(handlers::list_game_bindings);
+    cfg.service(handlers::upsert_game_binding);
+    cfg.service(handlers::delete_game_binding);
+
     // 链路（Chain）配置管理
     cfg.service(handlers::apply_chain);
     cfg.service(handlers::get_chains);

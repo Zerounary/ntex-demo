@@ -12,8 +12,12 @@ use log::{info, error};
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::mqtt_client::MqttClientManager;
+use crate::infrastructure::persistence::{
+    accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config,
+};
 use crate::interface::admin::chain_ops;
-use sea_orm::DatabaseConnection;
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
+use chrono::Utc;
 
 #[derive(Clone)]
 pub struct AdminState {
@@ -60,6 +64,457 @@ pub struct ApplyChainRequest {
     pub chain_id: i64,
     #[serde(default)]
     pub base_port: Option<u16>,
+}
+
+#[derive(Deserialize)]
+pub struct ListGamesQuery {
+    #[serde(default)]
+    pub keyword: Option<String>,
+}
+
+#[web::get("/api/admin/games")]
+pub async fn list_games(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Query(query): Query<ListGamesQuery>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let mut q = accelerator_game::Entity::find().order_by_desc(accelerator_game::Column::Id);
+    if let Some(keyword) = query.keyword.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        q = q.filter(
+            sea_orm::Condition::any()
+                .add(accelerator_game::Column::Name.contains(keyword))
+                .add(accelerator_game::Column::Region.contains(keyword))
+                .add(accelerator_game::Column::Status.contains(keyword))
+                .add(accelerator_game::Column::ProcessName.contains(keyword)),
+        );
+    }
+
+    match q.all(&state.db).await {
+        Ok(items) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": items.into_iter().map(|m| serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "icon": m.icon,
+                "status": m.status,
+                "ping": m.ping,
+                "process_name": m.process_name,
+                "region": m.region
+            })).collect::<Vec<_>>()
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("list games failed: {}", e)
+        })),
+    }
+}
+
+#[web::get("/api/admin/accelerator_nodes")]
+pub async fn list_accelerator_nodes(state: State<AdminState>, req: HttpRequest) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    match accelerator_node::Entity::find().order_by_asc(accelerator_node::Column::Id).all(&state.db).await {
+        Ok(items) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": items.into_iter().map(|n| serde_json::json!({
+                "id": n.id,
+                "mode": n.mode,
+                "ping": n.ping,
+                "status": n.status
+            })).collect::<Vec<_>>()
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("list accelerator nodes failed: {}", e)
+        })),
+    }
+}
+
+#[web::get("/api/admin/games/{game_id}/bindings")]
+pub async fn list_game_bindings(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<String>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let game_id = path.into_inner();
+    let game = match accelerator_game::Entity::find_by_id(game_id.clone()).one(&state.db).await {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return HttpResponse::NotFound().json(&serde_json::json!({
+                "msg": "error",
+                "error": "game not found"
+            }))
+        }
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query game failed: {}", e)
+            }))
+        }
+    };
+
+    let bindings = match accelerator_game_node_binding::Entity::find()
+        .filter(accelerator_game_node_binding::Column::GameId.eq(game_id.as_str()))
+        .order_by_asc(accelerator_game_node_binding::Column::CreatedAt)
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query bindings failed: {}", e)
+            }))
+        }
+    };
+
+    if bindings.is_empty() {
+        return HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": Vec::<Value>::new()
+        }));
+    }
+
+    let node_ids: Vec<String> = bindings
+        .iter()
+        .filter_map(|b| b.node_id.clone())
+        .collect();
+    let nodes = match accelerator_node::Entity::find()
+        .filter(accelerator_node::Column::Id.is_in(node_ids.clone()))
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query nodes failed: {}", e)
+            }))
+        }
+    };
+
+    let node_map: std::collections::HashMap<String, accelerator_node::Model> =
+        nodes.into_iter().map(|n| (n.id.clone(), n)).collect();
+
+    let payload: Vec<Value> = bindings
+        .into_iter()
+        .map(|b| {
+            let n = b
+                .node_id
+                .as_ref()
+                .and_then(|node_id| node_map.get(node_id));
+            serde_json::json!({
+                "id": b.id,
+                "type": b.r#type,
+                "node_id": b.node_id,
+                "display_name": b.display_name.clone().or_else(|| n.map(|x| x.id.clone())).unwrap_or_default(),
+                "region": b.region.clone().unwrap_or_else(|| game.region.clone()),
+                "mode": b.mode.clone().or_else(|| n.map(|x| x.mode.clone())).unwrap_or_default(),
+                "ping": b.ping.or_else(|| n.map(|x| x.ping)).unwrap_or_default(),
+                "status": b.status.clone().or_else(|| n.map(|x| x.status.clone())).unwrap_or_default(),
+                "tcp_chain_id": b.tcp_chain_id,
+                "udp_chain_id": b.udp_chain_id,
+                "remark": b.remark,
+                "created_at": b.created_at.to_rfc3339(),
+                "updated_at": b.updated_at.to_rfc3339()
+            })
+        })
+        .collect();
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok",
+        "data": payload
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertGameBindingRequest {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub r#type: String,
+    #[serde(default, alias = "node_id")]
+    pub node_id: Option<String>,
+    #[serde(default, alias = "tcp_chain_id")]
+    pub tcp_chain_id: Option<i64>,
+    #[serde(default, alias = "udp_chain_id")]
+    pub udp_chain_id: Option<i64>,
+    #[serde(default, alias = "display_name")]
+    pub display_name: Option<String>,
+    #[serde(default, alias = "region")]
+    pub region: Option<String>,
+    #[serde(default, alias = "mode")]
+    pub mode: Option<String>,
+    #[serde(default, alias = "ping")]
+    pub ping: Option<i32>,
+    #[serde(default, alias = "status")]
+    pub status: Option<String>,
+    #[serde(default, alias = "remark")]
+    pub remark: Option<String>,
+}
+
+#[web::post("/api/admin/games/{game_id}/bindings")]
+pub async fn upsert_game_binding(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<String>,
+    Json(body): Json<UpsertGameBindingRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let game_id = path.into_inner();
+    let binding_type = body.r#type.trim().to_lowercase();
+    if binding_type != "node" && binding_type != "chain" {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "type must be node or chain"
+        }));
+    }
+
+    let node_id = body.node_id.clone().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+
+    let game_exists = match accelerator_game::Entity::find_by_id(game_id.clone()).one(&state.db).await {
+        Ok(v) => v.is_some(),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query game failed: {}", e)
+            }))
+        }
+    };
+    if !game_exists {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "game not found"
+        }));
+    }
+
+    if binding_type == "node" {
+        let node_id = match node_id.clone() {
+            Some(v) => v,
+            None => {
+                return HttpResponse::BadRequest().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "node_id is required when type=node"
+                }));
+            }
+        };
+
+        let node_id_u64: u64 = match node_id.parse() {
+            Ok(v) => v,
+            Err(_) => {
+                return HttpResponse::BadRequest().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "node_id must be a number"
+                }));
+            }
+        };
+
+        let node_exists = match admin_node_config::Entity::find_by_id(node_id_u64)
+            .one(&state.db)
+            .await
+        {
+            Ok(v) => v.is_some(),
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": format!("query node failed: {}", e)
+                }))
+            }
+        };
+        if !node_exists {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": "node not found"
+            }));
+        }
+    }
+
+    let chains = match state.config.get_chains().await {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("get chains failed: {}", e)
+            }))
+        }
+    };
+    if let Some(cid) = body.tcp_chain_id {
+        if !chains.iter().any(|c| c.id == cid) {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": "tcp_chain_id not found"
+            }));
+        }
+    }
+    if let Some(cid) = body.udp_chain_id {
+        if !chains.iter().any(|c| c.id == cid) {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": "udp_chain_id not found"
+            }));
+        }
+    }
+
+    let now = Utc::now();
+    let existing = if let Some(id) = body.id {
+        match accelerator_game_node_binding::Entity::find_by_id(id)
+            .one(&state.db)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": format!("query binding failed: {}", e)
+                }))
+            }
+        }
+    } else {
+        None
+    };
+
+    let saved = if let Some(existing) = existing {
+        if existing.game_id != game_id {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": "binding does not belong to this game"
+            }));
+        }
+        let mut active: accelerator_game_node_binding::ActiveModel = existing.into();
+        active.r#type = Set(binding_type.clone());
+        active.node_id = Set(node_id.clone());
+        active.tcp_chain_id = Set(body.tcp_chain_id);
+        active.udp_chain_id = Set(body.udp_chain_id);
+        active.display_name = Set(body.display_name);
+        active.region = Set(body.region);
+        active.mode = Set(body.mode);
+        active.ping = Set(body.ping);
+        active.status = Set(body.status);
+        active.remark = Set(body.remark);
+        active.updated_at = Set(now.into());
+        match active.update(&state.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": format!("update binding failed: {}", e)
+                }))
+            }
+        }
+    } else {
+        let active = accelerator_game_node_binding::ActiveModel {
+            game_id: Set(game_id.clone()),
+            r#type: Set(binding_type.clone()),
+            node_id: Set(node_id.clone()),
+            tcp_chain_id: Set(body.tcp_chain_id),
+            udp_chain_id: Set(body.udp_chain_id),
+            display_name: Set(body.display_name),
+            region: Set(body.region),
+            mode: Set(body.mode),
+            ping: Set(body.ping),
+            status: Set(body.status),
+            remark: Set(body.remark),
+            created_at: Set(now.into()),
+            updated_at: Set(now.into()),
+            ..Default::default()
+        };
+        match active.insert(&state.db).await {
+            Ok(v) => v,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": format!("create binding failed: {}", e)
+                }))
+            }
+        }
+    };
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok",
+        "data": {
+            "id": saved.id,
+            "game_id": saved.game_id,
+            "type": saved.r#type,
+            "node_id": saved.node_id,
+            "tcp_chain_id": saved.tcp_chain_id,
+            "udp_chain_id": saved.udp_chain_id,
+            "display_name": saved.display_name,
+            "region": saved.region,
+            "mode": saved.mode,
+            "ping": saved.ping,
+            "status": saved.status,
+            "remark": saved.remark,
+            "created_at": saved.created_at.to_rfc3339(),
+            "updated_at": saved.updated_at.to_rfc3339()
+        }
+    }))
+}
+
+#[web::delete("/api/admin/games/{game_id}/bindings/{id}")]
+pub async fn delete_game_binding(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<(String, i64)>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let (game_id, id) = path.into_inner();
+
+    let existing = match accelerator_game_node_binding::Entity::find_by_id(id)
+        .one(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query binding failed: {}", e)
+            }))
+        }
+    };
+
+    let existing = match existing {
+        Some(v) => v,
+        None => {
+            return HttpResponse::NotFound().json(&serde_json::json!({
+                "msg": "error",
+                "error": "binding not found"
+            }))
+        }
+    };
+
+    if existing.game_id != game_id {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "binding does not belong to this game"
+        }));
+    }
+
+    match accelerator_game_node_binding::Entity::delete_by_id(id)
+        .exec(&state.db)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().json(&serde_json::json!({ "msg": "ok" })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("delete binding failed: {}", e)
+        })),
+    }
 }
 
 #[web::post("/api/admin/chains/apply")]

@@ -19,7 +19,8 @@ import type {
   UdpLatencyResult,
 } from './types';
 
-const API_BASE = import.meta.env.VITE_API_BASE || '';
+const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_BASE_URL || '';
+const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || '';
 
 async function request<T>(
   url: string,
@@ -29,6 +30,7 @@ async function request<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(ADMIN_TOKEN ? { 'X-Admin-Token': ADMIN_TOKEN } : {}),
       ...options.headers,
     },
   });
@@ -502,5 +504,101 @@ export async function getUserLogs(
     return response.data;
   }
   throw new Error(response.error || '查询用户日志失败');
+}
+
+// ========== 游戏配置（Game Config） ==========
+
+export interface GameVO {
+  id: string;
+  name: string;
+  icon: string;
+  status: string;
+  ping: number;
+  process_name: string;
+  region: string;
+}
+
+export interface AcceleratorNodeVO {
+  id: string;
+  mode: string;
+  ping: number;
+  status: string;
+}
+
+export interface GameBindingVO {
+  id: number;
+  type: 'node' | 'chain' | string;
+  node_id?: string | null;
+  display_name?: string | null;
+  region?: string | null;
+  mode?: string | null;
+  ping?: number | null;
+  status?: string | null;
+  tcp_chain_id?: number | null;
+  udp_chain_id?: number | null;
+  remark?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listGames(params?: { keyword?: string }): Promise<GameVO[]> {
+  const query = params ? buildQuery(params) : '';
+  const url = query ? `/api/admin/games?${query}` : '/api/admin/games';
+  const response = await request<GameVO[]>(url);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取游戏列表失败');
+}
+
+export async function listAcceleratorNodes(): Promise<AcceleratorNodeVO[]> {
+  const response = await request<AcceleratorNodeVO[]>(`/api/admin/accelerator_nodes`);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取加速节点列表失败');
+}
+
+export async function listGameBindings(gameId: string): Promise<GameBindingVO[]> {
+  const response = await request<GameBindingVO[]>(`/api/admin/games/${gameId}/bindings`);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取游戏配置失败');
+}
+
+export async function upsertGameBinding(
+  gameId: string,
+  payload: {
+    id?: number | null;
+    type: 'node' | 'chain' | string;
+    node_id?: string | null;
+    tcp_chain_id?: number | null;
+    udp_chain_id?: number | null;
+    display_name?: string | null;
+    region?: string | null;
+    mode?: string | null;
+    ping?: number | null;
+    status?: string | null;
+    remark?: string | null;
+  }
+): Promise<GameBindingVO> {
+  const response = await request<GameBindingVO>(`/api/admin/games/${gameId}/bindings`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '保存游戏配置失败');
+}
+
+export async function deleteGameBinding(gameId: string, id: number): Promise<void> {
+  const response = await request(`/api/admin/games/${gameId}/bindings/${id}`, {
+    method: 'DELETE',
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '删除游戏配置失败');
+  }
 }
 

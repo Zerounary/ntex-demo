@@ -1701,7 +1701,11 @@ pub async fn list_game_nodes(
             crate::application::errors::RepositoryError::Persistence(e.to_string()),
         ))?;
 
-    let node_ids: Vec<String> = bindings.into_iter().map(|b| b.node_id).collect();
+    let node_ids: Vec<String> = bindings
+        .into_iter()
+        .filter(|b| b.r#type == "node")
+        .filter_map(|b| b.node_id)
+        .collect();
     if node_ids.is_empty() {
         return Ok(ApiResponse::success(Vec::<GameNodeVO>::new()).into_http(StatusCode::OK));
     }
@@ -1788,7 +1792,8 @@ pub async fn set_game_nodes(
     for node_id in node_ids {
         accelerator_game_node_binding::ActiveModel {
             game_id: Set(game_id.clone()),
-            node_id: Set(node_id),
+            r#type: Set("node".to_string()),
+            node_id: Set(Some(node_id)),
             ..Default::default()
         }
         .insert(&state.db)
