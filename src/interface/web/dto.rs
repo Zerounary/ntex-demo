@@ -459,7 +459,7 @@ pub struct SessionStartV2RequestVO {
     #[serde(default)]
     pub node_id: Option<u64>,
     #[serde(default)]
-    pub chain_id: Option<String>,
+    pub chain_id: Option<i64>,
     #[serde(default)]
     pub base_port: Option<u16>,
 }

@@ -5,8 +5,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use chrono::Utc;
-use sea_orm::{DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, ActiveModelTrait, Set, JsonValue, QueryOrder, QuerySelect, sea_query::Expr};
+use chrono::{DateTime, Utc};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, EntityTrait, PaginatorTrait,
+    QueryFilter, QueryOrder, QuerySelect, Set,
+};
+use sea_orm::JsonValue;
+use sea_orm::NotSet;
+use sea_orm::sea_query::Expr;
 use crate::infrastructure::persistence::{
     admin_chain, admin_user, admin_outbound, admin_routing, admin_user_mapping, admin_node_config, admin_inbound,
     node_traffic_log, node_status_log, node_online_user_log, node_illegal_log,
@@ -107,13 +113,12 @@ pub struct ChainRouteEntry {
     pub remark: Option<String>,
 }
 
-/// 链路定义（一个链路对应一个 uuid）
+/// 链路定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChainDefinition {
-    pub id: String,
+    pub id: i64,
     pub name: String,
-    pub uuid: String,
     pub protocol: String,
     pub routes: Vec<ChainRouteEntry>,
     pub created_at: String,
@@ -680,50 +685,115 @@ impl AdminConfigStore {
     }
 
     // ========== 链路（Chain）配置管理 ==========
-    pub async fn get_chains(&self, node_id: u64) -> Result<Vec<ChainDefinition>, String> {
-        let entry = admin_chain::Entity::find_by_id(node_id)
-            .one(&self.db)
+    pub async fn get_chains(&self) -> Result<Vec<ChainDefinition>, String> {
+        let rows = admin_chain::Entity::find()
+            .order_by_asc(admin_chain::Column::CreatedAt)
+            .all(&self.db)
             .await
             .map_err(|e| format!("查询链路配置失败: {}", e))?;
 
-        let Some(model) = entry else {
-            return Ok(vec![]);
-        };
-
-        let chains: Vec<ChainDefinition> = serde_json::from_value(model.chains)
-            .map_err(|e| format!("解析链路配置失败: {}", e))?;
-        Ok(chains)
+        let mut out: Vec<ChainDefinition> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let routes: Vec<ChainRouteEntry> = serde_json::from_value(row.routes)
+                .map_err(|e| format!("解析链路 routes 失败: {}", e))?;
+            out.push(ChainDefinition {
+                id: row.id,
+                name: row.name,
+                protocol: row.protocol,
+                routes,
+                created_at: row.created_at.to_rfc3339(),
+                updated_at: row.updated_at.to_rfc3339(),
+                description: row.description,
+            });
+        }
+        Ok(out)
     }
 
-    pub async fn update_chains(&self, node_id: u64, chains: Vec<ChainDefinition>) -> Result<(), String> {
-        let payload: JsonValue = serde_json::to_value(chains)
-            .map_err(|e| format!("序列化链路配置失败: {}", e))?;
+    pub async fn upsert_chain(
+        &self,
+        id: Option<i64>,
+        name: String,
+        protocol: String,
+        routes: Vec<ChainRouteEntry>,
+        description: Option<String>,
+    ) -> Result<ChainDefinition, String> {
+        let routes: JsonValue = serde_json::to_value(&routes)
+            .map_err(|e| format!("序列化链路 routes 失败: {}", e))?;
 
-        let existing = admin_chain::Entity::find_by_id(node_id)
-            .one(&self.db)
-            .await
-            .map_err(|e| format!("查询链路配置失败: {}", e))?;
+        let now = Utc::now();
+        if let Some(id) = id {
+            let existing = admin_chain::Entity::find_by_id(id)
+                .one(&self.db)
+                .await
+                .map_err(|e| format!("查询链路配置失败: {}", e))?
+                .ok_or_else(|| "链路不存在".to_string())?;
 
-        if let Some(model) = existing {
-            let mut active: admin_chain::ActiveModel = model.into();
-            active.chains = Set(payload);
-            active.updated_at = Set(Utc::now().into());
-            active
+            let created_at = existing.created_at;
+
+            let mut active: admin_chain::ActiveModel = existing.into();
+            active.name = Set(name);
+            active.protocol = Set(protocol);
+            active.routes = Set(routes);
+            active.description = Set(description);
+            active.updated_at = Set(now.into());
+
+            let saved = active
                 .update(&self.db)
                 .await
                 .map_err(|e| format!("更新链路配置失败: {}", e))?;
+
+            let routes: Vec<ChainRouteEntry> = serde_json::from_value(saved.routes)
+                .map_err(|e| format!("解析链路 routes 失败: {}", e))?;
+
+            Ok(ChainDefinition {
+                id: saved.id,
+                name: saved.name,
+                protocol: saved.protocol,
+                routes,
+                created_at: created_at.to_rfc3339(),
+                updated_at: saved.updated_at.to_rfc3339(),
+                description: saved.description,
+            })
         } else {
             let active = admin_chain::ActiveModel {
-                node_id: Set(node_id),
-                chains: Set(payload),
-                ..Default::default()
+                id: NotSet,
+                name: Set(name),
+                protocol: Set(protocol),
+                routes: Set(routes),
+                description: Set(description),
+                created_at: Set(now.into()),
+                updated_at: Set(now.into()),
             };
-            active
+
+            let saved = active
                 .insert(&self.db)
                 .await
                 .map_err(|e| format!("创建链路配置失败: {}", e))?;
-        }
 
+            let routes: Vec<ChainRouteEntry> = serde_json::from_value(saved.routes)
+                .map_err(|e| format!("解析链路 routes 失败: {}", e))?;
+
+            Ok(ChainDefinition {
+                id: saved.id,
+                name: saved.name,
+                protocol: saved.protocol,
+                routes,
+                created_at: saved.created_at.to_rfc3339(),
+                updated_at: saved.updated_at.to_rfc3339(),
+                description: saved.description,
+            })
+        }
+    }
+
+    pub async fn delete_chain(&self, id: i64) -> Result<(), String> {
+        let result = admin_chain::Entity::delete_by_id(id)
+            .exec(&self.db)
+            .await
+            .map_err(|e| format!("删除链路配置失败: {}", e))?;
+
+        if result.rows_affected == 0 {
+            return Err("链路不存在".to_string());
+        }
         Ok(())
     }
 

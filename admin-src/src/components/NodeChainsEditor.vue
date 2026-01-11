@@ -1,7 +1,7 @@
 <template>
   <div class="grid grid-cols-12 gap-6">
     <div class="col-span-12 xl:col-span-5">
-      <ChainManagement :node-id="nodeId" :selected-node-id="selectedNodeId" />
+      <ChainManagement :selected-node-id="selectedNodeId" />
     </div>
 
     <div class="col-span-12 xl:col-span-7 space-y-4">
@@ -101,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import type { NodeInfo } from '@/api/types';
 import { useNodeStore } from '@/stores/node';
@@ -110,10 +110,9 @@ import ChainManagement from '@/components/ChainManagement.vue';
 import type { FlowCanvasNode } from '@/stores/flow';
 
 interface Props {
-  nodeId: number;
 }
 
-const props = defineProps<Props>();
+defineProps<Props>();
 
 const nodeStore = useNodeStore();
 
@@ -202,14 +201,6 @@ onMounted(() => {
   nodeStore.fetchNodes();
 });
 
-watch(
-  () => props.nodeId,
-  () => {
-    canvasNodes.value = [];
-    selectedCanvasNodeId.value = null;
-    filter.value = '';
-  }
-);
 </script>
 
 <style scoped>

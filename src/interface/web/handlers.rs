@@ -58,7 +58,7 @@ async fn resolve_target_node_from_request(
     body: &SessionStartV2RequestVO,
 ) -> Result<ResolvedTargetNode, UsecaseError> {
     let node_id = body.node_id;
-    let chain_id = body.chain_id.clone().filter(|v| !v.trim().is_empty());
+    let chain_id = body.chain_id;
 
     match (node_id, chain_id) {
         (Some(_), Some(_)) => Err(UsecaseError::Validation(
@@ -76,7 +76,7 @@ async fn resolve_target_node_from_request(
             let base_port: u16 = body.base_port.unwrap_or(40000);
             let chains = state
                 .admin_config
-                .get_chains(0)
+                .get_chains()
                 .await
                 .map_err(|e| UsecaseError::Validation(format!("get_chains failed: {}", e)))?;
             let chain = chains
@@ -205,7 +205,9 @@ pub async fn session_start_v2(
             "[session_start_v2] best-effort stop existing session_id={} node_id={}",
             existing.session_id, existing.node_id
         );
-        let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+        if existing.admin_user_id > 0 {
+            let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+        }
 
         let mut active: acceleration_session::ActiveModel = existing.into();
         active.status = Set("stopped".to_string());
@@ -214,63 +216,9 @@ pub async fn session_start_v2(
         let _ = active.update(&state.db).await;
     }
 
-    let uuid = uuid::Uuid::new_v4().to_string();
-    let st = if validation.billing_mode == "pass" { 5u64 } else { 1u64 };
-
-    let admin_user = main_admin_add_user(node_id, uuid, st, 0).await?;
-    let admin_user_id = admin_user.id;
-    let admin_uuid = admin_user.uuid;
-
-    let outbounds = main_admin_get_outbound_tags(node_id).await?;
-    let mut candidates: Vec<String> = outbounds
-        .into_iter()
-        .filter(|t| t != "block" && t != "direct" && t != "vmess_loopback")
-        .collect();
-    candidates.sort();
-
-    let mapped_outbound_tag = if candidates.iter().any(|t| t == &desired_outbound_tag) {
-        desired_outbound_tag.clone()
-    } else {
-        let active_sessions = acceleration_session::Entity::find()
-            .filter(acceleration_session::Column::NodeId.eq(node_id))
-            .filter(acceleration_session::Column::Status.eq("active"))
-            .all(&state.db)
-            .await
-            .map_err(|e| {
-                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                    e.to_string(),
-                ))
-            })?;
-
-        let mut counts: HashMap<String, u64> = HashMap::new();
-        for s in active_sessions {
-            *counts.entry(s.outbound_tag).or_insert(0) += 1;
-        }
-
-        let mut best_tag: Option<String> = None;
-        let mut best_count: u64 = u64::MAX;
-        for t in &candidates {
-            let c = counts.get(t).copied().unwrap_or(0);
-            if c < best_count {
-                best_count = c;
-                best_tag = Some(t.clone());
-            }
-        }
-
-        best_tag.ok_or_else(|| {
-            UsecaseError::Validation(format!(
-                "no available outbound tag for node_id={} (excluded block/direct/vmess_loopback)",
-                node_id
-            ))
-        })?
-    };
-
-    info!(
-        "[session_start_v2] selected outbound_tag: node_id={} desired={} selected={}",
-        node_id, desired_outbound_tag, mapped_outbound_tag
-    );
-
-    main_admin_add_mapping(node_id, admin_uuid.clone(), mapped_outbound_tag.clone()).await?;
+    let admin_user_id: u64 = 0;
+    let admin_uuid: String = "".to_string();
+    let mapped_outbound_tag: String = desired_outbound_tag.clone();
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -351,7 +299,7 @@ pub async fn session_start_v2(
         display_name: profile.display_name,
         node_id: profile.node_id,
         process_name: game.process_name,
-        vmess_uuid: admin_uuid,
+        vmess_uuid: node.vmess_uuid,
         vmess_server: node.vmess_server,
         vmess_port: node.vmess_port,
         vmess_email: node.vmess_email,
@@ -992,9 +940,7 @@ pub async fn session_start(
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
 
     let validation = usecase
-        .validate_account(AccountValidationRequest {
-            user_id: user_id.clone(),
-        })
+        .validate_account(AccountValidationRequest { user_id: user_id.clone() })
         .await?;
 
     if !validation.is_valid {
@@ -1054,7 +1000,9 @@ pub async fn session_start(
             "[session_start] best-effort stop existing session_id={} node_id={}",
             existing.session_id, existing.node_id
         );
-        let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+        if existing.admin_user_id > 0 {
+            let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+        }
 
         let mut active: acceleration_session::ActiveModel = existing.into();
         active.status = Set("stopped".to_string());
@@ -1246,11 +1194,13 @@ pub async fn session_stop(
         .into_http(StatusCode::OK));
     }
 
-    info!(
-        "[session_stop] deleting admin user: session_id={} node_id={} admin_user_id={}",
-        model.session_id, model.node_id, model.admin_user_id
-    );
-    let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
+    if model.admin_user_id > 0 {
+        info!(
+            "[session_stop] deleting admin user: session_id={} node_id={} admin_user_id={}",
+            model.session_id, model.node_id, model.admin_user_id
+        );
+        let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
+    }
 
     let mut active: acceleration_session::ActiveModel = model.into();
     let now = chrono::Utc::now();

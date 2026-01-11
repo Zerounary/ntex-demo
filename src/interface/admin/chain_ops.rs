@@ -4,15 +4,15 @@ use std::sync::Arc;
 use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig};
 use crate::infrastructure::mqtt_client::MqttClientManager;
 
-fn hop_inbound_prefix(chain_id: &str) -> String {
+fn hop_inbound_prefix(chain_id: i64) -> String {
     format!("chain_{}_", chain_id)
 }
 
-fn entry_inbound_tag(chain_id: &str) -> String {
+fn entry_inbound_tag(chain_id: i64) -> String {
     format!("chain_entry_in_{}", chain_id)
 }
 
-fn entry_outbound_tag(chain_id: &str) -> String {
+fn entry_outbound_tag(chain_id: i64) -> String {
     format!("chain_entry_{}", chain_id)
 }
 
@@ -31,22 +31,22 @@ fn publish_updates(mqtt: Option<&Arc<MqttClientManager>>, node_id: u64, kinds: &
 pub async fn apply_chain(
     config: &AdminConfigStore,
     mqtt: Option<&Arc<MqttClientManager>>,
-    chain_id: &str,
+    chain_id: i64,
     base_port: u16,
-) -> Result<(String, Vec<Value>), String> {
-    let chains = config.get_chains(0).await?;
+) -> Result<(i64, Vec<Value>), String> {
+    let chains = config.get_chains().await?;
     let chain = chains
         .into_iter()
         .find(|c| c.id == chain_id)
         .ok_or_else(|| "chain not found".to_string())?;
 
-    let chain_id = chain.id.clone();
+    let chain_id = chain.id;
 
     if chain.routes.is_empty() {
         return Err("chain has no routes".to_string());
     }
 
-    cleanup_chain_artifacts(config, mqtt, &chain_id).await.ok();
+    cleanup_chain_artifacts(config, mqtt, chain_id).await.ok();
 
     let mut hops = chain.routes.clone();
     hops.sort_by_key(|r| r.order);
@@ -123,17 +123,13 @@ pub async fn apply_chain(
         results.push(apply_res);
     }
 
-    if let Some(last_node_id) = node_path.last().copied() {
-        publish_updates(mqtt, last_node_id, &["config"]);
-    }
-
     Ok((chain_id, results))
 }
 
 pub async fn cleanup_chain_artifacts(
     config: &AdminConfigStore,
     mqtt: Option<&Arc<MqttClientManager>>,
-    chain_id: &str,
+    chain_id: i64,
 ) -> Result<(), String> {
     let node_ids = config.list_node_ids().await?;
 

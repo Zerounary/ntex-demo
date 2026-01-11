@@ -28,7 +28,7 @@
         <button
           type="button"
           class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
-          :disabled="!isGlobalTemplates || !activeChainId || applying"
+          :disabled="!activeChainId || activeChainId <= 0 || applying"
           @click="applyActiveChain"
         >
           <div :class="applying ? 'animate-spin' : ''" class="i-carbon-rocket text-lg"></div>
@@ -43,16 +43,6 @@
           <div class="i-carbon-add text-lg"></div>
           <span>Add Chain</span>
         </button>
-      </div>
-    </div>
-
-    <div
-      v-if="isGlobalTemplates"
-      class="p-4 rounded-xl border border-gray-100 bg-white shadow-sm"
-    >
-      <div class="text-sm font-semibold text-gray-800">Apply Settings</div>
-      <div class="mt-2 text-xs text-gray-400">
-        Apply will generate entry inbound on the first node and route it to local chain dokodemo inbound automatically.
       </div>
     </div>
 
@@ -73,7 +63,7 @@
 
     <div v-else class="space-y-6">
       <div
-        v-if="applyResult && isGlobalTemplates"
+        v-if="applyResult"
         class="p-4 rounded-xl border border-gray-100 bg-white shadow-sm"
       >
         <div class="flex items-center justify-between gap-3">
@@ -136,8 +126,6 @@
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0 flex-1">
                       <div class="font-bold text-gray-900 truncate">{{ c.name }}</div>
-                      <div class="mt-1 text-[10px] text-gray-400 uppercase tracking-wider font-semibold">UUID</div>
-                      <div class="text-xs font-mono text-gray-700 break-all">{{ c.uuid }}</div>
                       <div class="mt-2 flex items-center gap-2">
                         <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold border bg-green-50 text-green-700 border-green-100">
                           TRANSPARENT
@@ -146,22 +134,6 @@
                       </div>
                     </div>
                     <div class="flex flex-col items-end gap-2 shrink-0">
-                      <button
-                        type="button"
-                        class="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
-                        title="Copy UUID"
-                        @click.stop="copy(c.uuid)"
-                      >
-                        <div class="i-carbon-copy text-lg"></div>
-                      </button>
-                      <button
-                        type="button"
-                        class="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title="Regenerate UUID"
-                        @click.stop="regenerateUuid(c.id)"
-                      >
-                        <div class="i-carbon-renew text-lg"></div>
-                      </button>
                       <button
                         type="button"
                         class="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
@@ -389,7 +361,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { v4 as uuidv4 } from 'uuid';
 import { useNodeStore } from '@/stores/node';
 import { useToastStore } from '@/stores/toast';
@@ -398,7 +370,6 @@ import * as adminApi from '@/api/admin';
 import type { ApplyChainResult, ChainDefinition, ChainRouteEntry, NodeInfo } from '@/api/types';
 
 interface Props {
-  nodeId: number;
   selectedNodeId?: number | null;
 }
 
@@ -415,7 +386,7 @@ const applying = ref(false);
 const applyResult = ref<ApplyChainResult | null>(null);
 
 const chains = ref<ChainDefinition[]>([]);
-const activeChainId = ref<string | null>(null);
+const activeChainId = ref<number | null>(null);
 
 const pendingFromNodeId = ref<number | null>(null);
 
@@ -442,8 +413,6 @@ const activeChain = computed(() => {
 const selectedNodeId = computed(() => props.selectedNodeId || null);
 const nodesLoading = computed(() => nodeStore.loading);
 
-const isGlobalTemplates = computed(() => props.nodeId === 0);
-
 const getDefaultNodeId = () => nodeStore.sortedNodes[0]?.node_id || 0;
 
 const getAlternateNodeId = (exclude?: number | null) => {
@@ -465,15 +434,14 @@ const normalizeRoutesOrder = (c: ChainDefinition) => {
 };
 
 const load = async () => {
-  if (props.nodeId === undefined || props.nodeId === null) return;
   loading.value = true;
   error.value = null;
   try {
     await nodeStore.fetchNodes();
-    const data = await adminApi.getChains(props.nodeId);
+    const data = await adminApi.getChains();
     chains.value = data || [];
     if (!activeChainId.value) {
-      activeChainId.value = chains.value[0]?.id || null;
+      activeChainId.value = chains.value[0]?.id ?? null;
     }
     dirty.value = false;
   } catch (err: any) {
@@ -484,28 +452,43 @@ const load = async () => {
 };
 
 const save = async () => {
-  if (props.nodeId === undefined || props.nodeId === null) return;
-  const invalid = chains.value.some((c) =>
-    c.routes.some((r) => r.fromNodeId === r.toNodeId)
-  );
+  if (!activeChain.value) {
+    toast.error('Please select a chain to save');
+    return;
+  }
+  const invalid = activeChain.value.routes.some((r) => r.fromNodeId === r.toNodeId);
   if (invalid) {
     toast.error('Save blocked: some routes have FROM equal to TO');
     return;
   }
   try {
-    const payload = chains.value.map((c) => {
-      const clone: ChainDefinition = JSON.parse(JSON.stringify(c));
-      normalizeRoutesOrder(clone);
-      clone.protocol = 'transparent';
-      clone.routes = (clone.routes || []).map((r) => ({
-        ...r,
-        mode: 'transparent',
-      }));
-      clone.updatedAt = new Date().toISOString();
-      return clone;
+    const clone: ChainDefinition = JSON.parse(JSON.stringify(activeChain.value));
+    normalizeRoutesOrder(clone);
+    clone.protocol = 'transparent';
+    clone.routes = (clone.routes || []).map((r) => ({
+      ...r,
+      mode: 'transparent',
+    }));
+    clone.updatedAt = new Date().toISOString();
+
+    const saved = await adminApi.upsertChain({
+      id: clone.id > 0 ? clone.id : undefined,
+      name: clone.name,
+      protocol: clone.protocol,
+      routes: clone.routes,
+      description: clone.description,
     });
-    const saved = await adminApi.updateChains(props.nodeId, payload);
-    chains.value = saved;
+
+    const oldId = activeChainId.value;
+    if (oldId !== null) {
+      const idx = chains.value.findIndex((c) => c.id === oldId);
+      if (idx >= 0) {
+        chains.value[idx] = saved;
+      } else {
+        chains.value.push(saved);
+      }
+    }
+    activeChainId.value = saved.id;
     dirty.value = false;
     toast.success('Chains saved');
   } catch (err: any) {
@@ -513,7 +496,7 @@ const save = async () => {
   }
 };
 
-const selectChain = (id: string) => {
+const selectChain = (id: number) => {
   activeChainId.value = id;
   pendingFromNodeId.value = null;
 };
@@ -524,8 +507,11 @@ const refreshNodes = async () => {
 };
 
 const applyActiveChain = async () => {
-  if (!isGlobalTemplates.value) return;
   if (!activeChainId.value) return;
+  if (activeChainId.value <= 0) {
+    toast.error('Please save the chain before applying');
+    return;
+  }
   applying.value = true;
   applyResult.value = null;
   try {
@@ -544,10 +530,11 @@ const applyActiveChain = async () => {
 
 const createChain = () => {
   const now = new Date().toISOString();
+  const nextTmpId =
+    Math.min(0, ...chains.value.map((c) => (typeof c.id === 'number' ? c.id : 0))) - 1;
   const c: ChainDefinition = {
-    id: uuidv4(),
+    id: nextTmpId,
     name: `Chain ${chains.value.length + 1}`,
-    uuid: uuidv4(),
     protocol: 'transparent',
     routes: [],
     createdAt: now,
@@ -559,23 +546,21 @@ const createChain = () => {
   dirty.value = true;
 };
 
-const deleteChain = (id: string) => {
+const deleteChain = async (id: number) => {
   const c = chains.value.find((x) => x.id === id);
   if (!c) return;
   if (!confirm(`Delete chain "${c.name}"?`)) return;
-  chains.value = chains.value.filter((x) => x.id !== id);
-  if (activeChainId.value === id) activeChainId.value = chains.value[0]?.id || null;
-  dirty.value = true;
-};
-
-const regenerateUuid = (id: string) => {
-  const c = chains.value.find((x) => x.id === id);
-  if (!c) return;
-  if (!confirm(`Regenerate UUID for "${c.name}"?`)) return;
-  c.uuid = uuidv4();
-  c.updatedAt = new Date().toISOString();
-  dirty.value = true;
-  toast.success('UUID regenerated');
+  try {
+    if (id > 0) {
+      await adminApi.deleteChain(id);
+    }
+    chains.value = chains.value.filter((x) => x.id !== id);
+    if (activeChainId.value === id) activeChainId.value = chains.value[0]?.id ?? null;
+    dirty.value = false;
+    toast.success('Deleted');
+  } catch (err: any) {
+    toast.error(err?.message || 'Delete failed');
+  }
 };
 
 const addHop = () => {
@@ -690,23 +675,6 @@ const appendHopFromPending = () => {
   markDirty();
   toast.success('Hop added');
 };
-
-const copy = async (text: string) => {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success('Copied');
-  } catch {
-    toast.error('Copy failed');
-  }
-};
-
-watch(
-  () => props.nodeId,
-  () => {
-    load();
-  },
-  { immediate: true }
-);
 
 onMounted(() => {
   load();

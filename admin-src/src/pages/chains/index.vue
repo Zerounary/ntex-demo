@@ -22,12 +22,9 @@
         </div>
       </div>
 
-      <div class="mt-4 flex items-center justify-end text-xs text-gray-400">
-        <span>Global templates (node_id: <span class="font-mono">0</span>)</span>
-      </div>
     </div>
 
-    <ChainManagement :node-id="0" />
+    <ChainManagement />
   </div>
 </template>
 

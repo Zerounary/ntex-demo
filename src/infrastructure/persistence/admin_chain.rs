@@ -3,29 +3,19 @@ use sea_orm::{entity::prelude::*, JsonValue, sea_query::Expr};
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "admin_chains")]
 pub struct Model {
-    #[sea_orm(primary_key, auto_increment = false)]
-    pub node_id: u64,
-    pub chains: JsonValue,
+    #[sea_orm(primary_key)]
+    pub id: i64,
+    pub name: String,
+    pub protocol: String,
+    pub routes: JsonValue,
+    pub description: Option<String>,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
-    #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")] 
+    #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub updated_at: DateTimeUtc,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {
-    #[sea_orm(
-        belongs_to = "super::admin_node_config::Entity",
-        from = "Column::NodeId",
-        to = "super::admin_node_config::Column::NodeId"
-    )]
-    NodeConfig,
-}
-
-impl Related<super::admin_node_config::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::NodeConfig.def()
-    }
-}
+pub enum Relation {}
 
 impl ActiveModelBehavior for ActiveModel {}

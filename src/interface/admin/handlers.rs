@@ -57,7 +57,7 @@ fn parse_sync_from_query(params: &HashMap<String, String>) -> (bool, u64) {
 
 #[derive(Deserialize)]
 pub struct ApplyChainRequest {
-    pub chain_id: String,
+    pub chain_id: i64,
     #[serde(default)]
     pub base_port: Option<u16>,
 }
@@ -73,7 +73,7 @@ pub async fn apply_chain(
         return resp;
     }
     let base_port: u16 = body.base_port.unwrap_or(40000);
-    match chain_ops::apply_chain(&state.config, state.mqtt_client.as_ref(), &body.chain_id, base_port).await {
+    match chain_ops::apply_chain(&state.config, state.mqtt_client.as_ref(), body.chain_id, base_port).await {
         Ok((cid, results)) => HttpResponse::Ok().json(&serde_json::json!({
             "msg": "ok",
             "data": {
@@ -93,14 +93,9 @@ pub async fn apply_chain(
 #[web::get("/api/admin/chains")]
 pub async fn get_chains(
     state: State<AdminState>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(_params): Query<HashMap<String, String>>,
 ) -> HttpResponse {
-    let node_id = match get_node_id_from_query(&params) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
-
-    match state.config.get_chains(node_id).await {
+    match state.config.get_chains().await {
         Ok(chains) => HttpResponse::Ok().json(&serde_json::json!({
             "msg": "ok",
             "data": chains
@@ -112,53 +107,60 @@ pub async fn get_chains(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertChainRequest {
+    #[serde(default)]
+    pub id: Option<i64>,
+    pub name: String,
+    pub protocol: String,
+    #[serde(default)]
+    pub routes: Vec<crate::infrastructure::admin_config::ChainRouteEntry>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 #[web::post("/api/admin/chains")]
-pub async fn update_chains(
+pub async fn upsert_chain(
     state: State<AdminState>,
-    Query(params): Query<HashMap<String, String>>,
-    Json(body): Json<Vec<ChainDefinition>>,
+    Query(_params): Query<HashMap<String, String>>,
+    Json(body): Json<UpsertChainRequest>,
 ) -> HttpResponse {
-    let node_id = match get_node_id_from_query(&params) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
-
-    let old_chains = state.config.get_chains(node_id).await.unwrap_or_default();
-
-    if let Err(e) = state.config.update_chains(node_id, body).await {
-        return HttpResponse::InternalServerError().json(&serde_json::json!({
-            "msg": "error",
-            "error": e
-        }));
-    }
-
-    if node_id == 0 {
-        let new_chains = state.config.get_chains(0).await.unwrap_or_default();
-        let new_ids: std::collections::HashSet<String> = new_chains.into_iter().map(|c| c.id).collect();
-        for c in old_chains {
-            if !new_ids.contains(&c.id) {
-                let _ = chain_ops::cleanup_chain_artifacts(&state.config, state.mqtt_client.as_ref(), &c.id).await;
-            }
-        }
-    }
-
-    if node_id != 0 {
-        if let Some(ref mqtt_client) = state.mqtt_client {
-            let _ = mqtt_client.publish_update_notification(node_id, "chains").await;
-            let _ = mqtt_client.publish_update_notification(node_id, "config").await;
-        }
-    }
-
-    match state.config.get_chains(node_id).await {
-        Ok(chains) => HttpResponse::Ok().json(&serde_json::json!({
+    match state
+        .config
+        .upsert_chain(body.id, body.name, body.protocol, body.routes, body.description)
+        .await
+    {
+        Ok(chain) => HttpResponse::Ok().json(&serde_json::json!({
             "msg": "ok",
-            "data": chains
+            "data": chain
         })),
         Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
             "msg": "error",
             "error": e
         })),
     }
+}
+
+#[web::delete("/api/admin/chains/{id}")]
+pub async fn delete_chain(
+    state: State<AdminState>,
+    Query(_params): Query<HashMap<String, String>>,
+    path: web::types::Path<i64>,
+) -> HttpResponse {
+    let id = path.into_inner();
+    if let Err(e) = state.config.delete_chain(id).await {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": e
+        }));
+    }
+
+    let _ = chain_ops::cleanup_chain_artifacts(&state.config, state.mqtt_client.as_ref(), id).await;
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok"
+    }))
 }
 
 #[derive(Deserialize)]

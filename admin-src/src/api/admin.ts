@@ -10,6 +10,7 @@ import type {
   RoutingConfig,
   RoutingRule,
   ChainDefinition,
+  ChainRouteEntry,
   ApplyChainRequest,
   ApplyChainResult,
   UserMapping,
@@ -51,25 +52,38 @@ function buildQuery(params: Record<string, any>): string {
 
 // ========== 链路（Chain）配置管理 ==========
 
-export async function getChains(nodeId: number): Promise<ChainDefinition[]> {
-  const query = buildQuery({ node_id: nodeId });
-  const response = await request<ChainDefinition[]>(`/api/admin/chains?${query}`);
+export async function getChains(): Promise<ChainDefinition[]> {
+  const response = await request<ChainDefinition[]>(`/api/admin/chains`);
   if (response.msg === 'ok' && response.data) {
     return response.data;
   }
   throw new Error(response.error || '获取链路配置失败');
 }
 
-export async function updateChains(nodeId: number, chains: ChainDefinition[]): Promise<ChainDefinition[]> {
-  const query = buildQuery({ node_id: nodeId });
-  const response = await request<ChainDefinition[]>(`/api/admin/chains?${query}`, {
+export async function upsertChain(chain: {
+  id?: number | null;
+  name: string;
+  protocol: string;
+  routes: ChainRouteEntry[];
+  description?: string | null;
+}): Promise<ChainDefinition> {
+  const response = await request<ChainDefinition>(`/api/admin/chains`, {
     method: 'POST',
-    body: JSON.stringify(chains),
+    body: JSON.stringify(chain),
   });
   if (response.msg === 'ok' && response.data) {
     return response.data;
   }
   throw new Error(response.error || '更新链路配置失败');
+}
+
+export async function deleteChain(id: number): Promise<void> {
+  const response = await request(`/api/admin/chains/${id}`, {
+    method: 'DELETE',
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '删除链路失败');
+  }
 }
 
 export async function applyChain(payload: ApplyChainRequest): Promise<ApplyChainResult> {

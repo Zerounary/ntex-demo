@@ -104,9 +104,8 @@ export interface ChainRouteEntry {
 }
 
 export interface ChainDefinition {
-  id: string;
+  id: number;
   name: string;
-  uuid: string;
   protocol: string;
   routes: ChainRouteEntry[];
   createdAt: string;
@@ -115,7 +114,7 @@ export interface ChainDefinition {
 }
 
 export interface ApplyChainRequest {
-  chain_id: string;
+  chain_id: number;
   base_port?: number;
 }
 
@@ -127,7 +126,7 @@ export interface ApplyChainNodeResult {
 }
 
 export interface ApplyChainResult {
-  chain_id: string;
+  chain_id: number;
   applied_nodes: ApplyChainNodeResult[];
 }
 

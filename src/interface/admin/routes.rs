@@ -13,7 +13,8 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     // 链路（Chain）配置管理
     cfg.service(handlers::apply_chain);
     cfg.service(handlers::get_chains);
-    cfg.service(handlers::update_chains);
+    cfg.service(handlers::upsert_chain);
+    cfg.service(handlers::delete_chain);
 
     cfg.service(handlers::refresh_node_network_interfaces);
     
