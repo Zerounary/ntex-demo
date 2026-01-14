@@ -27,8 +27,9 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile,
     acceleration_session, accelerator_user, accelerator_user_credential, accelerator_user_session,
-    admin_node_config,
+    admin_chain, admin_node_config,
 };
+use crate::infrastructure::admin_config::ChainRouteEntry;
 
 use super::AppState;
 use super::auth::AuthedAcceleratorUser;
@@ -39,88 +40,12 @@ use super::dto::{
     NodeRegisterRequest, ProfileSyncRequest, SettingsMetaVO, TicketRequestVO, TicketStatusQuery,
     WechatTicketVO,
     GameNodeBindingRequest, GameNodeVO,
-    SessionStartRequestVO, SessionStartV2RequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
+    SessionStartRequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
     AcceleratorUserRegisterRequestVO, AcceleratorUserLoginRequestVO, AcceleratorUserLoginResponseVO,
     AcceleratorUserUpdateProfileRequestVO, AcceleratorUserChangePasswordRequestVO, UserVO,
     PagedResponseVO, SearchItemVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
-
-#[derive(Debug, Clone)]
-struct ResolvedTargetNode {
-    exit_node_id: u64,
-    entry_server: Option<String>,
-    entry_port: Option<u16>,
-}
-
-async fn resolve_target_node_from_request(
-    state: &AppState,
-    body: &SessionStartV2RequestVO,
-) -> Result<ResolvedTargetNode, UsecaseError> {
-    let node_id = body.node_id;
-    let chain_id = body.chain_id;
-
-    match (node_id, chain_id) {
-        (Some(_), Some(_)) => Err(UsecaseError::Validation(
-            "either node_id or chain_id must be provided (not both)".to_string(),
-        )),
-        (None, None) => Err(UsecaseError::Validation(
-            "either node_id or chain_id must be provided".to_string(),
-        )),
-        (Some(exit_node_id), None) => Ok(ResolvedTargetNode {
-            exit_node_id,
-            entry_server: None,
-            entry_port: None,
-        }),
-        (None, Some(chain_id)) => {
-            let base_port: u16 = body.base_port.unwrap_or(40000);
-            let chains = state
-                .admin_config
-                .get_chains()
-                .await
-                .map_err(|e| UsecaseError::Validation(format!("get_chains failed: {}", e)))?;
-            let chain = chains
-                .into_iter()
-                .find(|c| c.id == chain_id)
-                .ok_or_else(|| UsecaseError::NotFound("chain"))?;
-
-            if chain.routes.is_empty() {
-                return Err(UsecaseError::Validation(
-                    "chain has no routes".to_string(),
-                ));
-            }
-
-            let mut routes = chain.routes.clone();
-            routes.sort_by_key(|r| r.order);
-            let first_from = routes
-                .first()
-                .map(|r| r.from_node_id)
-                .ok_or_else(|| UsecaseError::Validation("chain routes empty".to_string()))?;
-            let last_to = routes
-                .last()
-                .map(|r| r.to_node_id)
-                .ok_or_else(|| UsecaseError::Validation("chain routes empty".to_string()))?;
-
-            let entry_ip = state
-                .admin_config
-                .get_node_public_ip(first_from)
-                .await
-                .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
-
-            let entry_port = base_port;
-
-            if let Some(mqtt) = state.mqtt_publisher.as_ref() {
-                let _ = mqtt.publish_update_notification(first_from, "config").await;
-            }
-
-            Ok(ResolvedTargetNode {
-                exit_node_id: last_to,
-                entry_server: Some(entry_ip),
-                entry_port: Some(entry_port),
-            })
-        }
-    }
-}
 
 #[derive(Debug, Deserialize, Default)]
 struct AdminUserDTO {
@@ -130,199 +55,34 @@ struct AdminUserDTO {
     pub dt: u64,
 }
 
-#[web::post("/accelerator/session/start_v2")]
-pub async fn session_start_v2(
-    state: State<AppState>,
-    user: AuthedAcceleratorUser,
-    Json(body): Json<SessionStartV2RequestVO>,
-) -> Result<HttpResponse, AppError> {
-    let resolved = resolve_target_node_from_request(&state, &body).await?;
-    let user_id = user.user.id;
-    let game_id = body.game_id;
-    let node_id = resolved.exit_node_id;
-    let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
 
-    let cdk_repo = CdkRepositoryImpl::new(&state.db);
-    let auth_repo = AuthRepositoryImpl::new(&state.db);
-    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-
-    let validation = usecase
-        .validate_account(AccountValidationRequest { user_id: user_id.clone() })
-        .await?;
-
-    if !validation.is_valid {
-        return Ok(ApiResponse::<MessageResponse>::error(
-            "ACCOUNT_VALIDATION_FAILED",
-            validation.message,
-        )
-        .into_http(StatusCode::FORBIDDEN));
-    }
-
-    if validation.billing_mode == "minute" && validation.remaining_minutes < 1 {
-        return Ok(ApiResponse::<MessageResponse>::error(
-            "INSUFFICIENT_BALANCE",
-            "remaining minutes is insufficient".to_string(),
-        )
-        .into_http(StatusCode::FORBIDDEN));
-    }
-
-    let node_cfg = admin_node_config::Entity::find_by_id(node_id)
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?;
-
-    let offline_after_seconds = env::var("NODE_OFFLINE_AFTER_SECONDS")
-        .ok()
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(60)
-        .max(1);
-    let offline_threshold = chrono::Utc::now() - chrono::Duration::seconds(offline_after_seconds);
-
-    let is_online = node_cfg.as_ref().map(|n| n.is_online).unwrap_or(false);
-    let last_seen_at = node_cfg.as_ref().and_then(|n| n.last_seen_at);
-    let is_fresh = last_seen_at.map(|ts| ts >= offline_threshold).unwrap_or(false);
-
-    if !is_online || !is_fresh {
-        return Ok(ApiResponse::<MessageResponse>::error(
-            "NODE_OFFLINE",
-            format!("node {} is offline", node_id),
-        )
-        .into_http(StatusCode::SERVICE_UNAVAILABLE));
-    }
-
-    if let Ok(Some(existing)) = acceleration_session::Entity::find()
-        .filter(acceleration_session::Column::UserId.eq(user_id.as_str()))
-        .filter(acceleration_session::Column::Status.eq("active"))
-        .order_by_desc(acceleration_session::Column::StartedAt)
-        .one(&state.db)
-        .await
-    {
-        info!(
-            "[session_start_v2] best-effort stop existing session_id={} node_id={}",
-            existing.session_id, existing.node_id
-        );
-        if existing.admin_user_id > 0 {
-            let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
-        }
-
-        let mut active: acceleration_session::ActiveModel = existing.into();
-        active.status = Set("stopped".to_string());
-        active.ended_at = Set(Some(chrono::Utc::now().into()));
-        active.updated_at = Set(chrono::Utc::now().into());
-        let _ = active.update(&state.db).await;
-    }
-
-    let admin_user_id: u64 = 0;
-    let admin_uuid: String = "".to_string();
-    let mapped_outbound_tag: String = desired_outbound_tag.clone();
-
-    let session_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now();
-
-    let bill_type = validation.billing_mode.clone();
-
-    let game_id_clone = game_id.clone();
-    let model = acceleration_session::ActiveModel {
-        session_id: Set(session_id.clone()),
-        user_id: Set(user_id),
-        game_id: Set(game_id_clone.clone()),
-        node_id: Set(node_id),
-        admin_user_id: Set(admin_user_id),
-        uuid: Set(admin_uuid.clone()),
-        outbound_tag: Set(mapped_outbound_tag),
-        status: Set("active".to_string()),
-        bill_type: Set(bill_type.clone()),
-        started_at: Set(now.into()),
-        last_activity_at: Set(now.into()),
-        last_accounted_at: Set(now.into()),
-        billed_minutes: Set(0),
-        ended_at: Set(None),
-        created_at: Set(now.into()),
-        updated_at: Set(now.into()),
-    };
-
-    model
-        .insert(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?;
-
-    let remaining_minutes = if bill_type == "minute" {
-        Some(validation.remaining_minutes)
-    } else {
-        None
-    };
-
-    let node_id_str = node_id.to_string();
-    let profile = accelerator_profile::Entity::find()
-        .filter(accelerator_profile::Column::GameId.eq(game_id_clone.as_str()))
-        .filter(accelerator_profile::Column::NodeId.eq(node_id_str.as_str()))
-        .one(&state.db)
+async fn resolve_chain_exit_node_id(
+    db: &sea_orm::DatabaseConnection,
+    chain_id: i64,
+) -> Result<u64, UsecaseError> {
+    let chain = admin_chain::Entity::find_by_id(chain_id)
+        .one(db)
         .await
         .map_err(|e| {
             UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
                 e.to_string(),
             ))
         })?
-        .ok_or_else(|| UsecaseError::NotFound("profile"))?;
+        .ok_or_else(|| UsecaseError::NotFound("chain"))?;
 
-    let node = accelerator_node::Entity::find_by_id(node_id_str.clone())
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?
-        .ok_or_else(|| UsecaseError::NotFound("node"))?;
+    let mut routes: Vec<ChainRouteEntry> = serde_json::from_value(chain.routes).map_err(|e| {
+        UsecaseError::Validation(format!("invalid chain routes json: {}", e))
+    })?;
 
-    let game = accelerator_game::Entity::find_by_id(game_id_clone.clone())
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?
-        .ok_or_else(|| UsecaseError::NotFound("game"))?;
-
-    let mut profile_vo = crate::interface::web::dto::ProfileVO {
-        id: profile.id,
-        game_id: profile.game_id,
-        display_name: profile.display_name,
-        node_id: profile.node_id,
-        process_name: game.process_name,
-        vmess_uuid: node.vmess_uuid,
-        vmess_server: node.vmess_server,
-        vmess_port: node.vmess_port,
-        vmess_email: node.vmess_email,
-        udp_proxy: node.udp_proxy,
-        mode: node.mode,
-        status: profile.status,
-        region: game.region,
-        ping: node.ping,
-    };
-
-    if let (Some(server), Some(port)) = (resolved.entry_server, resolved.entry_port) {
-        profile_vo.vmess_server = server;
-        profile_vo.vmess_port = i32::from(port);
+    if routes.is_empty() {
+        return Err(UsecaseError::Validation("chain has no routes".to_string()));
     }
-
-    Ok(ApiResponse::success(SessionStartResponseVO {
-        session_id,
-        uuid: profile_vo.vmess_uuid.clone(),
-        bill_type,
-        remaining_minutes,
-        profile: profile_vo,
-    })
-    .into_http(StatusCode::OK))
+    routes.sort_by_key(|r| r.order);
+    let last_to = routes
+        .last()
+        .map(|r| r.to_node_id)
+        .ok_or_else(|| UsecaseError::Validation("chain routes empty".to_string()))?;
+    Ok(last_to)
 }
 
 #[derive(Debug, Deserialize)]
@@ -931,8 +691,60 @@ pub async fn session_start(
     Json(body): Json<SessionStartRequestVO>,
 ) -> Result<HttpResponse, AppError> {
     let user_id = user.user.id;
-    let game_id = body.game_id;
-    let node_id = body.node_id;
+
+    let binding = accelerator_game_node_binding::Entity::find_by_id(body.binding_id)
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or_else(|| UsecaseError::NotFound("binding"))?;
+
+    let game_id = binding.game_id.clone();
+
+    let node_id = match binding.r#type.as_str() {
+        "node" => {
+            let node_id_str = binding
+                .node_id
+                .clone()
+                .ok_or_else(|| UsecaseError::Validation("binding.node_id is required for type=node".to_string()))?;
+            node_id_str.parse::<u64>().map_err(|_| {
+                UsecaseError::Validation(format!("invalid binding.node_id: {}", node_id_str))
+            })?
+        }
+        "chain" => {
+            let mut exit_nodes: Vec<u64> = Vec::new();
+            if let Some(tcp_chain_id) = binding.tcp_chain_id {
+                exit_nodes.push(resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?);
+            }
+            if let Some(udp_chain_id) = binding.udp_chain_id {
+                exit_nodes.push(resolve_chain_exit_node_id(&state.db, udp_chain_id).await?);
+            }
+            if exit_nodes.is_empty() {
+                return Err(UsecaseError::Validation(
+                    "binding.tcp_chain_id or binding.udp_chain_id is required for type=chain".to_string(),
+                )
+                .into());
+            }
+            exit_nodes.sort();
+            exit_nodes.dedup();
+            if exit_nodes.len() != 1 {
+                return Err(UsecaseError::Validation(
+                    "tcp_chain_id and udp_chain_id must resolve to the same exit node".to_string(),
+                )
+                .into());
+            }
+            exit_nodes[0]
+        }
+        other => {
+            return Err(
+                UsecaseError::Validation(format!("invalid binding.type: {}", other)).into(),
+            );
+        }
+    };
+
     let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
 
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
@@ -969,6 +781,8 @@ pub async fn session_start(
             ))
         })?;
 
+    let node_cfg = node_cfg.ok_or_else(|| UsecaseError::NotFound("node"))?;
+
     let offline_after_seconds = env::var("NODE_OFFLINE_AFTER_SECONDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -976,8 +790,8 @@ pub async fn session_start(
         .max(1);
     let offline_threshold = chrono::Utc::now() - chrono::Duration::seconds(offline_after_seconds);
 
-    let is_online = node_cfg.as_ref().map(|n| n.is_online).unwrap_or(false);
-    let last_seen_at = node_cfg.as_ref().and_then(|n| n.last_seen_at);
+    let is_online = node_cfg.is_online;
+    let last_seen_at = node_cfg.last_seen_at;
     let is_fresh = last_seen_at.map(|ts| ts >= offline_threshold).unwrap_or(false);
 
     if !is_online || !is_fresh {
@@ -1080,7 +894,7 @@ pub async fn session_start(
     let game_id_clone = game_id.clone();
     let model = acceleration_session::ActiveModel {
         session_id: Set(session_id.clone()),
-        user_id: Set(user_id),
+        user_id: Set(user_id.clone()),
         game_id: Set(game_id_clone.clone()),
         node_id: Set(node_id),
         admin_user_id: Set(admin_user_id),
@@ -1109,27 +923,19 @@ pub async fn session_start(
     };
 
     let node_id_str = node_id.to_string();
-    let profile = accelerator_profile::Entity::find()
-        .filter(accelerator_profile::Column::GameId.eq(game_id_clone.as_str()))
-        .filter(accelerator_profile::Column::NodeId.eq(node_id_str.as_str()))
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?
-        .ok_or_else(|| UsecaseError::NotFound("profile"))?;
 
-    let node = accelerator_node::Entity::find_by_id(node_id_str.clone())
-        .one(&state.db)
+    let vmess_server = state
+        .admin_config
+        .get_node_public_ip(node_id)
         .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?
-        .ok_or_else(|| UsecaseError::NotFound("node"))?;
+        .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
+    let vmess_port = state
+        .admin_config
+        .select_default_forward_port(node_id)
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("select_default_forward_port failed: {}", e)))?;
+    let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
+    let udp_proxy = format!("{}:{}", vmess_server, vmess_port);
 
     let game = accelerator_game::Entity::find_by_id(game_id_clone.clone())
         .one(&state.db)
@@ -1142,20 +948,23 @@ pub async fn session_start(
         .ok_or_else(|| UsecaseError::NotFound("game"))?;
 
     let profile_vo = crate::interface::web::dto::ProfileVO {
-        id: profile.id,
-        game_id: profile.game_id,
-        display_name: profile.display_name,
-        node_id: profile.node_id,
+        id: binding.id.to_string(),
+        game_id: binding.game_id,
+        display_name: binding
+            .display_name
+            .clone()
+            .unwrap_or_else(|| node_id_str.clone()),
+        node_id: node_id_str.clone(),
         process_name: game.process_name,
         vmess_uuid: admin_uuid,
-        vmess_server: node.vmess_server,
-        vmess_port: node.vmess_port,
-        vmess_email: node.vmess_email,
-        udp_proxy: node.udp_proxy,
-        mode: node.mode,
-        status: profile.status,
-        region: game.region,
-        ping: node.ping,
+        vmess_server,
+        vmess_port,
+        vmess_email,
+        udp_proxy,
+        mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
+        status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
+        region: binding.region.clone().unwrap_or_else(|| game.region),
+        ping: binding.ping.unwrap_or(5),
     };
 
     Ok(ApiResponse::success(SessionStartResponseVO {

@@ -448,20 +448,7 @@ impl From<AccountValidationRequestVO> for AccountValidationRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionStartRequestVO {
-    pub game_id: String,
-    pub node_id: u64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionStartV2RequestVO {
-    pub game_id: String,
-    #[serde(default)]
-    pub node_id: Option<u64>,
-    #[serde(default)]
-    pub chain_id: Option<i64>,
-    #[serde(default)]
-    pub base_port: Option<u16>,
+    pub binding_id: i64,
 }
 
 #[derive(Debug, Serialize)]

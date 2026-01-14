@@ -18,6 +18,7 @@ use log::{info, warn};
 
 use super::accelerator_game;
 use super::accelerator_node;
+use super::accelerator_game_node_binding;
 use super::accelerator_profile;
 use super::accelerator_user;
 use super::account_user;
@@ -120,12 +121,49 @@ impl<'a> AcceleratorRepository for AcceleratorRepositoryImpl<'a> {
         }
 
         let games = self.list_games().await?;
-        let profiles = self.list_profiles().await?;
         let user = self.current_user().await?;
         
         // 获取所有节点
         let node_repo = NodeRepositoryImpl::new(self.db);
         let nodes = node_repo.list_nodes().await?;
+
+        // profiles：从 accelerator_game_node_bindings 构造（由 game config 决定可选节点）
+        let binding_models = accelerator_game_node_binding::Entity::find()
+            .all(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+
+        let node_map: std::collections::HashMap<String, crate::domain::accelerator::Node> =
+            nodes.iter().cloned().map(|n| (n.id.clone(), n)).collect();
+
+        let mut profiles: Vec<crate::domain::accelerator::Profile> = Vec::new();
+        for b in binding_models {
+            if b.r#type != "node" {
+                continue;
+            }
+            let node_id = match b.node_id.clone() {
+                Some(v) => v,
+                None => continue,
+            };
+            let node = match node_map.get(&node_id) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let display_name = b
+                .display_name
+                .clone()
+                .unwrap_or_else(|| node_id.clone());
+            let status = b.status.clone().unwrap_or_else(|| node.status.clone());
+
+            profiles.push(crate::domain::accelerator::Profile {
+                id: format!("bind_{}", b.id),
+                game_id: b.game_id.clone(),
+                display_name,
+                node_id,
+                status,
+            });
+        }
         
         let payload = BootstrapPayload {
             games,
