@@ -1192,6 +1192,45 @@ pub async fn dashboard(state: State<AppState>) -> Result<HttpResponse, AppError>
     Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
 }
 
+#[web::get("/games/{game_id}/bindings")]
+pub async fn list_game_bindings(
+    state: State<AppState>,
+    path: web::types::Path<String>,
+) -> Result<HttpResponse, AppError> {
+    let game_id = path.into_inner();
+
+    let bindings = accelerator_game_node_binding::Entity::find()
+        .filter(accelerator_game_node_binding::Column::GameId.eq(game_id.as_str()))
+        .order_by_asc(accelerator_game_node_binding::Column::CreatedAt)
+        .all(&state.db)
+        .await
+        .map_err(|e| {
+            crate::application::errors::UsecaseError::Repository(
+                crate::application::errors::RepositoryError::Persistence(e.to_string()),
+            )
+        })?;
+
+    let payload: Vec<crate::interface::web::dto::ProfileListVO> = bindings
+        .into_iter()
+        .map(|b| crate::interface::web::dto::ProfileListVO {
+            id: b.id.to_string(),
+            game_id: b.game_id,
+            display_name: b
+                .display_name
+                .clone()
+                .or_else(|| b.node_id.clone())
+                .unwrap_or_else(|| format!("binding_{}", b.id)),
+            node_id: b.node_id.unwrap_or_default(),
+            mode: b.mode.unwrap_or_else(|| "进程模式".to_string()),
+            status: b.status.unwrap_or_else(|| "active".to_string()),
+            region: b.region.unwrap_or_else(|| "".to_string()),
+            ping: b.ping.unwrap_or(5),
+        })
+        .collect();
+
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
+
 #[web::get("/library")]
 pub async fn library(state: State<AppState>) -> Result<HttpResponse, AppError> {
     let config = ConfigRepositoryImpl::new(&state.db);

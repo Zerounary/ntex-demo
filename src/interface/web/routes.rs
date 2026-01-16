@@ -19,6 +19,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(handlers::accelerator_user_update_profile)
             .service(handlers::accelerator_user_change_password)
             .service(handlers::accelerator_user_logout)
+            .service(handlers::list_game_bindings)
             .service(handlers::list_game_nodes)
             .service(handlers::set_game_nodes)
             .service(handlers::dashboard)
