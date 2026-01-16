@@ -85,6 +85,58 @@ async fn resolve_chain_exit_node_id(
     Ok(last_to)
 }
 
+async fn resolve_chain_entry_node_id(
+    db: &sea_orm::DatabaseConnection,
+    chain_id: i64,
+) -> Result<u64, UsecaseError> {
+    let chain = admin_chain::Entity::find_by_id(chain_id)
+        .one(db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or_else(|| UsecaseError::NotFound("chain"))?;
+
+    let mut routes: Vec<ChainRouteEntry> = serde_json::from_value(chain.routes).map_err(|e| {
+        UsecaseError::Validation(format!("invalid chain routes json: {}", e))
+    })?;
+
+    if routes.is_empty() {
+        return Err(UsecaseError::Validation("chain has no routes".to_string()));
+    }
+    routes.sort_by_key(|r| r.order);
+    let first_from = routes
+        .first()
+        .map(|r| r.from_node_id)
+        .ok_or_else(|| UsecaseError::Validation("chain routes empty".to_string()))?;
+    Ok(first_from)
+}
+
+async fn resolve_inbound_port_by_tag(
+    config: &crate::infrastructure::admin_config::AdminConfigStore,
+    node_id: u64,
+    inbound_tag: &str,
+) -> Result<i32, UsecaseError> {
+    let inbounds = config
+        .get_inbounds(node_id)
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("get_inbounds failed: {}", e)))?;
+    let port = inbounds
+        .into_iter()
+        .find(|i| i.tag == inbound_tag)
+        .map(|i| i.port)
+        .filter(|p| *p > 0)
+        .ok_or_else(|| {
+            UsecaseError::Validation(format!(
+                "node_id={} inbound {} not found or invalid port",
+                node_id, inbound_tag
+            ))
+        })?;
+    Ok(port)
+}
+
 #[derive(Debug, Deserialize)]
 struct AdminApiResponse<T> {
     pub msg: String,
@@ -924,18 +976,83 @@ pub async fn session_start(
 
     let node_id_str = node_id.to_string();
 
-    let vmess_server = state
-        .admin_config
-        .get_node_public_ip(node_id)
-        .await
-        .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
-    let vmess_port = state
-        .admin_config
-        .select_default_forward_port(node_id)
-        .await
-        .map_err(|e| UsecaseError::Validation(format!("select_default_forward_port failed: {}", e)))?;
+    let (vmess_server, vmess_port, udp_port) = match binding.r#type.as_str() {
+        "node" => {
+            let server = state
+                .admin_config
+                .get_node_public_ip(node_id)
+                .await
+                .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
+            let port = state
+                .admin_config
+                .select_default_forward_port(node_id)
+                .await
+                .map_err(|e| {
+                    UsecaseError::Validation(format!("select_default_forward_port failed: {}", e))
+                })?;
+            (server, port, port)
+        }
+        "chain" => {
+            let mut entry_nodes: Vec<u64> = Vec::new();
+            if let Some(tcp_chain_id) = binding.tcp_chain_id {
+                entry_nodes.push(resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?);
+            }
+            if let Some(udp_chain_id) = binding.udp_chain_id {
+                entry_nodes.push(resolve_chain_entry_node_id(&state.db, udp_chain_id).await?);
+            }
+            if entry_nodes.is_empty() {
+                return Err(UsecaseError::Validation(
+                    "binding.tcp_chain_id or binding.udp_chain_id is required for type=chain"
+                        .to_string(),
+                )
+                .into());
+            }
+            entry_nodes.sort();
+            entry_nodes.dedup();
+            if entry_nodes.len() != 1 {
+                return Err(UsecaseError::Validation(
+                    "tcp_chain_id and udp_chain_id must resolve to the same entry node".to_string(),
+                )
+                .into());
+            }
+            let entry_node_id = entry_nodes[0];
+
+            let server = state
+                .admin_config
+                .get_node_public_ip(entry_node_id)
+                .await
+                .map_err(|e| {
+                    UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
+                })?;
+
+            let tcp_port = if let Some(tcp_chain_id) = binding.tcp_chain_id {
+                let tag = format!("chain_{}_1", tcp_chain_id);
+                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
+            } else if let Some(udp_chain_id) = binding.udp_chain_id {
+                let tag = format!("chain_{}_1", udp_chain_id);
+                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
+            } else {
+                return Err(UsecaseError::Validation(
+                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
+                )
+                .into());
+            };
+
+            let udp_port = if let Some(udp_chain_id) = binding.udp_chain_id {
+                let tag = format!("chain_{}_1", udp_chain_id);
+                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
+            } else {
+                tcp_port
+            };
+
+            (server, tcp_port, udp_port)
+        }
+        other => {
+            return Err(UsecaseError::Validation(format!("invalid binding.type: {}", other)).into());
+        }
+    };
     let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
-    let udp_proxy = format!("{}:{}", vmess_server, vmess_port);
+    let udp_proxy = format!("{}:{}", vmess_server, udp_port);
 
     let game = accelerator_game::Entity::find_by_id(game_id_clone.clone())
         .one(&state.db)
