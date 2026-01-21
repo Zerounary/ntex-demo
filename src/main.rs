@@ -184,10 +184,6 @@ async fn run_minute_billing_daemon(
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
-    let online_grace_seconds: i64 = env::var("BILLING_ONLINE_GRACE_SECONDS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(90);
 
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(tick_seconds));
 
@@ -195,7 +191,6 @@ async fn run_minute_billing_daemon(
         ticker.tick().await;
 
         let now = chrono::Utc::now();
-        let online_cutoff = now - chrono::Duration::seconds(online_grace_seconds);
 
         let sessions = match acceleration_session::Entity::find()
             .filter(acceleration_session::Column::Status.eq("active"))
@@ -275,45 +270,6 @@ async fn run_minute_billing_daemon(
                 }
                 None => last_activity_at,
             };
-
-            if last_activity_ts < online_cutoff {
-                // 认为用户已不在线，停止会话（timeout/offline stop）
-                let updated = match acceleration_session::Entity::update_many()
-                    .col_expr(acceleration_session::Column::Status, Expr::value("stopped"))
-                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
-                    .col_expr(
-                        acceleration_session::Column::LastActivityAt,
-                        Expr::value(last_activity_ts),
-                    )
-                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
-                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
-                    .filter(acceleration_session::Column::Status.eq("active"))
-                    .exec(&db)
-                    .await
-                {
-                    Ok(r) => r.rows_affected,
-                    Err(e) => {
-                        warn!("[billing] offline stop update failed: session_id={}, err={}", session_id, e);
-                        0
-                    }
-                };
-
-                if updated > 0 {
-                    info!(
-                        "[billing] offline stop: session_id={}, node_id={}, admin_user_id={}, last_seen={:?}, last_activity_ts={}, online_cutoff={} ",
-                        session_id,
-                        node_id,
-                        admin_user_id,
-                        last_seen,
-                        last_activity_ts,
-                        online_cutoff
-                    );
-                    revoke_session_users(&admin_config, &mqtt, &session).await;
-                    info!("[billing] session stopped due to offline: session_id={}", session_id);
-                }
-
-                continue;
-            }
 
             let elapsed = now.signed_duration_since(last_accounted_at);
             let minutes_to_charge: i64 = elapsed.num_minutes();
