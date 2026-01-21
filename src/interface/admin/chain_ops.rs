@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig};
@@ -6,6 +7,28 @@ use crate::infrastructure::mqtt_client::MqttClientManager;
 
 fn hop_inbound_prefix(chain_id: i64) -> String {
     format!("chain_{}_", chain_id)
+}
+
+fn allocate_listen_port(
+    node_id: u64,
+    start_port: u16,
+    node_ports_cache: &mut HashMap<u64, HashSet<u16>>,
+) -> Result<u16, String> {
+    let ports = node_ports_cache
+        .get_mut(&node_id)
+        .ok_or_else(|| format!("missing port cache for node_id={}", node_id))?;
+
+    let mut candidate = start_port;
+    loop {
+        if !ports.contains(&candidate) {
+            ports.insert(candidate);
+            return Ok(candidate);
+        }
+
+        candidate = candidate
+            .checked_add(1)
+            .ok_or_else(|| format!("no available port on node_id={} for chain inbounds", node_id))?;
+    }
 }
 
 fn entry_inbound_tag(chain_id: i64) -> String {
@@ -68,6 +91,21 @@ pub async fn apply_chain(
         node_path.push(r.to_node_id);
     }
 
+    let mut node_ports_cache: HashMap<u64, HashSet<u16>> = HashMap::new();
+    for node_id in node_path.iter().copied().take(node_path.len() - 1) {
+        if node_ports_cache.contains_key(&node_id) {
+            continue;
+        }
+        let inbounds = config.get_inbounds(node_id).await?;
+        let mut ports = HashSet::new();
+        for inbound in inbounds {
+            if inbound.port > 0 && inbound.port <= u16::MAX as i32 {
+                ports.insert(inbound.port as u16);
+            }
+        }
+        node_ports_cache.insert(node_id, ports);
+    }
+
     let mut endpoints: Vec<(String, u16)> = Vec::new();
     for (idx, node_id) in node_path.iter().enumerate() {
         let ip = config.get_node_public_ip(*node_id).await?;
@@ -75,7 +113,11 @@ pub async fn apply_chain(
         let port: u16 = if idx == node_path.len() - 1 {
             config.select_default_forward_port(*node_id).await? as u16
         } else {
-            base_port.saturating_add(idx as u16)
+            allocate_listen_port(
+                *node_id,
+                base_port.saturating_add(idx as u16),
+                &mut node_ports_cache,
+            )?
         };
         endpoints.push((ip, port));
     }
