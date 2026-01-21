@@ -1058,7 +1058,17 @@ pub async fn session_start(
 
     let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
 
-    let build_profile = |node_id_str: String, vmess_uuid: String, vmess_server: String, vmess_port: i32, udp_port: i32, process_name: String, region: String| {
+    let build_profile = |
+        node_id_str: String,
+        vmess_uuid: String,
+        vmess_server: String,
+        vmess_port: i32,
+        udp_server_override: Option<String>,
+        udp_port: i32,
+        process_name: String,
+        region: String,
+    | {
+        let udp_host = udp_server_override.unwrap_or_else(|| vmess_server.clone());
         crate::interface::web::dto::ProfileVO {
             id: binding.id.to_string(),
             game_id: binding.game_id.clone(),
@@ -1072,7 +1082,7 @@ pub async fn session_start(
             vmess_server: vmess_server.clone(),
             vmess_port,
             vmess_email: vmess_email.clone(),
-            udp_proxy: format!("{}:{}", vmess_server, udp_port),
+            udp_proxy: format!("{}:{}", udp_host, udp_port),
             mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
             status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
             region,
@@ -1114,12 +1124,15 @@ pub async fn session_start(
                 primary_admin_uuid.clone(),
                 server,
                 port,
+                None,
                 port,
                 game.process_name,
                 binding.region.clone().unwrap_or_else(|| game.region),
             ));
         }
         "chain" => {
+            let mut tcp_entry_endpoint: Option<(String, i32)> = None;
+            let mut udp_entry_endpoint: Option<(String, i32)> = None;
             if let Some(tcp_chain_id) = binding.tcp_chain_id {
                 let entry_node_id = resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?;
                 let server = state
@@ -1131,12 +1144,14 @@ pub async fn session_start(
                     })?;
                 let tag = format!("chain_{}_1", tcp_chain_id);
                 let tcp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                tcp_entry_endpoint = Some((server.clone(), tcp_port));
 
                 tcp_profile_vo = Some(build_profile(
-                    tcp_exit_node_id.unwrap_or(primary_node_id).to_string(),
+                    entry_node_id.to_string(),
                     primary_admin_uuid.clone(),
                     server.clone(),
                     tcp_port,
+                    None,
                     tcp_port,
                     game.process_name.clone(),
                     binding.region.clone().unwrap_or_else(|| game.region.clone()),
@@ -1158,12 +1173,14 @@ pub async fn session_start(
                     })?;
                 let tag = format!("chain_{}_1", udp_chain_id);
                 let udp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                udp_entry_endpoint = Some((server.clone(), udp_port));
 
                 udp_profile_vo = Some(build_profile(
-                    udp_exit_node_id.unwrap_or(primary_node_id).to_string(),
+                    entry_node_id.to_string(),
                     primary_admin_uuid.clone(),
                     server.clone(),
                     udp_port,
+                    None,
                     udp_port,
                     game.process_name.clone(),
                     binding.region.clone().unwrap_or_else(|| game.region.clone()),
@@ -1179,6 +1196,9 @@ pub async fn session_start(
                     "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
                 )
                 .into());
+            }
+            if let (Some((udp_host, udp_port)), Some(profile)) = (udp_entry_endpoint.clone(), profile_vo.as_mut()) {
+                profile.udp_proxy = format!("{}:{}", udp_host, udp_port);
             }
         }
         other => {
