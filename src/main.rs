@@ -189,11 +189,6 @@ async fn run_minute_billing_daemon(
         .and_then(|v| v.parse().ok())
         .unwrap_or(90);
 
-    let connect_grace_seconds: i64 = env::var("BILLING_CONNECT_GRACE_SECONDS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(180);
-
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(tick_seconds));
 
     loop {
@@ -280,47 +275,6 @@ async fn run_minute_billing_daemon(
                 }
                 None => last_activity_at,
             };
-
-            let unconfirmed_tolerance = chrono::Duration::seconds(2);
-            let confirmed_usage = has_traffic
-                || last_seen.is_some()
-                || last_activity_ts > started_at + unconfirmed_tolerance;
-
-            if !confirmed_usage {
-                let connect_deadline = started_at + chrono::Duration::seconds(connect_grace_seconds);
-                if now < connect_deadline {
-                    continue;
-                }
-
-                let updated = match acceleration_session::Entity::update_many()
-                    .col_expr(acceleration_session::Column::Status, Expr::value("stopped"))
-                    .col_expr(acceleration_session::Column::EndedAt, Expr::value(now))
-                    .col_expr(acceleration_session::Column::UpdatedAt, Expr::value(now))
-                    .filter(acceleration_session::Column::SessionId.eq(session_id.clone()))
-                    .filter(acceleration_session::Column::Status.eq("active"))
-                    .exec(&db)
-                    .await
-                {
-                    Ok(r) => r.rows_affected,
-                    Err(e) => {
-                        warn!(
-                            "[billing] no-connect stop update failed: session_id={}, err={}",
-                            session_id, e
-                        );
-                        0
-                    }
-                };
-
-                if updated > 0 {
-                    revoke_session_users(&admin_config, &mqtt, &session).await;
-                    info!(
-                        "[billing] session stopped due to no-traffic: session_id={}, admin_user_id={}",
-                        session_id, admin_user_id
-                    );
-                }
-
-                continue;
-            }
 
             if last_activity_ts < online_cutoff {
                 // 认为用户已不在线，停止会话（timeout/offline stop）
