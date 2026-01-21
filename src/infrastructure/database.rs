@@ -54,6 +54,66 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
     migrate_add_process_name_field(db).await?;
     migrate_node_config_fields(db).await?;
     migrate_game_node_binding_fields(db).await?;
+    migrate_acceleration_session_fields(db).await?;
+
+    Ok(())
+}
+
+async fn migrate_acceleration_session_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        log::warn!("SQLite 不支持 acceleration_sessions 字段迁移，需要手动迁移数据");
+        return Ok(());
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        let alter_sqls = vec![
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_node_id BIGINT NULL",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_admin_user_id BIGINT NULL",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_outbound_tag VARCHAR(128) NULL",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_node_id BIGINT NULL",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_admin_user_id BIGINT NULL",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_outbound_tag VARCHAR(128) NULL",
+        ];
+
+        for sql in alter_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                    .await
+            {
+                log::warn!(
+                    "执行 acceleration_sessions 迁移 SQL 失败（可能字段已存在或数据库版本不支持 IF NOT EXISTS）: {} - {}",
+                    sql,
+                    e
+                );
+            }
+        }
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let alter_sqls = vec![
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_node_id BIGINT",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_admin_user_id BIGINT",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS tcp_outbound_tag VARCHAR(128)",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_node_id BIGINT",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_admin_user_id BIGINT",
+            "ALTER TABLE acceleration_sessions ADD COLUMN IF NOT EXISTS udp_outbound_tag VARCHAR(128)",
+        ];
+
+        for sql in alter_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                    .await
+            {
+                log::warn!(
+                    "执行 acceleration_sessions 迁移 SQL 失败（可能字段已存在）: {} - {}",
+                    sql,
+                    e
+                );
+            }
+        }
+    }
 
     Ok(())
 }

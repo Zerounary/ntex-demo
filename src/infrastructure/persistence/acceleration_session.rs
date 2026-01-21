@@ -13,6 +13,18 @@ pub struct Model {
     pub admin_user_id: u64,
     pub uuid: String,
     pub outbound_tag: String,
+    #[sea_orm(nullable)]
+    pub tcp_node_id: Option<u64>,
+    #[sea_orm(nullable)]
+    pub tcp_admin_user_id: Option<u64>,
+    #[sea_orm(nullable, column_type = "String(Some(128))")]
+    pub tcp_outbound_tag: Option<String>,
+    #[sea_orm(nullable)]
+    pub udp_node_id: Option<u64>,
+    #[sea_orm(nullable)]
+    pub udp_admin_user_id: Option<u64>,
+    #[sea_orm(nullable, column_type = "String(Some(128))")]
+    pub udp_outbound_tag: Option<String>,
     #[sea_orm(column_type = "String(Some(32))")]
     pub status: String,
     #[sea_orm(column_type = "String(Some(16))")]

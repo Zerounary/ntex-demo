@@ -146,6 +146,40 @@ async fn run_minute_billing_daemon(
     admin_config: admin_config::AdminConfigStore,
     mqtt: Arc<mqtt_client::MqttClientManager>,
 ) {
+    async fn revoke_session_users(
+        admin_config: &admin_config::AdminConfigStore,
+        mqtt: &mqtt_client::MqttClientManager,
+        session: &acceleration_session::Model,
+    ) {
+        let mut targets: Vec<(u64, u64)> = Vec::new();
+        if session.admin_user_id > 0 {
+            targets.push((session.node_id, session.admin_user_id));
+        }
+        if let (Some(node_id), Some(admin_user_id)) = (session.tcp_node_id, session.tcp_admin_user_id)
+        {
+            if admin_user_id > 0 {
+                targets.push((node_id, admin_user_id));
+            }
+        }
+        if let (Some(node_id), Some(admin_user_id)) = (session.udp_node_id, session.udp_admin_user_id)
+        {
+            if admin_user_id > 0 {
+                targets.push((node_id, admin_user_id));
+            }
+        }
+
+        targets.sort();
+        targets.dedup();
+
+        for (node_id, admin_user_id) in targets {
+            let _ = admin_config.delete_user(node_id, admin_user_id).await;
+            let _ = mqtt.publish_update_notification(node_id, "user").await;
+            let _ = mqtt.publish_update_notification(node_id, "outbound").await;
+            let _ = mqtt.publish_update_notification(node_id, "inbound").await;
+            let _ = mqtt.publish_update_notification(node_id, "config").await;
+        }
+    }
+
     let tick_seconds: u64 = env::var("BILLING_TICK_SECONDS")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -278,11 +312,7 @@ async fn run_minute_billing_daemon(
                 };
 
                 if updated > 0 {
-                    let _ = admin_config.delete_user(node_id, admin_user_id).await;
-                    let _ = mqtt.publish_update_notification(node_id, "user").await;
-                    let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-                    let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-                    let _ = mqtt.publish_update_notification(node_id, "config").await;
+                    revoke_session_users(&admin_config, &mqtt, &session).await;
                     info!(
                         "[billing] session stopped due to no-traffic: session_id={}, admin_user_id={}",
                         session_id, admin_user_id
@@ -324,11 +354,7 @@ async fn run_minute_billing_daemon(
                         last_activity_ts,
                         online_cutoff
                     );
-                    let _ = admin_config.delete_user(node_id, admin_user_id).await;
-                    let _ = mqtt.publish_update_notification(node_id, "user").await;
-                    let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-                    let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-                    let _ = mqtt.publish_update_notification(node_id, "config").await;
+                    revoke_session_users(&admin_config, &mqtt, &session).await;
                     info!("[billing] session stopped due to offline: session_id={}", session_id);
                 }
 
@@ -429,11 +455,7 @@ async fn run_minute_billing_daemon(
 
                 should_revoke = true;
                 status_after = Some("insufficient_balance".to_string());
-                let _ = admin_config.delete_user(node_id, admin_user_id).await;
-                let _ = mqtt.publish_update_notification(node_id, "user").await;
-                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                revoke_session_users(&admin_config, &mqtt, &session).await;
                 info!(
                     "[billing] session stopped: session_id={}, status={}",
                     session_id,
@@ -481,11 +503,7 @@ async fn run_minute_billing_daemon(
                     continue;
                 }
 
-                let _ = admin_config.delete_user(node_id, admin_user_id).await;
-                let _ = mqtt.publish_update_notification(node_id, "user").await;
-                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                revoke_session_users(&admin_config, &mqtt, &session).await;
                 continue;
             }
 
@@ -553,11 +571,7 @@ async fn run_minute_billing_daemon(
             }
 
             if should_revoke {
-                let _ = admin_config.delete_user(node_id, admin_user_id).await;
-                let _ = mqtt.publish_update_notification(node_id, "user").await;
-                let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt.publish_update_notification(node_id, "config").await;
+                revoke_session_users(&admin_config, &mqtt, &session).await;
                 info!(
                     "[billing] session stopped: session_id={}, status=insufficient_balance",
                     session_id

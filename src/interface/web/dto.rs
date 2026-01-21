@@ -459,6 +459,10 @@ pub struct SessionStartResponseVO {
     pub bill_type: String,
     pub remaining_minutes: Option<i64>,
     pub profile: ProfileVO,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tcp_profile: Option<ProfileVO>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub udp_profile: Option<ProfileVO>,
 }
 
 #[derive(Debug, Deserialize)]

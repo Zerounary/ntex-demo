@@ -756,39 +756,32 @@ pub async fn session_start(
 
     let game_id = binding.game_id.clone();
 
-    let node_id = match binding.r#type.as_str() {
+    let (primary_node_id, tcp_exit_node_id, udp_exit_node_id) = match binding.r#type.as_str() {
         "node" => {
             let node_id_str = binding
                 .node_id
                 .clone()
                 .ok_or_else(|| UsecaseError::Validation("binding.node_id is required for type=node".to_string()))?;
-            node_id_str.parse::<u64>().map_err(|_| {
+            let node_id = node_id_str.parse::<u64>().map_err(|_| {
                 UsecaseError::Validation(format!("invalid binding.node_id: {}", node_id_str))
-            })?
+            })?;
+            (node_id, None, None)
         }
         "chain" => {
-            let mut exit_nodes: Vec<u64> = Vec::new();
-            if let Some(tcp_chain_id) = binding.tcp_chain_id {
-                exit_nodes.push(resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?);
-            }
-            if let Some(udp_chain_id) = binding.udp_chain_id {
-                exit_nodes.push(resolve_chain_exit_node_id(&state.db, udp_chain_id).await?);
-            }
-            if exit_nodes.is_empty() {
-                return Err(UsecaseError::Validation(
+            let tcp_exit = match binding.tcp_chain_id {
+                Some(tcp_chain_id) => Some(resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?),
+                None => None,
+            };
+            let udp_exit = match binding.udp_chain_id {
+                Some(udp_chain_id) => Some(resolve_chain_exit_node_id(&state.db, udp_chain_id).await?),
+                None => None,
+            };
+            let primary = tcp_exit.or(udp_exit).ok_or_else(|| {
+                UsecaseError::Validation(
                     "binding.tcp_chain_id or binding.udp_chain_id is required for type=chain".to_string(),
                 )
-                .into());
-            }
-            exit_nodes.sort();
-            exit_nodes.dedup();
-            if exit_nodes.len() != 1 {
-                return Err(UsecaseError::Validation(
-                    "tcp_chain_id and udp_chain_id must resolve to the same exit node".to_string(),
-                )
-                .into());
-            }
-            exit_nodes[0]
+            })?;
+            (primary, tcp_exit, udp_exit)
         }
         other => {
             return Err(
@@ -796,8 +789,6 @@ pub async fn session_start(
             );
         }
     };
-
-    let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, node_id);
 
     let cdk_repo = CdkRepositoryImpl::new(&state.db);
     let auth_repo = AuthRepositoryImpl::new(&state.db);
@@ -823,18 +814,6 @@ pub async fn session_start(
         .into_http(StatusCode::FORBIDDEN));
     }
 
-    // 节点离线时禁止启动（避免误停已有 active session）
-    let node_cfg = admin_node_config::Entity::find_by_id(node_id)
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?;
-
-    let node_cfg = node_cfg.ok_or_else(|| UsecaseError::NotFound("node"))?;
-
     let offline_after_seconds = env::var("NODE_OFFLINE_AFTER_SECONDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
@@ -842,16 +821,46 @@ pub async fn session_start(
         .max(1);
     let offline_threshold = chrono::Utc::now() - chrono::Duration::seconds(offline_after_seconds);
 
-    let is_online = node_cfg.is_online;
-    let last_seen_at = node_cfg.last_seen_at;
-    let is_fresh = last_seen_at.map(|ts| ts >= offline_threshold).unwrap_or(false);
+    async fn ensure_node_online(
+        db: &sea_orm::DatabaseConnection,
+        node_id: u64,
+        offline_threshold: chrono::DateTime<chrono::Utc>,
+    ) -> Result<(), UsecaseError> {
+        let node_cfg = admin_node_config::Entity::find_by_id(node_id)
+            .one(db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
 
-    if !is_online || !is_fresh {
-        return Ok(ApiResponse::<MessageResponse>::error(
-            "NODE_OFFLINE",
-            format!("node {} is offline", node_id),
-        )
-        .into_http(StatusCode::SERVICE_UNAVAILABLE));
+        let node_cfg = node_cfg.ok_or_else(|| UsecaseError::NotFound("node"))?;
+        let is_online = node_cfg.is_online;
+        let last_seen_at = node_cfg.last_seen_at;
+        let is_fresh = last_seen_at.map(|ts| ts >= offline_threshold).unwrap_or(false);
+        if !is_online || !is_fresh {
+            return Err(UsecaseError::Validation(format!("node {} is offline", node_id)));
+        }
+        Ok(())
+    }
+
+    // 节点离线时禁止启动（避免误停已有 active session）
+    if let Err(e) = ensure_node_online(&state.db, primary_node_id, offline_threshold).await {
+        return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
+            .into_http(StatusCode::SERVICE_UNAVAILABLE));
+    }
+    if let Some(tcp_node_id) = tcp_exit_node_id {
+        if let Err(e) = ensure_node_online(&state.db, tcp_node_id, offline_threshold).await {
+            return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
+                .into_http(StatusCode::SERVICE_UNAVAILABLE));
+        }
+    }
+    if let Some(udp_node_id) = udp_exit_node_id {
+        if let Err(e) = ensure_node_online(&state.db, udp_node_id, offline_threshold).await {
+            return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
+                .into_http(StatusCode::SERVICE_UNAVAILABLE));
+        }
     }
 
     // 单用户同一时刻只允许一个 active 会话：存在则先 stop（best effort）
@@ -869,6 +878,16 @@ pub async fn session_start(
         if existing.admin_user_id > 0 {
             let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
         }
+        if let (Some(node_id), Some(admin_user_id)) = (existing.tcp_node_id, existing.tcp_admin_user_id) {
+            if admin_user_id > 0 {
+                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            }
+        }
+        if let (Some(node_id), Some(admin_user_id)) = (existing.udp_node_id, existing.udp_admin_user_id) {
+            if admin_user_id > 0 {
+                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            }
+        }
 
         let mut active: acceleration_session::ActiveModel = existing.into();
         active.status = Set("stopped".to_string());
@@ -880,63 +899,120 @@ pub async fn session_start(
     let uuid = uuid::Uuid::new_v4().to_string();
     let st = if validation.billing_mode == "pass" { 5u64 } else { 1u64 };
 
-    // 1) 调用 main.rs Admin HTTP：下发用户到节点（add_user）
-    let admin_user = main_admin_add_user(node_id, uuid, st, 0).await?;
+    async fn select_outbound_tag(
+        db: &sea_orm::DatabaseConnection,
+        node_id: u64,
+        desired_outbound_tag: String,
+    ) -> Result<String, UsecaseError> {
+        let outbounds = main_admin_get_outbound_tags(node_id).await?;
+        let mut candidates: Vec<String> = outbounds
+            .into_iter()
+            .filter(|t| t != "block" && t != "direct" && t != "vmess_loopback")
+            .collect();
+        candidates.sort();
 
-    let admin_user_id = admin_user.id;
-    let admin_uuid = admin_user.uuid;
+        let mapped_outbound_tag = if candidates.iter().any(|t| t == &desired_outbound_tag) {
+            desired_outbound_tag.clone()
+        } else {
+            let active_sessions = acceleration_session::Entity::find()
+                .filter(acceleration_session::Column::NodeId.eq(node_id))
+                .filter(acceleration_session::Column::Status.eq("active"))
+                .all(db)
+                .await
+                .map_err(|e| {
+                    UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                        e.to_string(),
+                    ))
+                })?;
 
-    let outbounds = main_admin_get_outbound_tags(node_id).await?;
-    let mut candidates: Vec<String> = outbounds
-        .into_iter()
-        .filter(|t| t != "block" && t != "direct" && t != "vmess_loopback")
-        .collect();
-    candidates.sort();
+            let mut counts: HashMap<String, u64> = HashMap::new();
+            for s in active_sessions {
+                *counts.entry(s.outbound_tag).or_insert(0) += 1;
+            }
 
-    let mapped_outbound_tag = if candidates.iter().any(|t| t == &desired_outbound_tag) {
-        desired_outbound_tag.clone()
-    } else {
-        let active_sessions = acceleration_session::Entity::find()
-            .filter(acceleration_session::Column::NodeId.eq(node_id))
-            .filter(acceleration_session::Column::Status.eq("active"))
-            .all(&state.db)
-            .await
-            .map_err(|e| {
-                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                    e.to_string(),
+            let mut best_tag: Option<String> = None;
+            let mut best_count: u64 = u64::MAX;
+            for t in &candidates {
+                let c = counts.get(t).copied().unwrap_or(0);
+                if c < best_count {
+                    best_count = c;
+                    best_tag = Some(t.clone());
+                }
+            }
+
+            best_tag.ok_or_else(|| {
+                UsecaseError::Validation(format!(
+                    "no available outbound tag for node_id={} (excluded block/direct/vmess_loopback)",
+                    node_id
                 ))
-            })?;
+            })?
+        };
 
-        let mut counts: HashMap<String, u64> = HashMap::new();
-        for s in active_sessions {
-            *counts.entry(s.outbound_tag).or_insert(0) += 1;
+        Ok(mapped_outbound_tag)
+    }
+
+    let mut primary_admin_user_id: u64 = 0;
+    let mut primary_admin_uuid: String = uuid.clone();
+    let mut primary_outbound_tag: String = "".to_string();
+
+    let mut tcp_admin_user_id: Option<u64> = None;
+    let mut tcp_outbound_tag: Option<String> = None;
+    let mut udp_admin_user_id: Option<u64> = None;
+    let mut udp_outbound_tag: Option<String> = None;
+
+    match binding.r#type.as_str() {
+        "node" => {
+            let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, primary_node_id);
+            // 1) 调用 main.rs Admin HTTP：下发用户到节点（add_user）
+            let admin_user = main_admin_add_user(primary_node_id, uuid.clone(), st, 0).await?;
+            primary_admin_user_id = admin_user.id;
+            primary_admin_uuid = admin_user.uuid;
+            primary_outbound_tag = select_outbound_tag(&state.db, primary_node_id, desired_outbound_tag).await?;
+
+            info!(
+                "[session_start] selected outbound_tag: node_id={} selected={} ",
+                primary_node_id, primary_outbound_tag
+            );
+
+            // 2) 调用 main.rs Admin HTTP：下发映射（add_mapping）
+            main_admin_add_mapping(primary_node_id, primary_admin_uuid.clone(), primary_outbound_tag.clone()).await?;
         }
+        "chain" => {
+            if let Some(tcp_node_id) = tcp_exit_node_id {
+                let desired_outbound_tag = format!("accel_{}_{}_{}_tcp", user_id, game_id, tcp_node_id);
+                let admin_user = main_admin_add_user(tcp_node_id, uuid.clone(), st, 0).await?;
+                tcp_admin_user_id = Some(admin_user.id);
+                primary_admin_uuid = admin_user.uuid;
+                let tag = select_outbound_tag(&state.db, tcp_node_id, desired_outbound_tag).await?;
+                main_admin_add_mapping(tcp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                tcp_outbound_tag = Some(tag);
+            }
+            if let Some(udp_node_id) = udp_exit_node_id {
+                let desired_outbound_tag = format!("accel_{}_{}_{}_udp", user_id, game_id, udp_node_id);
+                let admin_user = main_admin_add_user(udp_node_id, uuid.clone(), st, 0).await?;
+                udp_admin_user_id = Some(admin_user.id);
+                primary_admin_uuid = admin_user.uuid;
+                let tag = select_outbound_tag(&state.db, udp_node_id, desired_outbound_tag).await?;
+                main_admin_add_mapping(udp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                udp_outbound_tag = Some(tag);
+            }
 
-        let mut best_tag: Option<String> = None;
-        let mut best_count: u64 = u64::MAX;
-        for t in &candidates {
-            let c = counts.get(t).copied().unwrap_or(0);
-            if c < best_count {
-                best_count = c;
-                best_tag = Some(t.clone());
+            // primary fields pick tcp first (if exists) else udp
+            if let (Some(node_id), Some(admin_id), Some(tag)) = (tcp_exit_node_id, tcp_admin_user_id, tcp_outbound_tag.clone()) {
+                primary_admin_user_id = admin_id;
+                primary_outbound_tag = tag;
+            } else if let (Some(node_id), Some(admin_id), Some(tag)) = (udp_exit_node_id, udp_admin_user_id, udp_outbound_tag.clone()) {
+                primary_admin_user_id = admin_id;
+                primary_outbound_tag = tag;
+            } else {
+                return Err(UsecaseError::Validation(
+                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
+                )
+                .into());
             }
         }
-
-        best_tag.ok_or_else(|| {
-            UsecaseError::Validation(format!(
-                "no available outbound tag for node_id={} (excluded block/direct/vmess_loopback)",
-                node_id
-            ))
-        })?
-    };
-
-    info!(
-        "[session_start] selected outbound_tag: node_id={} desired={} selected={}",
-        node_id, desired_outbound_tag, mapped_outbound_tag
-    );
-
-    // 2) 调用 main.rs Admin HTTP：下发映射（add_mapping）
-    main_admin_add_mapping(node_id, admin_uuid.clone(), mapped_outbound_tag.clone()).await?;
+        _ => {}
+    }
 
     let session_id = uuid::Uuid::new_v4().to_string();
     let now = chrono::Utc::now();
@@ -948,10 +1024,16 @@ pub async fn session_start(
         session_id: Set(session_id.clone()),
         user_id: Set(user_id.clone()),
         game_id: Set(game_id_clone.clone()),
-        node_id: Set(node_id),
-        admin_user_id: Set(admin_user_id),
-        uuid: Set(admin_uuid.clone()),
-        outbound_tag: Set(mapped_outbound_tag),
+        node_id: Set(primary_node_id),
+        admin_user_id: Set(primary_admin_user_id),
+        uuid: Set(primary_admin_uuid.clone()),
+        outbound_tag: Set(primary_outbound_tag.clone()),
+        tcp_node_id: Set(tcp_exit_node_id),
+        tcp_admin_user_id: Set(tcp_admin_user_id),
+        tcp_outbound_tag: Set(tcp_outbound_tag.clone()),
+        udp_node_id: Set(udp_exit_node_id),
+        udp_admin_user_id: Set(udp_admin_user_id),
+        udp_outbound_tag: Set(udp_outbound_tag.clone()),
         status: Set("active".to_string()),
         bill_type: Set(bill_type.clone()),
         started_at: Set(now.into()),
@@ -974,85 +1056,29 @@ pub async fn session_start(
         None
     };
 
-    let node_id_str = node_id.to_string();
+    let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
 
-    let (vmess_server, vmess_port, udp_port) = match binding.r#type.as_str() {
-        "node" => {
-            let server = state
-                .admin_config
-                .get_node_public_ip(node_id)
-                .await
-                .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
-            let port = state
-                .admin_config
-                .select_default_forward_port(node_id)
-                .await
-                .map_err(|e| {
-                    UsecaseError::Validation(format!("select_default_forward_port failed: {}", e))
-                })?;
-            (server, port, port)
-        }
-        "chain" => {
-            let mut entry_nodes: Vec<u64> = Vec::new();
-            if let Some(tcp_chain_id) = binding.tcp_chain_id {
-                entry_nodes.push(resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?);
-            }
-            if let Some(udp_chain_id) = binding.udp_chain_id {
-                entry_nodes.push(resolve_chain_entry_node_id(&state.db, udp_chain_id).await?);
-            }
-            if entry_nodes.is_empty() {
-                return Err(UsecaseError::Validation(
-                    "binding.tcp_chain_id or binding.udp_chain_id is required for type=chain"
-                        .to_string(),
-                )
-                .into());
-            }
-            entry_nodes.sort();
-            entry_nodes.dedup();
-            if entry_nodes.len() != 1 {
-                return Err(UsecaseError::Validation(
-                    "tcp_chain_id and udp_chain_id must resolve to the same entry node".to_string(),
-                )
-                .into());
-            }
-            let entry_node_id = entry_nodes[0];
-
-            let server = state
-                .admin_config
-                .get_node_public_ip(entry_node_id)
-                .await
-                .map_err(|e| {
-                    UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
-                })?;
-
-            let tcp_port = if let Some(tcp_chain_id) = binding.tcp_chain_id {
-                let tag = format!("chain_{}_1", tcp_chain_id);
-                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
-            } else if let Some(udp_chain_id) = binding.udp_chain_id {
-                let tag = format!("chain_{}_1", udp_chain_id);
-                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
-            } else {
-                return Err(UsecaseError::Validation(
-                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
-                )
-                .into());
-            };
-
-            let udp_port = if let Some(udp_chain_id) = binding.udp_chain_id {
-                let tag = format!("chain_{}_1", udp_chain_id);
-                resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?
-            } else {
-                tcp_port
-            };
-
-            (server, tcp_port, udp_port)
-        }
-        other => {
-            return Err(UsecaseError::Validation(format!("invalid binding.type: {}", other)).into());
+    let build_profile = |node_id_str: String, vmess_uuid: String, vmess_server: String, vmess_port: i32, udp_port: i32, process_name: String, region: String| {
+        crate::interface::web::dto::ProfileVO {
+            id: binding.id.to_string(),
+            game_id: binding.game_id.clone(),
+            display_name: binding
+                .display_name
+                .clone()
+                .unwrap_or_else(|| node_id_str.clone()),
+            node_id: node_id_str,
+            process_name,
+            vmess_uuid,
+            vmess_server: vmess_server.clone(),
+            vmess_port,
+            vmess_email: vmess_email.clone(),
+            udp_proxy: format!("{}:{}", vmess_server, udp_port),
+            mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
+            status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
+            region,
+            ping: binding.ping.unwrap_or(5),
         }
     };
-    let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
-    let udp_proxy = format!("{}:{}", vmess_server, udp_port);
 
     let game = accelerator_game::Entity::find_by_id(game_id_clone.clone())
         .one(&state.db)
@@ -1064,25 +1090,103 @@ pub async fn session_start(
         })?
         .ok_or_else(|| UsecaseError::NotFound("game"))?;
 
-    let profile_vo = crate::interface::web::dto::ProfileVO {
-        id: binding.id.to_string(),
-        game_id: binding.game_id,
-        display_name: binding
-            .display_name
-            .clone()
-            .unwrap_or_else(|| node_id_str.clone()),
-        node_id: node_id_str.clone(),
-        process_name: game.process_name,
-        vmess_uuid: admin_uuid,
-        vmess_server,
-        vmess_port,
-        vmess_email,
-        udp_proxy,
-        mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
-        status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
-        region: binding.region.clone().unwrap_or_else(|| game.region),
-        ping: binding.ping.unwrap_or(5),
-    };
+    let mut profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
+    let mut tcp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
+    let mut udp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
+
+    match binding.r#type.as_str() {
+        "node" => {
+            let server = state
+                .admin_config
+                .get_node_public_ip(primary_node_id)
+                .await
+                .map_err(|e| UsecaseError::Validation(format!("get_node_public_ip failed: {}", e)))?;
+            let port = state
+                .admin_config
+                .select_default_forward_port(primary_node_id)
+                .await
+                .map_err(|e| {
+                    UsecaseError::Validation(format!("select_default_forward_port failed: {}", e))
+                })?;
+
+            profile_vo = Some(build_profile(
+                primary_node_id.to_string(),
+                primary_admin_uuid.clone(),
+                server,
+                port,
+                port,
+                game.process_name,
+                binding.region.clone().unwrap_or_else(|| game.region),
+            ));
+        }
+        "chain" => {
+            if let Some(tcp_chain_id) = binding.tcp_chain_id {
+                let entry_node_id = resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?;
+                let server = state
+                    .admin_config
+                    .get_node_public_ip(entry_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
+                    })?;
+                let tag = format!("chain_{}_1", tcp_chain_id);
+                let tcp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+
+                tcp_profile_vo = Some(build_profile(
+                    tcp_exit_node_id.unwrap_or(primary_node_id).to_string(),
+                    primary_admin_uuid.clone(),
+                    server.clone(),
+                    tcp_port,
+                    tcp_port,
+                    game.process_name.clone(),
+                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
+                ));
+
+                if profile_vo.is_none() {
+                    profile_vo = tcp_profile_vo.take();
+                }
+            }
+
+            if let Some(udp_chain_id) = binding.udp_chain_id {
+                let entry_node_id = resolve_chain_entry_node_id(&state.db, udp_chain_id).await?;
+                let server = state
+                    .admin_config
+                    .get_node_public_ip(entry_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
+                    })?;
+                let tag = format!("chain_{}_1", udp_chain_id);
+                let udp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+
+                udp_profile_vo = Some(build_profile(
+                    udp_exit_node_id.unwrap_or(primary_node_id).to_string(),
+                    primary_admin_uuid.clone(),
+                    server.clone(),
+                    udp_port,
+                    udp_port,
+                    game.process_name.clone(),
+                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
+                ));
+
+                if profile_vo.is_none() {
+                    profile_vo = udp_profile_vo.take();
+                }
+            }
+
+            if profile_vo.is_none() {
+                return Err(UsecaseError::Validation(
+                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
+                )
+                .into());
+            }
+        }
+        other => {
+            return Err(UsecaseError::Validation(format!("invalid binding.type: {}", other)).into());
+        }
+    }
+
+    let profile_vo = profile_vo.ok_or_else(|| UsecaseError::Validation("missing profile".to_string()))?;
 
     Ok(ApiResponse::success(SessionStartResponseVO {
         session_id,
@@ -1090,6 +1194,8 @@ pub async fn session_start(
         bill_type,
         remaining_minutes,
         profile: profile_vo,
+        tcp_profile: tcp_profile_vo,
+        udp_profile: udp_profile_vo,
     })
     .into_http(StatusCode::OK))
 }
@@ -1126,6 +1232,26 @@ pub async fn session_stop(
             model.session_id, model.node_id, model.admin_user_id
         );
         let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
+    }
+
+    if let (Some(node_id), Some(admin_user_id)) = (model.tcp_node_id, model.tcp_admin_user_id) {
+        if admin_user_id > 0 {
+            info!(
+                "[session_stop] deleting tcp admin user: session_id={} node_id={} admin_user_id={}",
+                model.session_id, node_id, admin_user_id
+            );
+            let _ = main_admin_delete_user(node_id, admin_user_id).await;
+        }
+    }
+
+    if let (Some(node_id), Some(admin_user_id)) = (model.udp_node_id, model.udp_admin_user_id) {
+        if admin_user_id > 0 {
+            info!(
+                "[session_stop] deleting udp admin user: session_id={} node_id={} admin_user_id={}",
+                model.session_id, node_id, admin_user_id
+            );
+            let _ = main_admin_delete_user(node_id, admin_user_id).await;
+        }
     }
 
     let mut active: acceleration_session::ActiveModel = model.into();
