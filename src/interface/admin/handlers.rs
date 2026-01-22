@@ -1381,6 +1381,10 @@ pub struct AddOutboundRequest {
     pub protocol: String,
     #[serde(default)]
     pub settings: Value,
+    #[serde(rename = "sendThrough", default)]
+    pub send_through: Option<String>,
+    #[serde(rename = "streamSettings", default, alias = "stream_settings")]
+    pub stream_settings: Option<Value>,
 }
 
 fn default_protocol() -> String { "shadowsocks".to_string() }
@@ -1400,7 +1404,8 @@ pub async fn add_outbound(
         tag: body.tag.clone(),
         protocol: body.protocol,
         settings: body.settings,
-        stream_settings: None,
+        send_through: body.send_through,
+        stream_settings: body.stream_settings,
     };
     
     match state.config.add_outbound(node_id, outbound.clone()).await {
@@ -1428,6 +1433,10 @@ pub async fn add_outbound(
 pub struct UpdateOutboundRequest {
     pub protocol: Option<String>,
     pub settings: Option<Value>,
+    #[serde(rename = "sendThrough", default)]
+    pub send_through: Option<Option<String>>,
+    #[serde(rename = "streamSettings", default, alias = "stream_settings")]
+    pub stream_settings: Option<Option<Value>>,
 }
 
 #[web::put("/api/admin/outbound/{tag}")]
@@ -1443,7 +1452,18 @@ pub async fn update_outbound(
     };
     let tag = path.into_inner();
     
-    match state.config.update_outbound(node_id, &tag, body.protocol, body.settings).await {
+    match state
+        .config
+        .update_outbound(
+            node_id,
+            &tag,
+            body.protocol,
+            body.settings,
+            body.send_through,
+            body.stream_settings,
+        )
+        .await
+    {
         Ok(_) => {
             // 推送更新通知
             if let Some(ref mqtt_client) = state.mqtt_client {

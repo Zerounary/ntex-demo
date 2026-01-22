@@ -242,7 +242,8 @@ const handleSubmit = async (outboundData: {
   tag: string;
   protocol: string;
   settings: any;
-  stream_settings?: any;
+  sendThrough?: string;
+  streamSettings?: any;
 }) => {
   if (!nodeStore.currentNodeId) return;
 
@@ -254,6 +255,8 @@ const handleSubmit = async (outboundData: {
         {
           protocol: outboundData.protocol,
           settings: outboundData.settings,
+          sendThrough: outboundData.sendThrough || null,
+          streamSettings: outboundData.streamSettings ?? null,
         }
       );
       toastStore.success('Proxy updated successfully');

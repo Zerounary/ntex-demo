@@ -281,7 +281,13 @@ export async function getOutbounds(
 
 export async function addOutbound(
   nodeId: number,
-  outbound: { tag: string; protocol?: string; settings: any }
+  outbound: {
+    tag: string;
+    protocol?: string;
+    settings: any;
+    sendThrough?: string;
+    streamSettings?: any;
+  }
 ): Promise<OutboundConfig> {
   const query = buildQuery({ node_id: nodeId });
   const response = await request<OutboundConfig>(`/api/admin/outbound?${query}`, {
@@ -297,7 +303,12 @@ export async function addOutbound(
 export async function updateOutbound(
   nodeId: number,
   tag: string,
-  outbound: { protocol?: string; settings?: any }
+  outbound: {
+    protocol?: string;
+    settings?: any;
+    sendThrough?: string | null;
+    streamSettings?: any | null;
+  }
 ): Promise<void> {
   const query = buildQuery({ node_id: nodeId });
   const response = await request(`/api/admin/outbound/${tag}?${query}`, {

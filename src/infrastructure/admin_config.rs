@@ -66,7 +66,9 @@ pub struct OutboundConfig {
     pub protocol: String,
     #[serde(default)]
     pub settings: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sendThrough", skip_serializing_if = "Option::is_none")]
+    pub send_through: Option<String>,
+    #[serde(rename = "streamSettings", skip_serializing_if = "Option::is_none")]
     pub stream_settings: Option<Value>,
 }
 
@@ -331,6 +333,7 @@ impl AdminConfigStore {
             let mut active_model: admin_outbound::ActiveModel = model.into();
             active_model.protocol = Set(outbound.protocol);
             active_model.settings = Set(outbound.settings);
+            active_model.send_through = Set(outbound.send_through);
             active_model.stream_settings = Set(outbound.stream_settings);
             active_model.updated_at = Set(Utc::now().into());
             active_model
@@ -519,6 +522,7 @@ impl AdminConfigStore {
             tag: o.tag,
             protocol: o.protocol,
             settings: o.settings,
+            send_through: o.send_through,
             stream_settings: o.stream_settings,
         }).collect();
         
@@ -554,6 +558,7 @@ impl AdminConfigStore {
             tag: Set(outbound.tag),
             protocol: Set(outbound.protocol),
             settings: Set(outbound.settings),
+            send_through: Set(outbound.send_through),
             stream_settings: Set(outbound.stream_settings),
             ..Default::default()
         };
@@ -564,7 +569,15 @@ impl AdminConfigStore {
         Ok(())
     }
 
-    pub async fn update_outbound(&self, node_id: u64, tag: &str, protocol: Option<String>, settings: Option<Value>) -> Result<(), String> {
+    pub async fn update_outbound(
+        &self,
+        node_id: u64,
+        tag: &str,
+        protocol: Option<String>,
+        settings: Option<Value>,
+        send_through: Option<Option<String>>,
+        stream_settings: Option<Option<Value>>,
+    ) -> Result<(), String> {
         let outbound = admin_outbound::Entity::find()
             .filter(admin_outbound::Column::NodeId.eq(node_id))
             .filter(admin_outbound::Column::Tag.eq(tag))
@@ -581,7 +594,13 @@ impl AdminConfigStore {
         if let Some(settings) = settings {
             active_model.settings = Set(settings);
         }
-        
+        if let Some(send_through) = send_through {
+            active_model.send_through = Set(send_through);
+        }
+        if let Some(stream_settings) = stream_settings {
+            active_model.stream_settings = Set(stream_settings);
+        }
+
         active_model.update(&self.db).await
             .map_err(|e| format!("更新上游代理失败: {}", e))?;
         
@@ -980,6 +999,7 @@ impl AdminConfigStore {
                 tag: Set(tag),
                 protocol: Set(protocol),
                 settings: Set(settings),
+                send_through: Set(None),
                 stream_settings: Set(None),
                 ..Default::default()
             }

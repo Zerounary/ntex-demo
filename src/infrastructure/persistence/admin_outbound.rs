@@ -10,6 +10,8 @@ pub struct Model {
     pub protocol: String,
     pub settings: JsonValue,
     #[sea_orm(nullable)]
+    pub send_through: Option<String>,
+    #[sea_orm(nullable)]
     pub stream_settings: Option<JsonValue>,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,

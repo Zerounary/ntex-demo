@@ -65,7 +65,8 @@ export interface OutboundConfig {
   tag: string;
   protocol: string;
   settings: any;
-  stream_settings?: any;
+  sendThrough?: string | null;
+  streamSettings?: any;
 }
 
 export interface InboundConfig {

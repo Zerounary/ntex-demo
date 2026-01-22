@@ -350,6 +350,7 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
                 tag: Set(tag),
                 protocol: Set(protocol),
                 settings: Set(settings),
+                send_through: Set(None),
                 stream_settings: Set(stream_settings),
                 ..Default::default()
             }

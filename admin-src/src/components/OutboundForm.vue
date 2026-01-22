@@ -53,6 +53,23 @@
       v-model="streamSettings"
     />
 
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1.5">
+        Send Through (optional)
+      </label>
+      <div class="relative">
+        <input
+          v-model="sendThrough"
+          type="text"
+          placeholder="e.g. 121.78.157.51"
+          class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-400/50 focus:border-primary-400 transition-all shadow-sm"
+        />
+      </div>
+      <p class="mt-1 text-xs text-gray-400">
+        Windows: set to the local IP of the desired NIC to force outbound via that interface.
+      </p>
+    </div>
+
     <!-- JSON 编辑器（高级模式） -->
     <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
       <div class="flex items-center justify-between mb-3">
@@ -118,7 +135,7 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'submit', outbound: { tag: string; protocol: string; settings: any; stream_settings?: any }): void;
+  (e: 'submit', outbound: { tag: string; protocol: string; settings: any; sendThrough?: string; streamSettings?: any }): void;
   (e: 'cancel'): void;
 }
 
@@ -136,6 +153,7 @@ const form = ref({
 
 const settings = ref<any>({});
 const streamSettings = ref<any>(null);
+const sendThrough = ref('');
 const isAdvanced = ref(false);
 const showAdvanced = computed({
   get: () => isAdvanced.value,
@@ -205,9 +223,10 @@ watch(
         protocol: outbound.protocol,
       };
       const clonedSettings = outbound.settings ? cloneData(outbound.settings) : {};
-      const clonedStreamSettings = outbound.stream_settings ? cloneData(outbound.stream_settings) : null;
+      const clonedStreamSettings = outbound.streamSettings ? cloneData(outbound.streamSettings) : null;
       settings.value = clonedSettings;
       streamSettings.value = clonedStreamSettings;
+      sendThrough.value = outbound.sendThrough || '';
       settingsJson.value = JSON.stringify(clonedSettings, null, 2);
     } else {
       form.value = {
@@ -216,6 +235,7 @@ watch(
       };
       settings.value = {};
       streamSettings.value = null;
+      sendThrough.value = '';
       settingsJson.value = '{}';
     }
     settingsError.value = '';
@@ -241,7 +261,8 @@ const handleSubmit = () => {
     tag: form.value.tag,
     protocol: form.value.protocol,
     settings: finalSettings,
-    stream_settings: streamSettings.value,
+    sendThrough: sendThrough.value.trim() ? sendThrough.value.trim() : undefined,
+    streamSettings: streamSettings.value,
   });
 };
 </script>

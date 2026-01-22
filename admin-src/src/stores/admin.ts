@@ -172,15 +172,23 @@ export const useAdminStore = defineStore('admin', {
 
     async addOutbound(
       nodeId: number,
-      outbound: { tag: string; protocol?: string; settings: any; stream_settings?: any }
+      outbound: {
+        tag: string;
+        protocol?: string;
+        settings: any;
+        sendThrough?: string;
+        streamSettings?: any;
+      }
     ) {
       try {
         const newOutbound = await adminApi.addOutbound(nodeId, {
           tag: outbound.tag,
           protocol: outbound.protocol,
           settings: outbound.settings,
+          sendThrough: outbound.sendThrough,
+          streamSettings: outbound.streamSettings,
         });
-        // 注意：后端 API 可能不支持 stream_settings，这里只保存 settings
+        // 注意：后端返回值可能不包含 stream_settings/sendThrough
         this.outbounds.push(newOutbound);
         return newOutbound;
       } catch (err: any) {
@@ -191,7 +199,12 @@ export const useAdminStore = defineStore('admin', {
     async updateOutbound(
       nodeId: number,
       tag: string,
-      outbound: { protocol?: string; settings?: any }
+      outbound: {
+        protocol?: string;
+        settings?: any;
+        sendThrough?: string | null;
+        streamSettings?: any | null;
+      }
     ) {
       try {
         await adminApi.updateOutbound(nodeId, tag, outbound);
