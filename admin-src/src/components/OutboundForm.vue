@@ -136,7 +136,11 @@ const form = ref({
 
 const settings = ref<any>({});
 const streamSettings = ref<any>(null);
-const showAdvanced = ref(false);
+const isAdvanced = ref(false);
+const showAdvanced = computed({
+  get: () => isAdvanced.value,
+  set: (val: boolean) => toggleAdvancedMode(val),
+});
 const settingsJson = ref('{}');
 const settingsError = ref('');
 
@@ -145,6 +149,25 @@ const cloneData = <T>(data: T): T => {
     return data;
   }
   return JSON.parse(JSON.stringify(data)) as T;
+};
+
+const toggleAdvancedMode = (enabled: boolean) => {
+  if (enabled) {
+    settingsJson.value = JSON.stringify(settings.value, null, 2);
+    settingsError.value = '';
+    isAdvanced.value = true;
+    return;
+  }
+
+  try {
+    settings.value = JSON.parse(settingsJson.value);
+    settingsError.value = '';
+    isAdvanced.value = false;
+  } catch (err) {
+    settingsError.value = 'Invalid JSON format';
+    isAdvanced.value = true;
+    console.error('Failed to parse settings JSON', err);
+  }
 };
 
 const protocolOptions = [
@@ -196,47 +219,24 @@ watch(
       settingsJson.value = '{}';
     }
     settingsError.value = '';
-    showAdvanced.value = false;
+    isAdvanced.value = false;
   },
   { immediate: true }
 );
 
-watch(settingsJson, (value) => {
-  if (showAdvanced.value) {
-    try {
-      JSON.parse(value);
-      settingsError.value = '';
-    } catch (e) {
-      settingsError.value = 'Invalid JSON format';
-    }
-  }
-});
-
-watch(showAdvanced, (val) => {
-  if (val) {
-    settingsJson.value = JSON.stringify(settings.value, null, 2);
-  } else {
-    try {
-      settings.value = JSON.parse(settingsJson.value);
-      settingsError.value = '';
-    } catch (e) {
-      // Ignore error, use current settings
-    }
-  }
-});
-
 const handleSubmit = () => {
   let finalSettings = settings.value;
-  
+
   if (showAdvanced.value) {
     try {
       finalSettings = JSON.parse(settingsJson.value);
+      settingsError.value = '';
     } catch (e) {
-      settingsError.value = 'JSON parse error';
+      settingsError.value = 'Invalid JSON format';
       return;
     }
   }
-  
+
   emit('submit', {
     tag: form.value.tag,
     protocol: form.value.protocol,
