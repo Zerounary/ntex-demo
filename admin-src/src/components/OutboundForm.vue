@@ -140,6 +140,13 @@ const showAdvanced = ref(false);
 const settingsJson = ref('{}');
 const settingsError = ref('');
 
+const cloneData = <T>(data: T): T => {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  return JSON.parse(JSON.stringify(data)) as T;
+};
+
 const protocolOptions = [
   { label: 'Shadowsocks', value: 'shadowsocks' },
   { label: 'VMess', value: 'vmess' },
@@ -174,9 +181,11 @@ watch(
         tag: outbound.tag,
         protocol: outbound.protocol,
       };
-      settings.value = outbound.settings || {};
-      streamSettings.value = outbound.stream_settings || null;
-      settingsJson.value = JSON.stringify(outbound.settings, null, 2);
+      const clonedSettings = outbound.settings ? cloneData(outbound.settings) : {};
+      const clonedStreamSettings = outbound.stream_settings ? cloneData(outbound.stream_settings) : null;
+      settings.value = clonedSettings;
+      streamSettings.value = clonedStreamSettings;
+      settingsJson.value = JSON.stringify(clonedSettings, null, 2);
     } else {
       form.value = {
         tag: '',
