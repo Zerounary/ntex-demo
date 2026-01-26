@@ -27,7 +27,7 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile,
     acceleration_session, accelerator_user, accelerator_user_credential, accelerator_user_session,
-    admin_chain, admin_node_config,
+    admin_chain, admin_node_config, user_wallet,
 };
 use crate::infrastructure::admin_config::ChainRouteEntry;
 
@@ -897,7 +897,18 @@ pub async fn session_start(
     }
 
     let uuid = uuid::Uuid::new_v4().to_string();
-    let st = if validation.billing_mode == "pass" { 5u64 } else { 1u64 };
+    let st = {
+        let wallet = user_wallet::Entity::find_by_id(user_id.clone())
+            .one(&state.db)
+            .await
+            .map_err(|e| {
+                UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                    e.to_string(),
+                ))
+            })?;
+        let bw = wallet.and_then(|w| w.bandwidth).unwrap_or(3);
+        if bw > 0 { bw as u64 } else { 3u64 }
+    };
 
     async fn select_outbound_tag(
         db: &sea_orm::DatabaseConnection,

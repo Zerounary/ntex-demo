@@ -505,6 +505,7 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
                 let active = user_wallet::ActiveModel {
                     user_id: Set(user_id.to_string()),
                     remaining_minutes: Set(minutes),
+                    bandwidth: Set(None),
                     updated_at: Set(Utc::now().into()),
                 };
                 active
@@ -514,6 +515,51 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
                 Ok(minutes)
             }
         }
+    }
+
+    async fn get_bandwidth_mbps(&self, user_id: &str) -> Result<Option<i64>, RepositoryError> {
+        let wallet = user_wallet::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+        Ok(wallet.and_then(|w| w.bandwidth))
+    }
+
+    async fn set_bandwidth_mbps(&self, user_id: &str, bandwidth_mbps: i64) -> Result<(), RepositoryError> {
+        if bandwidth_mbps <= 0 {
+            return Err(RepositoryError::Persistence("bandwidth_mbps must be positive".into()));
+        }
+
+        let existing = user_wallet::Entity::find_by_id(user_id.to_string())
+            .one(self.db)
+            .await
+            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+
+        match existing {
+            Some(model) => {
+                let mut active: user_wallet::ActiveModel = model.into();
+                active.bandwidth = Set(Some(bandwidth_mbps));
+                active.updated_at = Set(Utc::now().into());
+                active
+                    .update(self.db)
+                    .await
+                    .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+            }
+            None => {
+                let active = user_wallet::ActiveModel {
+                    user_id: Set(user_id.to_string()),
+                    remaining_minutes: Set(0),
+                    bandwidth: Set(Some(bandwidth_mbps)),
+                    updated_at: Set(Utc::now().into()),
+                };
+                active
+                    .insert(self.db)
+                    .await
+                    .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -578,8 +624,16 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
         let mut cdks = Vec::new();
         let duration = if request.cdk_type == CdkType::Minute {
             request.duration_minutes.unwrap_or(0)
+        } else if request.cdk_type == CdkType::Bandwidth {
+            0
         } else {
             request.cdk_type.duration_minutes()
+        };
+
+        let bandwidth_mbps = if request.cdk_type == CdkType::Bandwidth {
+            request.bandwidth_mbps
+        } else {
+            None
         };
 
         for _ in 0..request.count {
@@ -590,6 +644,7 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
                 code: code.clone(),
                 cdk_type: request.cdk_type.clone(),
                 duration_minutes: duration,
+                bandwidth_mbps,
                 status: CdkStatus::Unused,
                 used_by: None,
                 used_at: None,
@@ -652,13 +707,17 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
 
         // 计算新的有效期
         let now = Utc::now();
-        let valid_until = now + chrono::Duration::minutes(cdk.duration_minutes);
+        let valid_until = if cdk.cdk_type == CdkType::Bandwidth {
+            None
+        } else {
+            Some(now + chrono::Duration::minutes(cdk.duration_minutes))
+        };
 
         Ok(CdkRedeemResponse {
             success: true,
             message: "CDK redeemed successfully".into(),
             duration_minutes: cdk.duration_minutes,
-            valid_until: Some(valid_until),
+            valid_until,
             remaining_minutes: None,
         })
     }
@@ -682,6 +741,7 @@ fn cdk_into_active_model(cdk: CdkCode) -> cdk_code::ActiveModel {
         code: Set(cdk.code),
         cdk_type: Set(cdk.cdk_type.as_str().to_string()),
         duration_minutes: Set(cdk.duration_minutes),
+        bandwidth_mbps: Set(cdk.bandwidth_mbps),
         status: Set(cdk.status.as_str().to_string()),
         used_by: Set(cdk.used_by),
         used_at: Set(cdk.used_at.map(Into::into)),

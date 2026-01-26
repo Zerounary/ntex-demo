@@ -7,6 +7,7 @@ pub enum CdkType {
     Month,   // 月卡
     Year,    // 年卡
     Minute,  // 分钟卡
+    Bandwidth, // 带宽卡（设置带宽，单位 Mbps）
 }
 
 impl CdkType {
@@ -16,6 +17,7 @@ impl CdkType {
             CdkType::Month => 30 * 24 * 60,    // 30天 = 43200分钟
             CdkType::Year => 365 * 24 * 60,   // 365天 = 525600分钟
             CdkType::Minute => 0,              // 需要指定分钟数
+            CdkType::Bandwidth => 0,
         }
     }
 
@@ -25,6 +27,7 @@ impl CdkType {
             CdkType::Month => "month",
             CdkType::Year => "year",
             CdkType::Minute => "minute",
+            CdkType::Bandwidth => "bandwidth",
         }
     }
 
@@ -34,6 +37,7 @@ impl CdkType {
             "month" => Some(CdkType::Month),
             "year" => Some(CdkType::Year),
             "minute" => Some(CdkType::Minute),
+            "bandwidth" => Some(CdkType::Bandwidth),
             _ => None,
         }
     }
@@ -70,6 +74,7 @@ pub struct CdkCode {
     pub code: String,
     pub cdk_type: CdkType,
     pub duration_minutes: i64, // 实际时长（分钟），对于分钟卡需要指定
+    pub bandwidth_mbps: Option<i64>,
     pub status: CdkStatus,
     pub used_by: Option<String>, // 使用用户ID
     pub used_at: Option<DateTime<Utc>>,
@@ -82,6 +87,7 @@ pub struct CdkGenerateRequest {
     pub cdk_type: CdkType,
     pub count: u32,
     pub duration_minutes: Option<i64>, // 仅用于分钟卡
+    pub bandwidth_mbps: Option<i64>,
     pub expires_at: Option<DateTime<Utc>>, // CDK过期时间
 }
 

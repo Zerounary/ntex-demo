@@ -49,6 +49,8 @@ pub trait AuthRepository: Send + Sync {
 
     async fn get_remaining_minutes(&self, user_id: &str) -> Result<i64, RepositoryError>;
     async fn add_remaining_minutes(&self, user_id: &str, minutes: i64) -> Result<i64, RepositoryError>;
+    async fn get_bandwidth_mbps(&self, user_id: &str) -> Result<Option<i64>, RepositoryError>;
+    async fn set_bandwidth_mbps(&self, user_id: &str, bandwidth_mbps: i64) -> Result<(), RepositoryError>;
 }
 
 #[async_trait]

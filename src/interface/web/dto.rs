@@ -348,6 +348,7 @@ pub struct CdkGenerateRequestVO {
     pub cdk_type: String,
     pub count: u32,
     pub duration_minutes: Option<i64>,
+    pub bandwidth_mbps: Option<i64>,
     pub expires_at: Option<String>,
 }
 
@@ -358,6 +359,7 @@ impl From<CdkGenerateRequestVO> for CdkGenerateRequest {
             cdk_type: CdkType::from_str(&value.cdk_type).unwrap_or(CdkType::Day),
             count: value.count,
             duration_minutes: value.duration_minutes,
+            bandwidth_mbps: value.bandwidth_mbps,
             expires_at: value.expires_at.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&chrono::Utc))),
         }
     }

@@ -44,6 +44,14 @@ where
             }
         }
 
+        if request.cdk_type == crate::domain::cdk::CdkType::Bandwidth {
+            if request.bandwidth_mbps.is_none() || request.bandwidth_mbps.unwrap() <= 0 {
+                return Err(UsecaseError::Validation(
+                    "bandwidth_mbps is required for bandwidth cards".into(),
+                ));
+            }
+        }
+
         let cdks = self.cdk_repo.generate_cdks(request).await?;
         Ok(cdks)
     }
@@ -67,6 +75,27 @@ where
 
         // 兑换CDK
         let response = self.cdk_repo.redeem_cdk(request.clone()).await?;
+
+        if cdk.cdk_type == crate::domain::cdk::CdkType::Bandwidth {
+            let bw = cdk
+                .bandwidth_mbps
+                .ok_or_else(|| UsecaseError::Validation("missing bandwidth_mbps for bandwidth cdk".into()))?;
+            if bw <= 0 {
+                return Err(UsecaseError::Validation("bandwidth_mbps must be positive".into()));
+            }
+
+            self.auth_repo
+                .set_bandwidth_mbps(&request.user_id, bw)
+                .await?;
+
+            return Ok(CdkRedeemResponse {
+                success: true,
+                message: format!("CDK redeemed successfully. Bandwidth set to {} Mbps", bw),
+                duration_minutes: 0,
+                valid_until: None,
+                remaining_minutes: None,
+            });
+        }
 
         if cdk.cdk_type == crate::domain::cdk::CdkType::Minute {
             let remaining = self
