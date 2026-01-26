@@ -39,7 +39,7 @@ impl MqttBrokerManager {
                 if let Ok(config) = toml::from_str::<toml::Value>(&content) {
                     if let Some(tls_config) = config
                         .get("v4")
-                        .and_then(|v4| v4.get("v4-1"))
+                        .and_then(|v4| v4.get("1"))
                         .and_then(|v4_1| v4_1.get("tls"))
                     {
                         if tls_cert_path.is_none() {
@@ -179,6 +179,11 @@ fn load_config_from_toml(
 ) -> Result<Config, Box<dyn std::error::Error>> {
     use std::fs;
     
+    let max_connections: usize = env::var("MQTT_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(10000);
+    
     // 配置文件路径：优先使用项目根目录的 config.toml，如果不存在则使用 mqtt-borcker/config.toml
     let config_paths = vec![
         "config.toml",
@@ -189,15 +194,14 @@ fn load_config_from_toml(
     for config_path in &config_paths {
         if let Ok(mut content) = fs::read_to_string(config_path) {
             // 检查配置文件中是否已有 TLS 配置
-            let has_tls_config = content.contains("[v4.v4-1.tls]") || 
-                                 content.contains("[v4.\"v4-1\".tls]");
+            let has_tls_config = content.contains("[v4.1.tls]");
             
             // 如果配置文件中没有 TLS 配置，但用户提供了 TLS 环境变量，则添加 TLS 配置
             if !has_tls_config && tls_cert_path.is_some() && tls_key_path.is_some() {
                 // 在 [v4.v4-1.connections] 之前插入 TLS 配置
-                if let Some(connections_pos) = content.find("[v4.v4-1.connections]") {
+                if let Some(connections_pos) = content.find("[v4.1.connections]") {
                     let mut tls_config = String::new();
-                    tls_config.push_str("\n[v4.v4-1.tls]\n");
+                    tls_config.push_str("\n[v4.1.tls]\n");
                     if let Some(cert_path) = tls_cert_path {
                         tls_config.push_str(&format!("certpath = \"{}\"\n", cert_path));
                     }
@@ -236,7 +240,7 @@ fn load_config_from_toml(
     // 构建 TLS 配置部分（如果提供了证书路径）
     let mut tls_section = String::new();
     if let (Some(cert_path), Some(key_path)) = (tls_cert_path, tls_key_path) {
-        tls_section.push_str("\n[v4.v4-1.tls]\n");
+        tls_section.push_str("\n[v4.1.tls]\n");
         tls_section.push_str(&format!("certpath = \"{}\"\n", cert_path));
         tls_section.push_str(&format!("keypath = \"{}\"\n", key_path));
         if let Some(ca_path) = tls_ca_path {
@@ -248,22 +252,22 @@ fn load_config_from_toml(
         r#"id = 0
 
 [router]
-max_connections = 1000
+max_connections = {}
 max_outgoing_packet_count = 100
 max_segment_size = 104857600
 max_segment_count = 10
 
-[v4.v4-1]
+[v4.1]
 name = "v4-1"
 listen = "0.0.0.0:{}"
 next_connection_delay_ms = 1
-{}[v4.v4-1.connections]
+{}[v4.1.connections]
 connection_timeout_ms = 60000
 max_payload_size = 104857600
 max_inflight_count = 100
 dynamic_filters = true
 "#,
-        port, tls_section
+        max_connections, port, tls_section
     );
     
     // 尝试写入默认配置文件

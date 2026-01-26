@@ -94,13 +94,25 @@ impl MqttClientManager {
                 // 尝试从 config.toml 读取 CA 证书路径
                 if let Ok(content) = fs::read_to_string("config.toml") {
                     if let Ok(config) = toml::from_str::<toml::Value>(&content) {
-                        if let Some(capath) = config
+                        // rumqttd 0.20+ 默认示例使用 [v4.1.tls]
+                        let capath_new = config
+                            .get("v4")
+                            .and_then(|v4| v4.get("1"))
+                            .and_then(|v4_1| v4_1.get("tls"))
+                            .and_then(|tls| tls.get("capath"))
+                            .and_then(|v| v.as_str());
+                        if let Some(capath) = capath_new {
+                            return Ok(capath.to_string());
+                        }
+
+                        // 兼容旧格式 [v4.v4-1.tls]
+                        let capath_old = config
                             .get("v4")
                             .and_then(|v4| v4.get("v4-1"))
                             .and_then(|v4_1| v4_1.get("tls"))
                             .and_then(|tls| tls.get("capath"))
-                            .and_then(|v| v.as_str())
-                        {
+                            .and_then(|v| v.as_str());
+                        if let Some(capath) = capath_old {
                             return Ok(capath.to_string());
                         }
                     }
@@ -117,13 +129,23 @@ impl MqttClientManager {
                 .or_else(|_| {
                     if let Ok(content) = fs::read_to_string("config.toml") {
                         if let Ok(config) = toml::from_str::<toml::Value>(&content) {
-                            if let Some(certpath) = config
+                            let certpath_new = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("certpath"))
+                                .and_then(|v| v.as_str());
+                            if let Some(certpath) = certpath_new {
+                                return Ok(certpath.to_string());
+                            }
+
+                            let certpath_old = config
                                 .get("v4")
                                 .and_then(|v4| v4.get("v4-1"))
                                 .and_then(|v4_1| v4_1.get("tls"))
                                 .and_then(|tls| tls.get("certpath"))
-                                .and_then(|v| v.as_str())
-                            {
+                                .and_then(|v| v.as_str());
+                            if let Some(certpath) = certpath_old {
                                 return Ok(certpath.to_string());
                             }
                         }
@@ -136,13 +158,23 @@ impl MqttClientManager {
                 .or_else(|_| {
                     if let Ok(content) = fs::read_to_string("config.toml") {
                         if let Ok(config) = toml::from_str::<toml::Value>(&content) {
-                            if let Some(keypath) = config
+                            let keypath_new = config
+                                .get("v4")
+                                .and_then(|v4| v4.get("1"))
+                                .and_then(|v4_1| v4_1.get("tls"))
+                                .and_then(|tls| tls.get("keypath"))
+                                .and_then(|v| v.as_str());
+                            if let Some(keypath) = keypath_new {
+                                return Ok(keypath.to_string());
+                            }
+
+                            let keypath_old = config
                                 .get("v4")
                                 .and_then(|v4| v4.get("v4-1"))
                                 .and_then(|v4_1| v4_1.get("tls"))
                                 .and_then(|tls| tls.get("keypath"))
-                                .and_then(|v| v.as_str())
-                            {
+                                .and_then(|v| v.as_str());
+                            if let Some(keypath) = keypath_old {
                                 return Ok(keypath.to_string());
                             }
                         }
