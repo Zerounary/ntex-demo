@@ -954,7 +954,7 @@ impl AdminConfigStore {
     async fn create_default_node_config(&self, node_id: u64) -> Result<admin_node_config::Model, String> {
         let active = admin_node_config::ActiveModel {
             node_id: Set(node_id),
-            node_type: Set("Vmess".to_string()),
+            node_type: Set("VlessReality".to_string()),
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
@@ -967,12 +967,29 @@ impl AdminConfigStore {
         admin_inbound::ActiveModel {
             node_id: Set(node_id),
             tag: Set("in_10086".to_string()),
-            protocol: Set("vmess".to_string()),
+            protocol: Set("vless".to_string()),
             port: Set(10086),
             listen: Set(None),
-            settings: Set(json!({})),
+            settings: Set(json!({
+                "decryption": "none"
+            })),
             stream_settings: Set(Some(json!({
-                "network": "tcp"
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.cloudflare.com:443",
+                    "xver": 0,
+                    "serverNames": ["www.cloudflare.com"],
+                    "privateKey": "aNd7UkHbEak7xUDUAcUCycsbi8sjk71TfNB5ZOp0yUk",
+                    "shortIds": ["a66cafe7"],
+
+                    "serverName": "www.cloudflare.com",
+                    "publicKey": "JbPBpbjEHQiL87HpoJ6wZ3o9wSTyjzTIN9ysP6tnywU",
+                    "shortId": "a66cafe7",
+                    "fingerprint": "chrome",
+                    "spiderX": "/"
+                }
             }))),
             sniffing: Set(None),
             ..Default::default()

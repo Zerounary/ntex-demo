@@ -40,10 +40,15 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
     if node_count == 0 {
         let nodes = vec![accelerator_node::ActiveModel {
             id: Set("1".to_string()),
-            vmess_uuid: Set("9acea125-3ca7-1212-2121-000000010135".to_string()),
-            vmess_server: Set("127.0.0.1".to_string()),
-            vmess_port: Set(10086),
-            vmess_email: Set("lol-kr@acc.local".to_string()),
+            vless_id: Set("9acea125-3ca7-1212-2121-000000010135".to_string()),
+            vless_server: Set("127.0.0.1".to_string()),
+            vless_port: Set(10086),
+            vless_encryption: Set("none".to_string()),
+            reality_server_name: Set("www.cloudflare.com".to_string()),
+            reality_public_key: Set("JbPBpbjEHQiL87HpoJ6wZ3o9wSTyjzTIN9ysP6tnywU".to_string()),
+            reality_short_id: Set("a66cafe7".to_string()),
+            reality_fingerprint: Set("chrome".to_string()),
+            reality_spider_x: Set("/".to_string()),
             udp_proxy: Set("127.0.0.1:10086".to_string()),
             mode: Set("进程模式".to_string()),
             ping: Set(5),
@@ -218,7 +223,7 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
     if node_config_exists.is_none() {
         admin_node_config::ActiveModel {
             node_id: Set(node_id),
-            node_type: Set("Vmess".to_string()),
+            node_type: Set("VlessReality".to_string()),
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
@@ -230,12 +235,29 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
         admin_inbound::ActiveModel {
             node_id: Set(node_id),
             tag: Set("in_10086".to_string()),
-            protocol: Set("vmess".to_string()),
+            protocol: Set("vless".to_string()),
             port: Set(10086),
             listen: Set(None),
-            settings: Set(json!({})),
+            settings: Set(json!({
+                "decryption": "none"
+            })),
             stream_settings: Set(Some(json!({
-                "network": "tcp"
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "show": false,
+                    "dest": "www.cloudflare.com:443",
+                    "xver": 0,
+                    "serverNames": ["www.cloudflare.com"],
+                    "privateKey": "aNd7UkHbEak7xUDUAcUCycsbi8sjk71TfNB5ZOp0yUk",
+                    "shortIds": ["a66cafe7"],
+
+                    "serverName": "www.cloudflare.com",
+                    "publicKey": "JbPBpbjEHQiL87HpoJ6wZ3o9wSTyjzTIN9ysP6tnywU",
+                    "shortId": "a66cafe7",
+                    "fingerprint": "chrome",
+                    "spiderX": "/"
+                }
             }))),
             sniffing: Set(None),
             ..Default::default()
@@ -322,25 +344,6 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
                     }]
                 }),
                 None,
-            ),
-            (
-                "vmess_loopback".to_string(),
-                "vmess".to_string(),
-                json!({
-                    "vnext": [{
-                        "address": "127.0.0.1",
-                        "port": 10086,
-                        "users": [{
-                            "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                            "alterId": 0,
-                            "email": "t@t.tt",
-                            "security": "auto"
-                        }]
-                    }]
-                }),
-                Some(json!({
-                    "network": "tcp"
-                })),
             ),
         ];
         

@@ -47,6 +47,49 @@ use super::dto::{
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
 
+fn extract_reality_client_params(
+    inbound: &crate::infrastructure::admin_config::InboundConfig,
+) -> Result<(String, String, String, String, String), UsecaseError> {
+    let stream = inbound.stream_settings.as_ref().ok_or_else(|| {
+        UsecaseError::Validation("missing streamSettings for inbound".to_string())
+    })?;
+    let rs = stream
+        .get("realitySettings")
+        .ok_or_else(|| UsecaseError::Validation("missing realitySettings".to_string()))?;
+
+    let server_name = rs
+        .get("serverName")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| UsecaseError::Validation("missing realitySettings.serverName".to_string()))?;
+    let public_key = rs
+        .get("publicKey")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| UsecaseError::Validation("missing realitySettings.publicKey".to_string()))?;
+    let short_id = rs
+        .get("shortId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| UsecaseError::Validation("missing realitySettings.shortId".to_string()))?;
+    let fingerprint = rs
+        .get("fingerprint")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| UsecaseError::Validation("missing realitySettings.fingerprint".to_string()))?;
+    let spider_x = rs
+        .get("spiderX")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "/".to_string());
+
+    Ok((server_name, public_key, short_id, fingerprint, spider_x))
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct AdminUserDTO {
     pub id: u64,
@@ -918,7 +961,7 @@ pub async fn session_start(
         let outbounds = main_admin_get_outbound_tags(node_id).await?;
         let mut candidates: Vec<String> = outbounds
             .into_iter()
-            .filter(|t| t != "block" && t != "direct" && t != "vmess_loopback")
+            .filter(|t| t != "block" && t != "direct")
             .collect();
         candidates.sort();
 
@@ -953,7 +996,7 @@ pub async fn session_start(
 
             best_tag.ok_or_else(|| {
                 UsecaseError::Validation(format!(
-                    "no available outbound tag for node_id={} (excluded block/direct/vmess_loopback)",
+                    "no available outbound tag for node_id={} (excluded block/direct)",
                     node_id
                 ))
             })?
@@ -1067,19 +1110,22 @@ pub async fn session_start(
         None
     };
 
-    let vmess_email = format!("{}-{}@acc.local", game_id_clone, user_id);
-
     let build_profile = |
         node_id_str: String,
-        vmess_uuid: String,
-        vmess_server: String,
-        vmess_port: i32,
+        vless_id: String,
+        vless_server: String,
+        vless_port: i32,
+        reality_server_name: String,
+        reality_public_key: String,
+        reality_short_id: String,
+        reality_fingerprint: String,
+        reality_spider_x: String,
         udp_server_override: Option<String>,
         udp_port: i32,
         process_name: String,
         region: String,
     | {
-        let udp_host = udp_server_override.unwrap_or_else(|| vmess_server.clone());
+        let udp_host = udp_server_override.unwrap_or_else(|| vless_server.clone());
         crate::interface::web::dto::ProfileVO {
             id: binding.id.to_string(),
             game_id: binding.game_id.clone(),
@@ -1089,10 +1135,15 @@ pub async fn session_start(
                 .unwrap_or_else(|| node_id_str.clone()),
             node_id: node_id_str,
             process_name,
-            vmess_uuid,
-            vmess_server: vmess_server.clone(),
-            vmess_port,
-            vmess_email: vmess_email.clone(),
+            vless_id,
+            vless_server: vless_server.clone(),
+            vless_port,
+            vless_encryption: "none".to_string(),
+            reality_server_name,
+            reality_public_key,
+            reality_short_id,
+            reality_fingerprint,
+            reality_spider_x,
             udp_proxy: format!("{}:{}", udp_host, udp_port),
             mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
             status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
@@ -1130,11 +1181,28 @@ pub async fn session_start(
                     UsecaseError::Validation(format!("select_default_forward_port failed: {}", e))
                 })?;
 
+            let inbounds = state
+                .admin_config
+                .get_inbounds(primary_node_id)
+                .await
+                .map_err(|e| UsecaseError::Validation(format!("get_inbounds failed: {}", e)))?;
+            let inbound = inbounds
+                .iter()
+                .find(|i| i.tag == "in_10086")
+                .ok_or_else(|| UsecaseError::Validation("missing inbound tag in_10086".to_string()))?;
+            let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
+                extract_reality_client_params(inbound)?;
+
             profile_vo = Some(build_profile(
                 primary_node_id.to_string(),
                 primary_admin_uuid.clone(),
                 server,
                 port,
+                reality_server_name,
+                reality_public_key,
+                reality_short_id,
+                reality_fingerprint,
+                reality_spider_x,
                 None,
                 port,
                 game.process_name,
@@ -1142,75 +1210,10 @@ pub async fn session_start(
             ));
         }
         "chain" => {
-            let mut tcp_entry_endpoint: Option<(String, i32)> = None;
-            let mut udp_entry_endpoint: Option<(String, i32)> = None;
-            if let Some(tcp_chain_id) = binding.tcp_chain_id {
-                let entry_node_id = resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?;
-                let server = state
-                    .admin_config
-                    .get_node_public_ip(entry_node_id)
-                    .await
-                    .map_err(|e| {
-                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
-                    })?;
-                let tag = format!("chain_{}_1", tcp_chain_id);
-                let tcp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
-                tcp_entry_endpoint = Some((server.clone(), tcp_port));
-
-                tcp_profile_vo = Some(build_profile(
-                    entry_node_id.to_string(),
-                    primary_admin_uuid.clone(),
-                    server.clone(),
-                    tcp_port,
-                    None,
-                    tcp_port,
-                    game.process_name.clone(),
-                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
-                ));
-
-                if profile_vo.is_none() {
-                    profile_vo = tcp_profile_vo.take();
-                }
-            }
-
-            if let Some(udp_chain_id) = binding.udp_chain_id {
-                let entry_node_id = resolve_chain_entry_node_id(&state.db, udp_chain_id).await?;
-                let server = state
-                    .admin_config
-                    .get_node_public_ip(entry_node_id)
-                    .await
-                    .map_err(|e| {
-                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
-                    })?;
-                let tag = format!("chain_{}_1", udp_chain_id);
-                let udp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
-                udp_entry_endpoint = Some((server.clone(), udp_port));
-
-                udp_profile_vo = Some(build_profile(
-                    entry_node_id.to_string(),
-                    primary_admin_uuid.clone(),
-                    server.clone(),
-                    udp_port,
-                    None,
-                    udp_port,
-                    game.process_name.clone(),
-                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
-                ));
-
-                if profile_vo.is_none() {
-                    profile_vo = udp_profile_vo.take();
-                }
-            }
-
-            if profile_vo.is_none() {
-                return Err(UsecaseError::Validation(
-                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
-                )
-                .into());
-            }
-            if let (Some((udp_host, udp_port)), Some(profile)) = (udp_entry_endpoint.clone(), profile_vo.as_mut()) {
-                profile.udp_proxy = format!("{}:{}", udp_host, udp_port);
-            }
+            return Err(
+                UsecaseError::Validation("chain binding is not supported for vless+reality yet".to_string())
+                    .into(),
+            );
         }
         other => {
             return Err(UsecaseError::Validation(format!("invalid binding.type: {}", other)).into());
@@ -1221,7 +1224,7 @@ pub async fn session_start(
 
     Ok(ApiResponse::success(SessionStartResponseVO {
         session_id,
-        uuid: profile_vo.vmess_uuid.clone(),
+        uuid: profile_vo.vless_id.clone(),
         bill_type,
         remaining_minutes,
         profile: profile_vo,
@@ -1322,10 +1325,15 @@ pub async fn sync_profiles(
             game_id: p.game_id,
             display_name: p.display_name,
             process_name: p.process_name,
-            vmess_uuid: p.vmess_uuid,
-            vmess_server: p.vmess_server,
-            vmess_port: p.vmess_port,
-            vmess_email: p.vmess_email,
+            vless_id: p.vless_id,
+            vless_server: p.vless_server,
+            vless_port: p.vless_port,
+            vless_encryption: p.vless_encryption,
+            reality_server_name: p.reality_server_name,
+            reality_public_key: p.reality_public_key,
+            reality_short_id: p.reality_short_id,
+            reality_fingerprint: p.reality_fingerprint,
+            reality_spider_x: p.reality_spider_x,
             udp_proxy: p.udp_proxy,
             mode: p.mode,
             status: p.status,
@@ -1849,10 +1857,15 @@ pub async fn list_game_nodes(
             let n = node_map.get(&id)?;
             Some(GameNodeVO {
                 node_id: n.id.clone(),
-                vmess_uuid: n.vmess_uuid.clone(),
-                vmess_server: n.vmess_server.clone(),
-                vmess_port: n.vmess_port,
-                vmess_email: n.vmess_email.clone(),
+                vless_id: n.vless_id.clone(),
+                vless_server: n.vless_server.clone(),
+                vless_port: n.vless_port,
+                vless_encryption: n.vless_encryption.clone(),
+                reality_server_name: n.reality_server_name.clone(),
+                reality_public_key: n.reality_public_key.clone(),
+                reality_short_id: n.reality_short_id.clone(),
+                reality_fingerprint: n.reality_fingerprint.clone(),
+                reality_spider_x: n.reality_spider_x.clone(),
                 udp_proxy: n.udp_proxy.clone(),
                 mode: n.mode.clone(),
                 ping: n.ping,

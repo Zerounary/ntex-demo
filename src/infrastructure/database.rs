@@ -103,6 +103,16 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
     let backend = db.get_database_backend();
     let schema = Schema::new(backend);
 
+    if let Err(e) = db
+        .execute(sea_orm::Statement::from_string(
+            backend,
+            "DROP TABLE IF EXISTS accelerator_nodes".to_string(),
+        ))
+        .await
+    {
+        log::warn!("drop accelerator_nodes failed (may be ok): {}", e);
+    }
+
     for table in [
         schema.create_table_from_entity(accelerator_game::Entity),
         schema.create_table_from_entity(accelerator_game_node_binding::Entity),
