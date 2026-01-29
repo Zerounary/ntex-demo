@@ -1,0 +1,59 @@
+{
+	"log": {
+		"loglevel": "debug"
+	},
+	"inbounds": [
+		{
+			"tag": "vmess1234",
+			"listen": "0.0.0.0",
+			"port": 12122,
+			"protocol": "vless",
+			"settings": {
+				"decryption": "none",
+				"clients": [
+					{
+						"id": "9acea125-3ca7-1212-2121-000000010000",
+						"email": "10000@xray.com"
+					}
+					
+				]
+			},
+			"streamSettings": {
+				"network": "tcp",
+				"security": "reality",
+				"realitySettings": {
+					"show": false,
+					"dest": "www.cloudflare.com:443",
+					"xver": 0,
+					"serverNames": [
+						"www.cloudflare.com"
+					],
+					"privateKey": "aNd7UkHbEak7xUDUAcUCycsbi8sjk71TfNB5ZOp0yUk",
+					"shortIds": [
+						"a66cafe7"
+					]
+				}
+			},
+			"sniffing": {
+				"enabled": false,
+				"destOverride": [
+					"http",
+					"tls"
+				],
+				"domainsExcluded": [
+					"rbsxbxp-mim.vivox.com",
+					"rbsxbxp.www.vivox.com",
+					"rbsxbxp-ws.vivox.com",
+					"rbspsxp.www.vivox.com",
+					"rbspsxp-mim.vivox.com",
+					"rbspsxp-ws.vivox.com",
+					"rbswxp.www.vivox.com",
+					"rbswxp-mim.vivox.com",
+					"disp-rbspsp-5-1.vivox.com",
+					"disp-rbsxbp-5-1.vivox.com",
+					"proxy.rbsxbp.vivox.com",
+					"proxy.rbspsp.vivox.com",
+					"proxy.rbswp.vivox.com",
+					"rbswp.vivox.com",
+					"rbsxbp.vivox.com",
+					"rbspsp.vivox.com",
