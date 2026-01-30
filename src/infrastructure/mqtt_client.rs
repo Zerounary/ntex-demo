@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::env;
 use std::sync::Arc;
 use std::time::Duration;
+use rand::Rng;
 use tokio::time;
 use tokio::sync::Mutex;
 use std::collections::HashMap;
@@ -22,6 +23,9 @@ type ResponseWaiter = tokio::sync::oneshot::Sender<Value>;
 
 /// 节点拉取配置等待器（用于强一致等待节点实际拉取最新配置）
 type PullWaiter = tokio::sync::oneshot::Sender<()>;
+
+const MQTT_REQUEST_TOPIC: &str = "xrayr/node/+/request/+";
+const MQTT_RESPONSE_TOPIC: &str = "xrayr/node/+/response/+";
 
 /// MQTT 客户端管理器
 pub struct MqttClientManager {
@@ -222,8 +226,8 @@ impl MqttClientManager {
         let client_arc = Arc::new(client);
         
         // 订阅主题
-        let request_topic = "xrayr/node/+/request/+";
-        let response_topic = "xrayr/node/+/response/+";
+        let request_topic = MQTT_REQUEST_TOPIC;
+        let response_topic = MQTT_RESPONSE_TOPIC;
         
         info!("📡 正在连接 MQTT Broker: {}:{}", broker_host, broker_port);
         
@@ -268,19 +272,33 @@ impl MqttClientManager {
         });
         
         // 等待连接建立（给事件循环一些时间处理连接）
-        time::sleep(Duration::from_millis(500)).await;
+        let initial_wait_ms = env::var("MQTT_INITIAL_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(500);
+        time::sleep(Duration::from_millis(initial_wait_ms)).await;
         
         // 订阅主题
         info!("📡 正在订阅 MQTT 主题: {}", request_topic);
-        client_arc.subscribe(request_topic, QoS::AtLeastOnce).await?;
-        info!("✅ 已发送订阅请求: {}", request_topic);
+        if let Err(e) = client_arc.subscribe(request_topic, QoS::AtLeastOnce).await {
+            warn!("⚠️  [MQTT] 启动时订阅 request 主题失败（将等待 ConnAck 后自动订阅）: topic={}, error={}", request_topic, e);
+        } else {
+            info!("✅ 已发送订阅请求: {}", request_topic);
+        }
         
         info!("📡 正在订阅 MQTT 主题: {}", response_topic);
-        client_arc.subscribe(response_topic, QoS::AtLeastOnce).await?;
-        info!("✅ 已发送订阅请求: {}", response_topic);
+        if let Err(e) = client_arc.subscribe(response_topic, QoS::AtLeastOnce).await {
+            warn!("⚠️  [MQTT] 启动时订阅 response 主题失败（将等待 ConnAck 后自动订阅）: topic={}, error={}", response_topic, e);
+        } else {
+            info!("✅ 已发送订阅请求: {}", response_topic);
+        }
         
         // 等待订阅确认（给 broker 一些时间处理订阅）
-        time::sleep(Duration::from_millis(500)).await;
+        let suback_wait_ms = env::var("MQTT_SUBACK_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(500);
+        time::sleep(Duration::from_millis(suback_wait_ms)).await;
         info!("✅ 订阅完成，等待订阅确认...");
         
         Ok(Self {
@@ -371,6 +389,9 @@ impl MqttClientManager {
         db: DatabaseConnection,
     ) {
         info!("🚀 MQTT 客户端事件循环已启动");
+
+        let mut reconnect_backoff = Duration::from_millis(200);
+        let reconnect_backoff_max = Duration::from_secs(30);
         
         loop {
             tokio::select! {
@@ -411,6 +432,20 @@ impl MqttClientManager {
                         }
                         Ok(Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
                             info!("✅ MQTT 连接已确认");
+
+                            reconnect_backoff = Duration::from_millis(200);
+
+                            if let Err(e) = _client.subscribe(MQTT_REQUEST_TOPIC, QoS::AtLeastOnce).await {
+                                warn!("⚠️  [MQTT] ConnAck 后订阅 request 主题失败: topic={}, error={}", MQTT_REQUEST_TOPIC, e);
+                            } else {
+                                info!("✅ [MQTT] ConnAck 后已提交订阅 request 主题: {}", MQTT_REQUEST_TOPIC);
+                            }
+
+                            if let Err(e) = _client.subscribe(MQTT_RESPONSE_TOPIC, QoS::AtLeastOnce).await {
+                                warn!("⚠️  [MQTT] ConnAck 后订阅 response 主题失败: topic={}, error={}", MQTT_RESPONSE_TOPIC, e);
+                            } else {
+                                info!("✅ [MQTT] ConnAck 后已提交订阅 response 主题: {}", MQTT_RESPONSE_TOPIC);
+                            }
                         }
                         Ok(Event::Incoming(rumqttc::Packet::Disconnect)) => {
                             warn!("⚠️  MQTT 连接已断开");
@@ -465,9 +500,16 @@ impl MqttClientManager {
                                 // 即使事件循环出错，客户端仍可以发送消息
                             } else {
                                 error!("❌ MQTT 事件循环错误: {}", e);
-                                error!("⚠️  等待 1 秒后继续，客户端连接状态可能受影响");
-                                // 对于其他错误，等待一段时间后继续
-                                time::sleep(Duration::from_secs(1)).await;
+
+                                let jitter_ms = rand::thread_rng().gen_range(0..=250u64);
+                                let wait = reconnect_backoff + Duration::from_millis(jitter_ms);
+                                warn!("⚠️  [MQTT] 等待 {:?} 后继续 poll()（backoff={:?}）", wait, reconnect_backoff);
+                                time::sleep(wait).await;
+
+                                reconnect_backoff = reconnect_backoff.saturating_mul(2);
+                                if reconnect_backoff > reconnect_backoff_max {
+                                    reconnect_backoff = reconnect_backoff_max;
+                                }
                             }
                             // 继续循环，不中断事件循环
                         }

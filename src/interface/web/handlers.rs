@@ -799,7 +799,7 @@ pub async fn session_start(
 
     let game_id = binding.game_id.clone();
 
-    let (primary_node_id, tcp_exit_node_id, udp_exit_node_id) = match binding.r#type.as_str() {
+    let (primary_node_id, tcp_entry_node_id, udp_entry_node_id, tcp_exit_node_id, udp_exit_node_id) = match binding.r#type.as_str() {
         "node" => {
             let node_id_str = binding
                 .node_id
@@ -808,9 +808,17 @@ pub async fn session_start(
             let node_id = node_id_str.parse::<u64>().map_err(|_| {
                 UsecaseError::Validation(format!("invalid binding.node_id: {}", node_id_str))
             })?;
-            (node_id, None, None)
+            (node_id, None, None, None, None)
         }
         "chain" => {
+            let tcp_entry = match binding.tcp_chain_id {
+                Some(tcp_chain_id) => Some(resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?),
+                None => None,
+            };
+            let udp_entry = match binding.udp_chain_id {
+                Some(udp_chain_id) => Some(resolve_chain_entry_node_id(&state.db, udp_chain_id).await?),
+                None => None,
+            };
             let tcp_exit = match binding.tcp_chain_id {
                 Some(tcp_chain_id) => Some(resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?),
                 None => None,
@@ -819,12 +827,14 @@ pub async fn session_start(
                 Some(udp_chain_id) => Some(resolve_chain_exit_node_id(&state.db, udp_chain_id).await?),
                 None => None,
             };
-            let primary = tcp_exit.or(udp_exit).ok_or_else(|| {
+
+            let primary = tcp_entry.or(udp_entry).ok_or_else(|| {
                 UsecaseError::Validation(
                     "binding.tcp_chain_id or binding.udp_chain_id is required for type=chain".to_string(),
                 )
             })?;
-            (primary, tcp_exit, udp_exit)
+
+            (primary, tcp_entry, udp_entry, tcp_exit, udp_exit)
         }
         other => {
             return Err(
@@ -893,6 +903,19 @@ pub async fn session_start(
         return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
             .into_http(StatusCode::SERVICE_UNAVAILABLE));
     }
+    if let Some(tcp_node_id) = tcp_entry_node_id {
+        if let Err(e) = ensure_node_online(&state.db, tcp_node_id, offline_threshold).await {
+            return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
+                .into_http(StatusCode::SERVICE_UNAVAILABLE));
+        }
+    }
+    if let Some(udp_node_id) = udp_entry_node_id {
+        if let Err(e) = ensure_node_online(&state.db, udp_node_id, offline_threshold).await {
+            return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
+                .into_http(StatusCode::SERVICE_UNAVAILABLE));
+        }
+    }
+
     if let Some(tcp_node_id) = tcp_exit_node_id {
         if let Err(e) = ensure_node_online(&state.db, tcp_node_id, offline_threshold).await {
             return Ok(ApiResponse::<MessageResponse>::error("NODE_OFFLINE", e.to_string())
@@ -1210,10 +1233,121 @@ pub async fn session_start(
             ));
         }
         "chain" => {
-            return Err(
-                UsecaseError::Validation("chain binding is not supported for vless+reality yet".to_string())
-                    .into(),
-            );
+            let mut tcp_entry_endpoint: Option<(String, i32)> = None;
+            let mut udp_entry_endpoint: Option<(String, i32)> = None;
+            if let Some(tcp_chain_id) = binding.tcp_chain_id {
+                let entry_node_id = resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?;
+                let exit_node_id = resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?;
+                let server = state
+                    .admin_config
+                    .get_node_public_ip(entry_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
+                    })?;
+                let tag = format!("chain_{}_1", tcp_chain_id);
+                let inbounds = state
+                    .admin_config
+                    .get_inbounds(exit_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_inbounds failed: {}", e))
+                    })?;
+                let inbound = inbounds
+                    .iter()
+                    .find(|i| i.tag == "in_10086")
+                    .ok_or_else(|| {
+                        UsecaseError::Validation(
+                            "missing inbound tag in_10086 for chain binding".to_string(),
+                        )
+                    })?;
+                let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
+                    extract_reality_client_params(inbound)?;
+                let tcp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                tcp_entry_endpoint = Some((server.clone(), tcp_port));
+
+                tcp_profile_vo = Some(build_profile(
+                    entry_node_id.to_string(),
+                    primary_admin_uuid.clone(),
+                    server.clone(),
+                    tcp_port,
+                    reality_server_name,
+                    reality_public_key,
+                    reality_short_id,
+                    reality_fingerprint,
+                    reality_spider_x,
+                    None,
+                    tcp_port,
+                    game.process_name.clone(),
+                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
+                ));
+
+                if profile_vo.is_none() {
+                    profile_vo = tcp_profile_vo.take();
+                }
+            }
+
+            if let Some(udp_chain_id) = binding.udp_chain_id {
+                let entry_node_id = resolve_chain_entry_node_id(&state.db, udp_chain_id).await?;
+                let exit_node_id = resolve_chain_exit_node_id(&state.db, udp_chain_id).await?;
+                let server = state
+                    .admin_config
+                    .get_node_public_ip(entry_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
+                    })?;
+                let tag = format!("chain_{}_1", udp_chain_id);
+                let inbounds = state
+                    .admin_config
+                    .get_inbounds(exit_node_id)
+                    .await
+                    .map_err(|e| {
+                        UsecaseError::Validation(format!("get_inbounds failed: {}", e))
+                    })?;
+                let inbound = inbounds
+                    .iter()
+                    .find(|i| i.tag == "in_10086")
+                    .ok_or_else(|| {
+                        UsecaseError::Validation(
+                            "missing inbound tag in_10086 for chain binding".to_string(),
+                        )
+                    })?;
+                let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
+                    extract_reality_client_params(inbound)?;
+                let udp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                udp_entry_endpoint = Some((server.clone(), udp_port));
+
+                udp_profile_vo = Some(build_profile(
+                    entry_node_id.to_string(),
+                    primary_admin_uuid.clone(),
+                    server.clone(),
+                    udp_port,
+                    reality_server_name,
+                    reality_public_key,
+                    reality_short_id,
+                    reality_fingerprint,
+                    reality_spider_x,
+                    None,
+                    udp_port,
+                    game.process_name.clone(),
+                    binding.region.clone().unwrap_or_else(|| game.region.clone()),
+                ));
+
+                if profile_vo.is_none() {
+                    profile_vo = udp_profile_vo.take();
+                }
+            }
+
+            if profile_vo.is_none() {
+                return Err(UsecaseError::Validation(
+                    "missing tcp_chain_id/udp_chain_id for chain binding".to_string(),
+                )
+                .into());
+            }
+            if let (Some((udp_host, udp_port)), Some(profile)) = (udp_entry_endpoint.clone(), profile_vo.as_mut()) {
+                profile.udp_proxy = format!("{}:{}", udp_host, udp_port);
+            }
         }
         other => {
             return Err(UsecaseError::Validation(format!("invalid binding.type: {}", other)).into());
@@ -1228,8 +1362,8 @@ pub async fn session_start(
         bill_type,
         remaining_minutes,
         profile: profile_vo,
-        tcp_profile: tcp_profile_vo,
-        udp_profile: udp_profile_vo,
+        tcp_profile: None,
+        udp_profile: None,
     })
     .into_http(StatusCode::OK))
 }
