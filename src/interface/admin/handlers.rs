@@ -11,7 +11,7 @@ use std::time::Instant;
 use log::{info, error};
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
-use crate::infrastructure::mqtt_client::MqttClientManager;
+use crate::infrastructure::node_transport::NodeTransport;
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config,
 };
@@ -23,7 +23,7 @@ use chrono::Utc;
 pub struct AdminState {
     pub config: AdminConfigStore,
     pub db: DatabaseConnection,
-    pub mqtt_client: Option<std::sync::Arc<MqttClientManager>>,
+    pub node_transport: Option<std::sync::Arc<dyn NodeTransport>>,
 }
 
 fn require_admin_token(req: &HttpRequest) -> Result<(), HttpResponse> {
@@ -238,7 +238,6 @@ pub async fn list_game_bindings(
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpsertGameBindingRequest {
     #[serde(default)]
     pub id: Option<i64>,
@@ -528,7 +527,7 @@ pub async fn apply_chain(
         return resp;
     }
     let base_port: u16 = body.base_port.unwrap_or(40000);
-    match chain_ops::apply_chain(&state.config, state.mqtt_client.as_ref(), body.chain_id, base_port).await {
+    match chain_ops::apply_chain(&state.config, state.node_transport.as_ref(), body.chain_id, base_port).await {
         Ok((cid, results)) => HttpResponse::Ok().json(&serde_json::json!({
             "msg": "ok",
             "data": {
@@ -611,7 +610,7 @@ pub async fn delete_chain(
         }));
     }
 
-    let _ = chain_ops::cleanup_chain_artifacts(&state.config, state.mqtt_client.as_ref(), id).await;
+    let _ = chain_ops::cleanup_chain_artifacts(&state.config, state.node_transport.as_ref(), id).await;
 
     HttpResponse::Ok().json(&serde_json::json!({
         "msg": "ok"
@@ -656,9 +655,9 @@ pub async fn add_inbound(
 
     match state.config.add_inbound(node_id, inbound.clone()).await {
         Ok(_) => {
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "inbound").await;
+                let _ = transport.publish_update_notification(node_id, "config").await;
             }
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok",
@@ -710,9 +709,9 @@ pub async fn update_inbound(
         .await
     {
         Ok(_) => {
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "inbound").await;
+                let _ = transport.publish_update_notification(node_id, "config").await;
             }
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok"
@@ -739,9 +738,9 @@ pub async fn delete_inbound(
 
     match state.config.delete_inbound(node_id, &tag).await {
         Ok(_) => {
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt_client.publish_update_notification(node_id, "config").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "inbound").await;
+                let _ = transport.publish_update_notification(node_id, "config").await;
             }
             HttpResponse::Ok().json(&serde_json::json!({
                 "msg": "ok"
@@ -807,7 +806,7 @@ pub async fn refresh_node_network_interfaces(
 ) -> HttpResponse {
     let node_id = path.into_inner();
 
-    let mqtt_client = match &state.mqtt_client {
+    let transport = match &state.node_transport {
         Some(c) => c,
         None => {
             return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
@@ -817,7 +816,7 @@ pub async fn refresh_node_network_interfaces(
         }
     };
 
-    let result = mqtt_client.query_node_network_interfaces(node_id, 8).await;
+    let result = transport.query_node_network_interfaces(node_id, 8).await;
     let Some(result) = result else {
         return HttpResponse::GatewayTimeout().json(&serde_json::json!({
             "msg": "error",
@@ -1046,8 +1045,8 @@ pub async fn query_handler(
                 "event": event
             });
             
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let result = mqtt_client.query_node_logs(node_id, query_params, 15).await;
+            if let Some(ref transport) = state.node_transport {
+                let result = transport.query_node_logs(node_id, query_params, 15).await;
                 
                 if let Some(result) = result {
                     HttpResponse::Ok().json(&result)
@@ -1141,8 +1140,8 @@ pub async fn add_user(
     
     match state.config.add_user(node_id, body.uuid.clone(), body.st, body.dt).await {
         Ok(user) => {
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "user").await;
 
                 if sync {
                     let wait_start = Instant::now();
@@ -1150,7 +1149,7 @@ pub async fn add_user(
                         "[admin:add_user] waiting node pull: node_id={} action=user timeout={}s",
                         node_id, sync_timeout
                     );
-                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                    if let Err(e) = transport.wait_for_node_pull(node_id, "user", sync_timeout).await {
                         error!(
                             "[admin:add_user] node pull timeout node_id={} action=user elapsed={:?} err={}",
                             node_id,
@@ -1158,9 +1157,9 @@ pub async fn add_user(
                             e
                         );
                         let _ = state.config.delete_user(node_id, user.id).await;
-                        let _ = mqtt_client.publish_update_notification(node_id, "user").await;
-                        let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
-                        let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
+                        let _ = transport.publish_update_notification(node_id, "user").await;
+                        let _ = transport.publish_update_notification(node_id, "outbound").await;
+                        let _ = transport.publish_update_notification(node_id, "inbound").await;
                         return HttpResponse::GatewayTimeout().json(&serde_json::json!({
                             "msg": "error",
                             "error": e
@@ -1188,15 +1187,15 @@ pub async fn add_user(
         Err(_e) => {
             if let Ok(users) = state.config.get_users(node_id).await {
                 if let Some(user) = users.iter().find(|u| u.uuid == body.uuid).cloned() {
-                    if let Some(ref mqtt_client) = state.mqtt_client {
-                        let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+                    if let Some(ref transport) = state.node_transport {
+                        let _ = transport.publish_update_notification(node_id, "user").await;
                         if sync {
                             let wait_start = Instant::now();
                             info!(
                                 "[admin:add_user] waiting existing user pull: node_id={} uuid={} timeout={}s",
                                 node_id, body.uuid, sync_timeout
                             );
-                            if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                            if let Err(e) = transport.wait_for_node_pull(node_id, "user", sync_timeout).await {
                                 error!(
                                     "[admin:add_user] node pull timeout for existing user: node_id={} elapsed={:?} err={}",
                                     node_id,
@@ -1259,8 +1258,8 @@ pub async fn update_user(
     match state.config.update_user(node_id, id, body.uuid, body.st, body.dt).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "user").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1301,10 +1300,10 @@ pub async fn delete_user(
     match state.config.delete_user(node_id, id).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "user").await;
-                let _ = mqtt_client.publish_update_notification(node_id, "inbound").await;
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "user").await;
+                let _ = transport.publish_update_notification(node_id, "inbound").await;
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
 
                 if sync {
                     let wait_start = Instant::now();
@@ -1312,7 +1311,7 @@ pub async fn delete_user(
                         "[admin:delete_user] waiting node pull: node_id={} action=user timeout={}s",
                         node_id, sync_timeout
                     );
-                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "user", sync_timeout).await {
+                    if let Err(e) = transport.wait_for_node_pull(node_id, "user", sync_timeout).await {
                         error!(
                             "[admin:delete_user] node pull timeout action=user node_id={} elapsed={:?} err={}",
                             node_id,
@@ -1334,7 +1333,7 @@ pub async fn delete_user(
                         "[admin:delete_user] waiting node pull: node_id={} action=outbound timeout={}s",
                         node_id, sync_timeout
                     );
-                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
+                    if let Err(e) = transport.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
                         error!(
                             "[admin:delete_user] node pull timeout action=outbound node_id={} elapsed={:?} err={}",
                             node_id,
@@ -1411,8 +1410,8 @@ pub async fn add_outbound(
     match state.config.add_outbound(node_id, outbound.clone()).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1466,8 +1465,8 @@ pub async fn update_outbound(
     {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1498,8 +1497,8 @@ pub async fn delete_outbound(
     match state.config.delete_outbound(node_id, &tag).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1533,8 +1532,8 @@ pub async fn query_udp_latency(
         Err(resp) => return resp,
     };
     
-    if let Some(ref mqtt_client) = state.mqtt_client {
-        let result = mqtt_client.query_udp_latency(
+    if let Some(ref transport) = state.node_transport {
+        let result = transport.query_udp_latency(
             node_id,
             outbound_tag.unwrap(),
             8,  // timeout 8秒
@@ -1613,8 +1612,8 @@ pub async fn update_routing(
     }
     
     // 推送更新通知
-    if let Some(ref mqtt_client) = state.mqtt_client {
-        let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
+    if let Some(ref transport) = state.node_transport {
+        let _ = transport.publish_update_notification(node_id, "routing").await;
     }
     
     match state.config.get_routing(node_id).await {
@@ -1650,8 +1649,8 @@ pub async fn add_routing_rule(
     match state.config.add_routing_rule(node_id, body.clone()).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "routing").await;
             }
             
             match state.config.get_routing(node_id).await {
@@ -1697,8 +1696,8 @@ pub async fn update_routing_rule(
     match state.config.update_routing_rule(node_id, index, body.clone()).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "routing").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1730,8 +1729,8 @@ pub async fn delete_routing_rule(
     match state.config.delete_routing_rule(node_id, index).await {
         Ok(deleted_rule) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "routing").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "routing").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1782,8 +1781,8 @@ pub async fn add_mapping(
     match state.config.add_mapping(node_id, body.uuid.clone(), body.outbound_tag.clone()).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
 
                 if sync {
                     let wait_start = Instant::now();
@@ -1791,7 +1790,7 @@ pub async fn add_mapping(
                         "[admin:add_mapping] waiting node pull: node_id={} action=outbound timeout={}s",
                         node_id, sync_timeout
                     );
-                    if let Err(e) = mqtt_client.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
+                    if let Err(e) = transport.wait_for_node_pull(node_id, "outbound", sync_timeout).await {
                         error!(
                             "[admin:add_mapping] node pull timeout node_id={} action=outbound elapsed={:?} err={}",
                             node_id,
@@ -1854,8 +1853,8 @@ pub async fn update_mapping(
     match state.config.update_mapping(node_id, &uuid, body.outbound_tag.clone()).await {
         Ok(old_tag) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({
@@ -1895,8 +1894,8 @@ pub async fn delete_mapping(
     match state.config.delete_mapping(node_id, &uuid).await {
         Ok(_) => {
             // 推送更新通知
-            if let Some(ref mqtt_client) = state.mqtt_client {
-                let _ = mqtt_client.publish_update_notification(node_id, "outbound").await;
+            if let Some(ref transport) = state.node_transport {
+                let _ = transport.publish_update_notification(node_id, "outbound").await;
             }
             
             HttpResponse::Ok().json(&serde_json::json!({

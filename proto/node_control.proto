@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package nodecontrol;
+
+service NodeControlService {
+  rpc NodeStream(stream NodeStreamRequest) returns (stream NodeStreamResponse);
+
+  rpc GetUsers(GetUsersRequest) returns (GetUsersReply);
+  rpc GetConfig(GetConfigRequest) returns (GetConfigReply);
+  rpc GetInbounds(GetInboundsRequest) returns (GetInboundsReply);
+  rpc GetOutbounds(GetOutboundsRequest) returns (GetOutboundsReply);
+  rpc GetRouting(GetRoutingRequest) returns (GetRoutingReply);
+}
+
+message UpdateEvent {
+  string kind = 1;
+  uint64 version = 2;
+  int64 ts = 3;
+}
+
+message PullAck {
+  string kind = 1;
+  uint64 version = 2;
+  int64 ts = 3;
+}
+
+message CommandRequest {
+  string request_id = 1;
+  string kind = 2;
+  bytes payload = 3;
+  int64 ts = 4;
+}
+
+message CommandResponse {
+  string request_id = 1;
+  bool ok = 2;
+  bytes payload = 3;
+  string error = 4;
+  int64 ts = 5;
+}
+
+message Report {
+  string kind = 1;
+  bytes payload = 2;
+  int64 ts = 3;
+}
+
+message Heartbeat {
+  int64 ts = 1;
+}
+
+message NodeStreamRequest {
+  oneof msg {
+    Heartbeat heartbeat = 1;
+    PullAck pull_ack = 2;
+    Report report = 3;
+    CommandResponse command_response = 4;
+  }
+}
+
+message NodeStreamResponse {
+  oneof msg {
+    UpdateEvent update_event = 1;
+    CommandRequest command_request = 2;
+    Heartbeat heartbeat = 3;
+  }
+}
+
+message GetUsersRequest {}
+message GetUsersReply {
+  bytes payload = 1;
+  uint64 version = 2;
+}
+
+message GetConfigRequest {}
+message GetConfigReply {
+  bytes payload = 1;
+  uint64 version = 2;
+}
+
+message GetInboundsRequest {}
+message GetInboundsReply {
+  bytes payload = 1;
+  uint64 version = 2;
+}
+
+message GetOutboundsRequest {}
+message GetOutboundsReply {
+  bytes payload = 1;
+  uint64 version = 2;
+}
+
+message GetRoutingRequest {}
+message GetRoutingReply {
+  bytes payload = 1;
+  uint64 version = 2;
+}

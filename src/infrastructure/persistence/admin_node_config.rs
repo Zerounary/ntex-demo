@@ -44,6 +44,12 @@ pub struct Model {
     // 网络接口信息（JSON 格式，存储各网卡的带宽使用情况）
     #[sea_orm(nullable, column_type = "Json")]
     pub network_interfaces: Option<JsonValue>,  // 网络接口信息数组
+    #[sea_orm(nullable)]
+    pub node_token: Option<String>,
+    #[sea_orm(nullable)]
+    pub node_shared_secret: Option<String>,
+    #[sea_orm(default_value = "mqtt")]
+    pub node_comm_mode: String,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, InboundConfig};
-use crate::infrastructure::mqtt_client::MqttClientManager;
+use crate::infrastructure::node_transport::NodeTransport;
 
 fn hop_inbound_prefix(chain_id: i64) -> String {
     format!("chain_{}_", chain_id)
@@ -39,13 +39,13 @@ fn entry_outbound_tag(chain_id: i64) -> String {
     format!("chain_entry_{}", chain_id)
 }
 
-fn publish_updates(mqtt: Option<&Arc<MqttClientManager>>, node_id: u64, kinds: &[&str]) {
-    if let Some(mqtt) = mqtt {
-        let mqtt = mqtt.clone();
+fn publish_updates(transport: Option<&Arc<dyn NodeTransport>>, node_id: u64, kinds: &[&str]) {
+    if let Some(transport) = transport {
+        let transport = transport.clone();
         let kinds: Vec<String> = kinds.iter().map(|k| k.to_string()).collect();
         tokio::spawn(async move {
             for k in kinds {
-                let _ = mqtt.publish_update_notification(node_id, &k).await;
+                let _ = transport.publish_update_notification(node_id, &k).await;
             }
         });
     }
@@ -53,7 +53,7 @@ fn publish_updates(mqtt: Option<&Arc<MqttClientManager>>, node_id: u64, kinds: &
 
 pub async fn apply_chain(
     config: &AdminConfigStore,
-    mqtt: Option<&Arc<MqttClientManager>>,
+    transport: Option<&Arc<dyn NodeTransport>>,
     chain_id: i64,
     base_port: u16,
 ) -> Result<(i64, Vec<Value>), String> {
@@ -69,7 +69,7 @@ pub async fn apply_chain(
         return Err("chain has no routes".to_string());
     }
 
-    cleanup_chain_artifacts(config, mqtt, chain_id).await.ok();
+    cleanup_chain_artifacts(config, transport, chain_id).await.ok();
 
     let mut hops = chain.routes.clone();
     hops.sort_by_key(|r| r.order);
@@ -148,7 +148,7 @@ pub async fn apply_chain(
 
         let apply_res = match config.upsert_inbound(node_id, inbound).await {
             Ok(_) => {
-                publish_updates(mqtt, node_id, &["inbound", "config"]);
+                publish_updates(transport, node_id, &["inbound", "config"]);
                 serde_json::json!({
                     "node_id": node_id,
                     "tag": tag,
@@ -170,7 +170,7 @@ pub async fn apply_chain(
 
 pub async fn cleanup_chain_artifacts(
     config: &AdminConfigStore,
-    mqtt: Option<&Arc<MqttClientManager>>,
+    transport: Option<&Arc<dyn NodeTransport>>,
     chain_id: i64,
 ) -> Result<(), String> {
     let node_ids = config.list_node_ids().await?;
@@ -214,13 +214,13 @@ pub async fn cleanup_chain_artifacts(
         }
 
         if deleted_any_inbound {
-            publish_updates(mqtt, node_id, &["inbound", "config"]);
+            publish_updates(transport, node_id, &["inbound", "config"]);
         }
         if deleted_outbound {
-            publish_updates(mqtt, node_id, &["outbound", "config"]);
+            publish_updates(transport, node_id, &["outbound", "config"]);
         }
         if updated_routing {
-            publish_updates(mqtt, node_id, &["routing", "config"]);
+            publish_updates(transport, node_id, &["routing", "config"]);
         }
     }
 

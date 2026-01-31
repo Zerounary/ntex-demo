@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package nodepanel;
+
+service NodePanel {
+  rpc Ping(PingRequest) returns (PingReply);
+}
+
+message PingRequest {
+  uint64 node_id = 1;
+  string message = 2;
+}
+
+message PingReply {
+  string message = 1;
+}

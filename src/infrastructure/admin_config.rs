@@ -157,6 +157,10 @@ impl AdminConfigStore {
         Self { db }
     }
 
+    pub fn db(&self) -> &DatabaseConnection {
+        &self.db
+    }
+
     pub async fn list_node_ids(&self) -> Result<Vec<u64>, String> {
         admin_node_config::Entity::find()
             .select_only()

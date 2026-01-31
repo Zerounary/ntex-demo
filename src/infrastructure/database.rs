@@ -434,6 +434,9 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT UNSIGNED NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS public_ip VARCHAR(255) NULL",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS network_interfaces JSON NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_token VARCHAR(255) NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_shared_secret VARCHAR(255) NULL",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_comm_mode VARCHAR(16) NOT NULL DEFAULT 'mqtt'",
         ];
         
         for sql in alter_sqls {
@@ -506,6 +509,9 @@ async fn migrate_node_config_fields(db: &DatabaseConnection) -> Result<(), DbErr
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS disk_total BIGINT",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS public_ip VARCHAR(255)",
             "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS network_interfaces JSONB",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_token VARCHAR(255)",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_shared_secret VARCHAR(255)",
+            "ALTER TABLE admin_node_configs ADD COLUMN IF NOT EXISTS node_comm_mode VARCHAR(16) NOT NULL DEFAULT 'mqtt'",
         ];
         
         for sql in alter_sqls {

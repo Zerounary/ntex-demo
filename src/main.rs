@@ -7,13 +7,14 @@ mod interface;
 use dotenv::dotenv;
 use env_logger::Env;
 use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
-use interface::admin;
+use interface::{admin, grpc_server, tls_entry};
 use log::{error, info, warn};
 use sea_orm::{
     sea_query::Expr, ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set,
     TransactionTrait,
 };
 use std::env;
+use std::net::SocketAddr;
 use std::sync::{Arc, Once};
 
 use crate::config::AppConfig;
@@ -87,6 +88,34 @@ async fn main() -> std::io::Result<()> {
     // 创建 MQTT 客户端 Arc 引用
     let mqtt_client_arc = std::sync::Arc::new(mqtt_client);
 
+    // 启动 gRPC 服务端骨架（仅本机监听，供未来 443 TLS 入口转发）
+    {
+        let grpc_addr: SocketAddr = env::var("GRPC_LISTEN_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:50051".to_string())
+            .parse()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("invalid GRPC_LISTEN_ADDR: {}", e)))?;
+        let admin_config_clone = admin_config.clone();
+        tokio::spawn(async move {
+            info!("[grpc] starting grpc server on {}", grpc_addr);
+            if let Err(e) = grpc_server::serve_grpc(grpc_addr, admin_config_clone).await {
+                error!("[grpc] server error: {}", e);
+            }
+        });
+    }
+
+    // 可选启动 443 TLS 入口（默认关闭，避免绑定 443 失败）
+    if env::var("ENABLE_TLS_ENTRY").ok().as_deref() == Some("1") {
+        let tls_addr: SocketAddr = env::var("TLS_ENTRY_ADDR")
+            .unwrap_or_else(|_| "0.0.0.0:443".to_string())
+            .parse()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("invalid TLS_ENTRY_ADDR: {}", e)))?;
+        tokio::spawn(async move {
+            if let Err(e) = tls_entry::serve_tls_entry(tls_addr).await {
+                error!("[tls-entry] server error: {}", e);
+            }
+        });
+    }
+
     // 启动分钟计费后台任务（不依赖客户端心跳）
     {
         let db_clone = db.clone();
@@ -97,16 +126,21 @@ async fn main() -> std::io::Result<()> {
         });
     }
     
-    // 启动管理服务器（端口 667）
+    // 启动管理服务器
     let admin_config_clone = admin_config.clone();
     let db_clone = db.clone();
     let mqtt_client_clone = mqtt_client_arc.clone();
 
-    info!("正在启动管理服务器 (端口 667)...");
+    let admin_port: u16 = env::var("ADMIN_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(667);
+
+    info!("正在启动管理服务器 (端口 {})...", admin_port);
     
     // 使用 tokio::select! 运行管理服务器，并监听关闭信号
     tokio::select! {
-        result = admin::serve(667, admin_config_clone, db_clone, Some(mqtt_client_clone)) => {
+        result = admin::serve(admin_port, admin_config_clone, db_clone, Some(mqtt_client_clone)) => {
             if let Err(e) = result {
                 eprintln!("管理服务器错误: {:?}", e);
             } else {

@@ -23,6 +23,8 @@ thiserror = "1.0"
 async-trait = "0.1"
 struct-convert = "1.4"
 sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 env_logger = "0.11"
 log = "0.4"
@@ -36,4 +38,16 @@ bytes = "1.5"
 tokio-native-tls = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+tonic = { version = "0.12", features = ["transport"] }
+prost = "0.13"
+prost-types = "0.13"
+tokio-stream = "0.1"
+tower = "0.4"
+tokio-rustls = "0.26"
+rustls-pemfile = "2.1"
+
+[build-dependencies]
+tonic-build = "0.12"
+protoc-bin-vendored = "3"
 
