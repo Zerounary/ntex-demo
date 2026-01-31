@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package controlplane;
+
+service ControlPlane {
+  rpc AddUser(AddUserRequest) returns (AddUserReply);
+  rpc AddMapping(AddMappingRequest) returns (AddMappingReply);
+  rpc DeleteUser(DeleteUserRequest) returns (DeleteUserReply);
+  rpc GetOutboundTags(GetOutboundTagsRequest) returns (GetOutboundTagsReply);
+}
+
+message AddUserRequest {
+  uint64 node_id = 1;
+  string uuid = 2;
+  uint64 st = 3;
+  uint64 dt = 4;
+  bool sync = 5;
+  uint64 sync_timeout_secs = 6;
+}
+
+message AddUserReply {
+  uint64 user_id = 1;
+  string uuid = 2;
+  uint64 st = 3;
+  uint64 dt = 4;
+}
+
+message AddMappingRequest {
+  uint64 node_id = 1;
+  string uuid = 2;
+  string outbound_tag = 3;
+  bool sync = 4;
+  uint64 sync_timeout_secs = 5;
+}
+
+message AddMappingReply {
+  bool ok = 1;
+}
+
+message DeleteUserRequest {
+  uint64 node_id = 1;
+  uint64 user_id = 2;
+  bool sync = 3;
+  uint64 sync_timeout_secs = 4;
+}
+
+message DeleteUserReply {
+  bool ok = 1;
+}
+
+message GetOutboundTagsRequest {
+  uint64 node_id = 1;
+}
+
+message GetOutboundTagsReply {
+  repeated string tags = 1;
+}

@@ -8,6 +8,7 @@ use ntex::web::{self, App};
 use ntex_files as fs;
 use sea_orm::DatabaseConnection;
  use std::sync::Arc;
+use tonic::transport::Channel;
 
 use crate::infrastructure::admin_config::AdminConfigStore;
  use crate::infrastructure::mqtt_client::MqttPublisher;
@@ -18,6 +19,7 @@ use self::routes::configure;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub admin_config: AdminConfigStore,
+    pub main_grpc: Option<Channel>,
     pub mqtt_publisher: Option<Arc<MqttPublisher>>,
 }
 
@@ -25,11 +27,13 @@ impl AppState {
     pub fn new(
         db: DatabaseConnection,
         admin_config: AdminConfigStore,
+        main_grpc: Option<Channel>,
         mqtt_publisher: Option<Arc<MqttPublisher>>,
     ) -> Self {
         Self {
             db,
             admin_config,
+            main_grpc,
             mqtt_publisher,
         }
     }

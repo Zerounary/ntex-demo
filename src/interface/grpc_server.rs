@@ -26,11 +26,19 @@ pub mod nodecontrol {
     tonic::include_proto!("nodecontrol");
 }
 
+pub mod controlplane {
+    tonic::include_proto!("controlplane");
+}
+
 pub struct NodePanelService {
     admin_config: AdminConfigStore,
 }
 
 pub struct NodeControlService {
+    admin_config: AdminConfigStore,
+}
+
+pub struct ControlPlaneService {
     admin_config: AdminConfigStore,
 }
 
@@ -105,6 +113,130 @@ impl NodeSession {
 
 static NODE_SESSIONS: Lazy<RwLock<HashMap<u64, Arc<NodeSession>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+impl ControlPlaneService {
+    pub fn new(admin_config: AdminConfigStore) -> Self {
+        Self { admin_config }
+    }
+}
+
+#[tonic::async_trait]
+impl controlplane::control_plane_server::ControlPlane for ControlPlaneService {
+    async fn add_user(
+        &self,
+        request: Request<controlplane::AddUserRequest>,
+    ) -> Result<Response<controlplane::AddUserReply>, Status> {
+        let req = request.into_inner();
+        let node_id = req.node_id;
+
+        let user = match self
+            .admin_config
+            .add_user(node_id, req.uuid.clone(), req.st, req.dt)
+            .await
+        {
+            Ok(u) => u,
+            Err(_) => {
+                let users = self
+                    .admin_config
+                    .get_users(node_id)
+                    .await
+                    .map_err(|e| Status::internal(e))?;
+                users
+                    .into_iter()
+                    .find(|u| u.uuid == req.uuid)
+                    .ok_or_else(|| Status::internal("add_user failed"))?
+            }
+        };
+
+        if req.sync {
+            send_update_event(node_id, "user")
+                .await
+                .map_err(Status::internal)?;
+            wait_for_pull_ack(node_id, "user", req.sync_timeout_secs)
+                .await
+                .map_err(Status::deadline_exceeded)?;
+        } else {
+            let _ = send_update_event(node_id, "user").await;
+        }
+
+        Ok(Response::new(controlplane::AddUserReply {
+            user_id: user.id,
+            uuid: user.uuid,
+            st: user.st,
+            dt: user.dt,
+        }))
+    }
+
+    async fn add_mapping(
+        &self,
+        request: Request<controlplane::AddMappingRequest>,
+    ) -> Result<Response<controlplane::AddMappingReply>, Status> {
+        let req = request.into_inner();
+        let node_id = req.node_id;
+
+        self.admin_config
+            .add_mapping(node_id, req.uuid.clone(), req.outbound_tag.clone())
+            .await
+            .map_err(Status::internal)?;
+
+        if req.sync {
+            send_update_event(node_id, "outbound")
+                .await
+                .map_err(Status::internal)?;
+            wait_for_pull_ack(node_id, "outbound", req.sync_timeout_secs)
+                .await
+                .map_err(Status::deadline_exceeded)?;
+        } else {
+            let _ = send_update_event(node_id, "outbound").await;
+        }
+
+        Ok(Response::new(controlplane::AddMappingReply { ok: true }))
+    }
+
+    async fn delete_user(
+        &self,
+        request: Request<controlplane::DeleteUserRequest>,
+    ) -> Result<Response<controlplane::DeleteUserReply>, Status> {
+        let req = request.into_inner();
+        let node_id = req.node_id;
+
+        let _ = self
+            .admin_config
+            .delete_user(node_id, req.user_id)
+            .await
+            .map_err(Status::internal)?;
+
+        if req.sync {
+            send_update_event(node_id, "user")
+                .await
+                .map_err(Status::internal)?;
+            let _ = send_update_event(node_id, "outbound").await;
+            let _ = send_update_event(node_id, "inbound").await;
+            wait_for_pull_ack(node_id, "user", req.sync_timeout_secs)
+                .await
+                .map_err(Status::deadline_exceeded)?;
+        } else {
+            let _ = send_update_event(node_id, "user").await;
+            let _ = send_update_event(node_id, "outbound").await;
+        }
+
+        Ok(Response::new(controlplane::DeleteUserReply { ok: true }))
+    }
+
+    async fn get_outbound_tags(
+        &self,
+        request: Request<controlplane::GetOutboundTagsRequest>,
+    ) -> Result<Response<controlplane::GetOutboundTagsReply>, Status> {
+        let req = request.into_inner();
+        let (outbounds, _) = self
+            .admin_config
+            .get_outbounds(req.node_id)
+            .await
+            .map_err(Status::internal)?;
+        let tags = outbounds.into_iter().map(|o| o.tag).collect();
+        Ok(Response::new(controlplane::GetOutboundTagsReply { tags }))
+    }
+}
 
 pub async fn is_node_connected(node_id: u64) -> bool {
     NODE_SESSIONS.read().await.contains_key(&node_id)
@@ -778,6 +910,7 @@ pub async fn serve_grpc(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let admin_config_for_panel = admin_config.clone();
     let admin_config_for_control = admin_config.clone();
+    let admin_config_for_cp = admin_config.clone();
 
     tonic::transport::Server::builder()
         .add_service(nodepanel::node_panel_server::NodePanelServer::new(
@@ -785,6 +918,9 @@ pub async fn serve_grpc(
         ))
         .add_service(nodecontrol::node_control_service_server::NodeControlServiceServer::new(
             NodeControlService::new(admin_config_for_control),
+        ))
+        .add_service(controlplane::control_plane_server::ControlPlaneServer::new(
+            ControlPlaneService::new(admin_config_for_cp),
         ))
         .serve(addr)
         .await?;

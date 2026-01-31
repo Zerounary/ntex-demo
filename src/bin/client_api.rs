@@ -15,10 +15,11 @@ use infrastructure::{admin_config, database, seed};
 use interface::web;
 use interface::web::AppState;
 use log::{error, info, warn};
+use std::env;
 use std::sync::{Arc, Once};
+use tonic::transport::Channel;
 
 use crate::config::AppConfig;
-
 #[ntex::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -61,15 +62,43 @@ async fn main() -> std::io::Result<()> {
 
     let admin_config = admin_config::AdminConfigStore::new(db.clone());
 
-    let mqtt_publisher = match infrastructure::mqtt_client::MqttPublisher::start().await {
-        Ok(p) => Some(Arc::new(p)),
-        Err(e) => {
-            warn!("MQTT publisher 启动失败（将继续运行，但节点配置刷新可能有延迟）: {}", e);
-            None
+    let main_grpc = match env::var("MAIN_GRPC_ADDR") {
+        Ok(addr) => {
+            let endpoint = addr.trim().to_string();
+            if endpoint.is_empty() {
+                None
+            } else {
+                match Channel::from_shared(endpoint)
+                    .map_err(|e| {
+                        std::io::Error::new(std::io::ErrorKind::Other, format!("invalid MAIN_GRPC_ADDR: {}", e))
+                    })?
+                    .connect()
+                    .await
+                {
+                    Ok(ch) => Some(ch),
+                    Err(e) => {
+                        warn!("MAIN_GRPC_ADDR connect failed (client_api will run but node control RPC will fail): {}", e);
+                        None
+                    }
+                }
+            }
         }
+        Err(_) => None,
     };
 
-    let state = AppState::new(db.clone(), admin_config, mqtt_publisher);
+    let mqtt_publisher = if std::env::var("ENABLE_MQTT_PUBLISHER").ok().as_deref() == Some("1") {
+        match infrastructure::mqtt_client::MqttPublisher::start().await {
+            Ok(p) => Some(Arc::new(p)),
+            Err(e) => {
+                warn!("MQTT publisher 启动失败（将继续运行）: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let state = AppState::new(db.clone(), admin_config, main_grpc, mqtt_publisher);
 
     info!("正在启动客户端 Web 服务器 (端口 {})...", config.port);
 

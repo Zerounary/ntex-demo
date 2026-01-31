@@ -13,6 +13,10 @@ use std::env;
 use uuid::Uuid;
 use log::{info, error};
 
+use crate::infrastructure::admin_config::AdminConfigStore;
+use crate::interface::grpc_server::controlplane;
+use tonic::transport::Channel;
+
 use crate::application::accelerator_usecase::AcceleratorUseCase;
 use crate::application::auth_usecase::AuthUseCase;
 use crate::application::cdk_usecase::CdkUseCase;
@@ -228,6 +232,142 @@ fn main_admin_token() -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn use_main_admin_http() -> bool {
+    env::var("USE_MAIN_ADMIN_HTTP")
+        .ok()
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn main_grpc_channel(state: &AppState) -> Result<Channel, UsecaseError> {
+    state
+        .main_grpc
+        .clone()
+        .ok_or_else(|| UsecaseError::Validation("MAIN_GRPC_ADDR not configured or connect failed".to_string()))
+}
+
+async fn local_add_user(
+    config: &AdminConfigStore,
+    node_id: u64,
+    uuid: String,
+    st: u64,
+    dt: u64,
+) -> Result<AdminUserDTO, UsecaseError> {
+    let _ = (config, node_id, uuid, st, dt);
+    Err(UsecaseError::Validation("local_add_user is disabled; use control-plane gRPC".to_string()))
+}
+
+async fn local_delete_user(
+    config: &AdminConfigStore,
+    node_id: u64,
+    admin_user_id: u64,
+) -> Result<(), UsecaseError> {
+    let _ = (config, node_id, admin_user_id);
+    Err(UsecaseError::Validation("local_delete_user is disabled; use control-plane gRPC".to_string()))
+}
+
+async fn local_add_mapping(
+    config: &AdminConfigStore,
+    node_id: u64,
+    uuid: String,
+    outbound_tag: String,
+) -> Result<(), UsecaseError> {
+    let _ = (config, node_id, uuid, outbound_tag);
+    Err(UsecaseError::Validation("local_add_mapping is disabled; use control-plane gRPC".to_string()))
+}
+
+async fn local_get_outbound_tags(
+    config: &AdminConfigStore,
+    node_id: u64,
+) -> Result<Vec<String>, UsecaseError> {
+    let _ = (config, node_id);
+    Err(UsecaseError::Validation("local_get_outbound_tags is disabled; use control-plane gRPC".to_string()))
+}
+
+async fn cp_add_user(
+    state: &AppState,
+    node_id: u64,
+    uuid: String,
+    st: u64,
+    dt: u64,
+    sync: bool,
+    sync_timeout_secs: u64,
+) -> Result<AdminUserDTO, UsecaseError> {
+    let mut client = controlplane::control_plane_client::ControlPlaneClient::new(main_grpc_channel(state)?);
+    let rsp = client
+        .add_user(controlplane::AddUserRequest {
+            node_id,
+            uuid,
+            st,
+            dt,
+            sync,
+            sync_timeout_secs,
+        })
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("controlplane add_user failed: {}", e)))?
+        .into_inner();
+    Ok(AdminUserDTO {
+        id: rsp.user_id,
+        uuid: rsp.uuid,
+        st: rsp.st,
+        dt: rsp.dt,
+    })
+}
+
+async fn cp_add_mapping(
+    state: &AppState,
+    node_id: u64,
+    uuid: String,
+    outbound_tag: String,
+    sync: bool,
+    sync_timeout_secs: u64,
+) -> Result<(), UsecaseError> {
+    let mut client = controlplane::control_plane_client::ControlPlaneClient::new(main_grpc_channel(state)?);
+    let _ = client
+        .add_mapping(controlplane::AddMappingRequest {
+            node_id,
+            uuid,
+            outbound_tag,
+            sync,
+            sync_timeout_secs,
+        })
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("controlplane add_mapping failed: {}", e)))?
+        .into_inner();
+    Ok(())
+}
+
+async fn cp_delete_user(
+    state: &AppState,
+    node_id: u64,
+    user_id: u64,
+    sync: bool,
+    sync_timeout_secs: u64,
+) -> Result<(), UsecaseError> {
+    let mut client = controlplane::control_plane_client::ControlPlaneClient::new(main_grpc_channel(state)?);
+    let _ = client
+        .delete_user(controlplane::DeleteUserRequest {
+            node_id,
+            user_id,
+            sync,
+            sync_timeout_secs,
+        })
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("controlplane delete_user failed: {}", e)))?
+        .into_inner();
+    Ok(())
+}
+
+async fn cp_get_outbound_tags(state: &AppState, node_id: u64) -> Result<Vec<String>, UsecaseError> {
+    let mut client = controlplane::control_plane_client::ControlPlaneClient::new(main_grpc_channel(state)?);
+    let rsp = client
+        .get_outbound_tags(controlplane::GetOutboundTagsRequest { node_id })
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("controlplane get_outbound_tags failed: {}", e)))?
+        .into_inner();
+    Ok(rsp.tags)
+}
+
 async fn main_admin_add_user(
     node_id: u64,
     uuid: String,
@@ -290,10 +430,7 @@ async fn main_admin_add_user(
         error!("[session_start] admin add_user missing data");
         UsecaseError::Validation("main_admin add_user missing data".to_string())
     })?;
-    info!(
-        "[session_start] <- admin add_user success: node_id={} admin_user_id={}",
-        node_id, data.id
-    );
+
     Ok(data)
 }
 
@@ -353,10 +490,7 @@ async fn main_admin_get_outbound_tags(node_id: u64) -> Result<Vec<String>, Useca
     let client = reqwest::Client::new();
     let mut req = client
         .get(format!("{}/api/admin/query", base))
-        .query(&[
-            ("node_id", node_id.to_string()),
-            ("act", "outbound".to_string()),
-        ]);
+        .query(&[("act", "outbound"), ("node_id", &node_id.to_string())]);
     if let Some(token) = main_admin_token() {
         req = req.header("X-Admin-Token", token);
     }
@@ -371,9 +505,7 @@ async fn main_admin_get_outbound_tags(node_id: u64) -> Result<Vec<String>, Useca
     let payload = resp
         .json::<AdminApiResponse<AdminOutboundsDataDTO>>()
         .await
-        .map_err(|e| {
-            UsecaseError::Validation(format!("main_admin query outbounds invalid response: {}", e))
-        })?;
+        .map_err(|e| UsecaseError::Validation(format!("main_admin query outbounds invalid response: {}", e)))?;
 
     if !status.is_success() || payload.msg != "ok" {
         error!(
@@ -385,6 +517,7 @@ async fn main_admin_get_outbound_tags(node_id: u64) -> Result<Vec<String>, Useca
             status, payload.msg, payload.error
         )));
     }
+
     let data = payload.data.unwrap_or_default();
     Ok(data.outbounds.into_iter().map(|o| o.tag).collect())
 }
@@ -938,20 +1071,32 @@ pub async fn session_start(
         .await
     {
         info!(
-            "[session_start] best-effort stop existing session_id={} node_id={}",
+            "[session_start] best-effort stop existing session_id={} node_id={} ",
             existing.session_id, existing.node_id
         );
         if existing.admin_user_id > 0 {
-            let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+            if use_main_admin_http() {
+                let _ = main_admin_delete_user(existing.node_id, existing.admin_user_id).await;
+            } else {
+                let _ = cp_delete_user(&*state, existing.node_id, existing.admin_user_id, false, 0).await;
+            }
         }
         if let (Some(node_id), Some(admin_user_id)) = (existing.tcp_node_id, existing.tcp_admin_user_id) {
             if admin_user_id > 0 {
-                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+                if use_main_admin_http() {
+                    let _ = main_admin_delete_user(node_id, admin_user_id).await;
+                } else {
+                    let _ = cp_delete_user(&*state, node_id, admin_user_id, false, 0).await;
+                }
             }
         }
         if let (Some(node_id), Some(admin_user_id)) = (existing.udp_node_id, existing.udp_admin_user_id) {
             if admin_user_id > 0 {
-                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+                if use_main_admin_http() {
+                    let _ = main_admin_delete_user(node_id, admin_user_id).await;
+                } else {
+                    let _ = cp_delete_user(&*state, node_id, admin_user_id, false, 0).await;
+                }
             }
         }
 
@@ -977,11 +1122,15 @@ pub async fn session_start(
     };
 
     async fn select_outbound_tag(
-        db: &sea_orm::DatabaseConnection,
+        state: &AppState,
         node_id: u64,
         desired_outbound_tag: String,
     ) -> Result<String, UsecaseError> {
-        let outbounds = main_admin_get_outbound_tags(node_id).await?;
+        let outbounds = if use_main_admin_http() {
+            main_admin_get_outbound_tags(node_id).await?
+        } else {
+            cp_get_outbound_tags(state, node_id).await?
+        };
         let mut candidates: Vec<String> = outbounds
             .into_iter()
             .filter(|t| t != "block" && t != "direct")
@@ -994,7 +1143,7 @@ pub async fn session_start(
             let active_sessions = acceleration_session::Entity::find()
                 .filter(acceleration_session::Column::NodeId.eq(node_id))
                 .filter(acceleration_session::Column::Status.eq("active"))
-                .all(db)
+                .all(&state.db)
                 .await
                 .map_err(|e| {
                     UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
@@ -1040,37 +1189,83 @@ pub async fn session_start(
     match binding.r#type.as_str() {
         "node" => {
             let desired_outbound_tag = format!("accel_{}_{}_{}", user_id, game_id, primary_node_id);
-            // 1) 调用 main.rs Admin HTTP：下发用户到节点（add_user）
-            let admin_user = main_admin_add_user(primary_node_id, uuid.clone(), st, 0).await?;
+            let admin_user = if use_main_admin_http() {
+                main_admin_add_user(primary_node_id, uuid.clone(), st, 0).await?
+            } else {
+                let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(8);
+                cp_add_user(&*state, primary_node_id, uuid.clone(), st, 0, true, sync_timeout).await?
+            };
             primary_admin_user_id = admin_user.id;
             primary_admin_uuid = admin_user.uuid;
-            primary_outbound_tag = select_outbound_tag(&state.db, primary_node_id, desired_outbound_tag).await?;
+            primary_outbound_tag = select_outbound_tag(&*state, primary_node_id, desired_outbound_tag).await?;
 
             info!(
                 "[session_start] selected outbound_tag: node_id={} selected={} ",
                 primary_node_id, primary_outbound_tag
             );
 
-            // 2) 调用 main.rs Admin HTTP：下发映射（add_mapping）
-            main_admin_add_mapping(primary_node_id, primary_admin_uuid.clone(), primary_outbound_tag.clone()).await?;
+            if use_main_admin_http() {
+                main_admin_add_mapping(primary_node_id, primary_admin_uuid.clone(), primary_outbound_tag.clone()).await?;
+            } else {
+                let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(8);
+                cp_add_mapping(&*state, primary_node_id, primary_admin_uuid.clone(), primary_outbound_tag.clone(), true, sync_timeout).await?;
+            }
         }
         "chain" => {
             if let Some(tcp_node_id) = tcp_exit_node_id {
                 let desired_outbound_tag = format!("accel_{}_{}_{}_tcp", user_id, game_id, tcp_node_id);
-                let admin_user = main_admin_add_user(tcp_node_id, uuid.clone(), st, 0).await?;
+                let admin_user = if use_main_admin_http() {
+                    main_admin_add_user(tcp_node_id, uuid.clone(), st, 0).await?
+                } else {
+                    let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(8);
+                    cp_add_user(&*state, tcp_node_id, uuid.clone(), st, 0, true, sync_timeout).await?
+                };
                 tcp_admin_user_id = Some(admin_user.id);
                 primary_admin_uuid = admin_user.uuid;
-                let tag = select_outbound_tag(&state.db, tcp_node_id, desired_outbound_tag).await?;
-                main_admin_add_mapping(tcp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                let tag = select_outbound_tag(&*state, tcp_node_id, desired_outbound_tag).await?;
+                if use_main_admin_http() {
+                    main_admin_add_mapping(tcp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                } else {
+                    let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(8);
+                    cp_add_mapping(&*state, tcp_node_id, primary_admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
+                }
                 tcp_outbound_tag = Some(tag);
             }
             if let Some(udp_node_id) = udp_exit_node_id {
                 let desired_outbound_tag = format!("accel_{}_{}_{}_udp", user_id, game_id, udp_node_id);
-                let admin_user = main_admin_add_user(udp_node_id, uuid.clone(), st, 0).await?;
+                let admin_user = if use_main_admin_http() {
+                    main_admin_add_user(udp_node_id, uuid.clone(), st, 0).await?
+                } else {
+                    let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(8);
+                    cp_add_user(&*state, udp_node_id, uuid.clone(), st, 0, true, sync_timeout).await?
+                };
                 udp_admin_user_id = Some(admin_user.id);
                 primary_admin_uuid = admin_user.uuid;
-                let tag = select_outbound_tag(&state.db, udp_node_id, desired_outbound_tag).await?;
-                main_admin_add_mapping(udp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                let tag = select_outbound_tag(&*state, udp_node_id, desired_outbound_tag).await?;
+                if use_main_admin_http() {
+                    main_admin_add_mapping(udp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                } else {
+                    let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                        .ok()
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .unwrap_or(8);
+                    cp_add_mapping(&*state, udp_node_id, primary_admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
+                }
                 udp_outbound_tag = Some(tag);
             }
 
@@ -1399,7 +1594,15 @@ pub async fn session_stop(
             "[session_stop] deleting admin user: session_id={} node_id={} admin_user_id={}",
             model.session_id, model.node_id, model.admin_user_id
         );
-        let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
+        if use_main_admin_http() {
+            let _ = main_admin_delete_user(model.node_id, model.admin_user_id).await;
+        } else {
+            let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(8);
+            let _ = cp_delete_user(&*state, model.node_id, model.admin_user_id, true, sync_timeout).await;
+        }
     }
 
     if let (Some(node_id), Some(admin_user_id)) = (model.tcp_node_id, model.tcp_admin_user_id) {
@@ -1408,7 +1611,15 @@ pub async fn session_stop(
                 "[session_stop] deleting tcp admin user: session_id={} node_id={} admin_user_id={}",
                 model.session_id, node_id, admin_user_id
             );
-            let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            if use_main_admin_http() {
+                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            } else {
+                let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(8);
+                let _ = cp_delete_user(&*state, node_id, admin_user_id, true, sync_timeout).await;
+            }
         }
     }
 
@@ -1418,7 +1629,15 @@ pub async fn session_stop(
                 "[session_stop] deleting udp admin user: session_id={} node_id={} admin_user_id={}",
                 model.session_id, node_id, admin_user_id
             );
-            let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            if use_main_admin_http() {
+                let _ = main_admin_delete_user(node_id, admin_user_id).await;
+            } else {
+                let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(8);
+                let _ = cp_delete_user(&*state, node_id, admin_user_id, true, sync_timeout).await;
+            }
         }
     }
 

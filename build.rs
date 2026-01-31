@@ -6,13 +6,18 @@ fn main() {
 
     tonic_build::configure()
         .build_server(true)
-        .build_client(false)
+        .build_client(true)
         .compile_protos(
-            &["proto/nodepanel.proto", "proto/node_control.proto"],
+            &[
+                "proto/nodepanel.proto",
+                "proto/node_control.proto",
+                "proto/control_plane.proto",
+            ],
             &["proto"],
         )
         .expect("failed to compile protos");
 
     println!("cargo:rerun-if-changed=proto/nodepanel.proto");
     println!("cargo:rerun-if-changed=proto/node_control.proto");
+    println!("cargo:rerun-if-changed=proto/control_plane.proto");
 }
