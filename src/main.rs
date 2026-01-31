@@ -76,7 +76,7 @@ async fn main() -> std::io::Result<()> {
     // 启动 gRPC 服务端骨架（仅本机监听，供未来 443 TLS 入口转发）
     {
         let grpc_addr: SocketAddr = env::var("GRPC_LISTEN_ADDR")
-            .unwrap_or_else(|_| "127.0.0.1:50051".to_string())
+            .unwrap_or_else(|_| "0.0.0.0:50051".to_string())
             .parse()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("invalid GRPC_LISTEN_ADDR: {}", e)))?;
         let admin_config_clone = admin_config.clone();
