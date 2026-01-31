@@ -11,6 +11,7 @@ pub struct Model {
     pub icon: String,
     pub status: String,
     pub ping: i32,
+    #[sea_orm(column_type = "Text")]
     pub process_name: String,
     pub region: String,
 }

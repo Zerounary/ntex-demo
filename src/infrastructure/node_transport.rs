@@ -54,21 +54,38 @@ impl NodeTransport for GrpcTransport {
         grpc_server::wait_for_pull_ack(node_id, action, timeout_secs).await
     }
 
-    async fn query_node_logs(&self, _node_id: u64, _query_params: Value, _timeout: u64) -> Option<Value> {
-        None
+    async fn query_node_logs(&self, node_id: u64, query_params: Value, timeout: u64) -> Option<Value> {
+        let payload = serde_json::json!({
+            "data": query_params
+        });
+        grpc_server::query_node_command(node_id, "query_logs", payload, timeout)
+            .await
+            .ok()
     }
 
-    async fn query_node_network_interfaces(&self, _node_id: u64, _timeout: u64) -> Option<Value> {
-        None
+    async fn query_node_network_interfaces(&self, node_id: u64, timeout: u64) -> Option<Value> {
+        let payload = serde_json::json!({
+            "data": {}
+        });
+        grpc_server::query_node_command(node_id, "query_network", payload, timeout)
+            .await
+            .ok()
     }
 
     async fn query_udp_latency(
         &self,
-        _node_id: u64,
-        _outbound_tag: &str,
-        _timeout: u64,
+        node_id: u64,
+        outbound_tag: &str,
+        timeout: u64,
     ) -> Option<Value> {
-        None
+        let payload = serde_json::json!({
+            "data": {
+                "outbound_tag": outbound_tag
+            }
+        });
+        grpc_server::query_node_command(node_id, "udp_probe", payload, timeout)
+            .await
+            .ok()
     }
 }
 

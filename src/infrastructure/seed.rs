@@ -27,8 +27,17 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             icon: Set("i-mdi-google-chrome".to_string()),
             status: Set("idle".to_string()),
             ping: Set(0),
-            process_name: Set("chrome.exe".to_string()),
+            process_name: Set("chrome.exe,udptest.exe,LinkLatencyTester.exe".to_string()),
             region: Set("测试".to_string()),
+        },
+        accelerator_game::ActiveModel {
+            id: Set("8".to_string()),
+            name: Set("LOL 韩服".to_string()),
+            icon: Set("i-mdi-google-chrome".to_string()),
+            status: Set("idle".to_string()),
+            ping: Set(0),
+            process_name: Set("League of Legends.exe,LeagueClient.exe,LeagueClientUx.exe,LolClient.exe,LoLLauncher.exe,LoLPatcher.exe,LoLPatcherUx.exe,RiotClientServices.exe,RiotClientUx.exe,RiotClientUxRender.exe,LeagueClientUxRender.exe,Garena.exe,GarenaMessenger.exe,lol.exe,rads_user_kernel.exe,client.exe,LeagueCrashHandler.exe,RuinedKing.exe,steamwebhelper.exe,EALink.exe,Client.exe,Riot Client.exe,OP.GG.exe,udptest.exe,vgc.exe,chrome.exe".to_string()),
+            region: Set("韩国".to_string()),
         }];
 
         for game in games {
@@ -79,7 +88,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
     let user_count = accelerator_user::Entity::find().count(db).await?;
     if user_count == 0 {
         let now = Utc::now();
-        let user_id = "9777888".to_string();
+        let user_id = "123".to_string();
         accelerator_user::ActiveModel {
             id: Set(user_id.clone()),
             name: Set("User".to_string()),
@@ -220,6 +229,15 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
         .one(db)
         .await?;
     
+    if let Some(existing) = node_config_exists {
+        let mut active: admin_node_config::ActiveModel = existing.into();
+        active.node_token = Set(Some("123".to_string()));
+        active.node_shared_secret = Set(Some("dev_shared_secret".to_string()));
+        active.node_comm_mode = Set("grpc".to_string());
+        let _ = active.update(db).await?;
+        return Ok(());
+    }
+
     if node_config_exists.is_none() {
         admin_node_config::ActiveModel {
             node_id: Set(node_id),
@@ -227,6 +245,9 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
+            node_token: Set(Some("123".to_string())),
+            node_shared_secret: Set(Some("dev_shared_secret".to_string())),
+            node_comm_mode: Set("grpc".to_string()),
             ..Default::default()
         }
         .insert(db)

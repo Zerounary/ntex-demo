@@ -15,7 +15,7 @@ ntex = { version = "2.17.0", features = ["tokio"] }
 tokio = { version = "1", features = ["full"] }
 ntex-files = "2.1.0"
 dotenv = "0.15"
-sea-orm = { version = "0.12", features = ["macros", "runtime-tokio-native-tls", "sqlx-mysql"] }
+sea-orm = { version = "0.12", features = ["macros", "runtime-tokio-native-tls", "sqlx-mysql", "sqlx-sqlite"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
