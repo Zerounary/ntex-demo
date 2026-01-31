@@ -9,23 +9,14 @@ use std::sync::Arc;
 
 use ntex_files as fs;
 use crate::infrastructure::admin_config::AdminConfigStore;
-use crate::infrastructure::mqtt_client::MqttClientManager;
-use crate::infrastructure::node_transport::{DispatchTransport, GrpcTransport, MqttTransport, NodeTransport};
+use crate::infrastructure::node_transport::{GrpcTransport, NodeTransport};
 use sea_orm::DatabaseConnection;
 
 use self::routes::configure;
 use handlers::AdminState;
 
-pub async fn serve(port: u16, config: AdminConfigStore, db: DatabaseConnection, mqtt_client: Option<Arc<MqttClientManager>>) -> std::io::Result<()> {
-    let node_transport: Option<Arc<dyn NodeTransport>> = mqtt_client.map(|mqtt| {
-        let mqtt_transport: Arc<dyn NodeTransport> = Arc::new(MqttTransport::new(mqtt));
-        let transport: Arc<dyn NodeTransport> = Arc::new(DispatchTransport::new(
-            config.clone(),
-            Some(mqtt_transport),
-            GrpcTransport::new(),
-        ));
-        transport
-    });
+pub async fn serve(port: u16, config: AdminConfigStore, db: DatabaseConnection) -> std::io::Result<()> {
+    let node_transport: Option<Arc<dyn NodeTransport>> = Some(Arc::new(GrpcTransport::new()));
     let state = AdminState {
         config,
         db,

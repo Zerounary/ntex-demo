@@ -6,7 +6,7 @@ mod interface;
 
 use dotenv::dotenv;
 use env_logger::Env;
-use infrastructure::{admin_config, database, mqtt_broker, mqtt_client, seed};
+use infrastructure::{admin_config, database, seed};
 use interface::{admin, grpc_server, tls_entry};
 use log::{error, info, warn};
 use sea_orm::{
@@ -16,6 +16,8 @@ use sea_orm::{
 use std::env;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
+
+use crate::infrastructure::node_transport::{GrpcTransport, NodeTransport};
 
 use crate::config::AppConfig;
 
@@ -65,28 +67,11 @@ async fn main() -> std::io::Result<()> {
         std::process::exit(1);
     }
     info!("数据库种子数据执行成功");
-
-    // 启动 MQTT Broker
-    info!("正在启动 MQTT Broker...");
-    let mut mqtt_broker = mqtt_broker::MqttBrokerManager::start()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT Broker 启动失败: {}", e)))?;
-    info!("MQTT Broker 启动成功");
-    
-    // 等待一小段时间确保 broker 完全启动
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
     
     // 创建管理配置存储
     let admin_config = admin_config::AdminConfigStore::new(db.clone());
-    
-    // 启动 MQTT 客户端用于接收节点上报数据
-    info!("正在启动 MQTT 客户端...");
-    let mqtt_client = mqtt_client::MqttClientManager::start(admin_config.clone(), db.clone())
-        .await
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("MQTT 客户端启动失败: {}", e)))?;
-    info!("MQTT 客户端启动成功");
-    
-    // 创建 MQTT 客户端 Arc 引用
-    let mqtt_client_arc = std::sync::Arc::new(mqtt_client);
+
+    let node_transport: Arc<dyn NodeTransport> = Arc::new(GrpcTransport::new());
 
     // 启动 gRPC 服务端骨架（仅本机监听，供未来 443 TLS 入口转发）
     {
@@ -120,16 +105,15 @@ async fn main() -> std::io::Result<()> {
     {
         let db_clone = db.clone();
         let admin_config_clone = admin_config.clone();
-        let mqtt_clone = mqtt_client_arc.clone();
+        let transport_clone = node_transport.clone();
         tokio::spawn(async move {
-            run_minute_billing_daemon(db_clone, admin_config_clone, mqtt_clone).await;
+            run_minute_billing_daemon(db_clone, admin_config_clone, transport_clone).await;
         });
     }
     
     // 启动管理服务器
     let admin_config_clone = admin_config.clone();
     let db_clone = db.clone();
-    let mqtt_client_clone = mqtt_client_arc.clone();
 
     let admin_port: u16 = env::var("ADMIN_PORT")
         .ok()
@@ -140,7 +124,7 @@ async fn main() -> std::io::Result<()> {
     
     // 使用 tokio::select! 运行管理服务器，并监听关闭信号
     tokio::select! {
-        result = admin::serve(admin_port, admin_config_clone, db_clone, Some(mqtt_client_clone)) => {
+        result = admin::serve(admin_port, admin_config_clone, db_clone) => {
             if let Err(e) = result {
                 eprintln!("管理服务器错误: {:?}", e);
             } else {
@@ -151,14 +135,7 @@ async fn main() -> std::io::Result<()> {
             info!("收到 Ctrl+C 信号，正在关闭服务器...");
         }
     }
-    
-    // 当服务器关闭时，关闭 MQTT 客户端和 Broker
-    info!("正在关闭 MQTT 客户端...");
-    mqtt_client_arc.shutdown().await;
-    
-    info!("正在关闭 MQTT Broker...");
-    mqtt_broker.shutdown();
-    
+
     Ok(())
 }
 
@@ -178,11 +155,11 @@ fn ensure_rustls_crypto_provider() {
 async fn run_minute_billing_daemon(
     db: sea_orm::DatabaseConnection,
     admin_config: admin_config::AdminConfigStore,
-    mqtt: Arc<mqtt_client::MqttClientManager>,
+    node_transport: Arc<dyn NodeTransport>,
 ) {
     async fn revoke_session_users(
         admin_config: &admin_config::AdminConfigStore,
-        mqtt: &mqtt_client::MqttClientManager,
+        node_transport: &dyn NodeTransport,
         session: &acceleration_session::Model,
     ) {
         let mut targets: Vec<(u64, u64)> = Vec::new();
@@ -207,10 +184,18 @@ async fn run_minute_billing_daemon(
 
         for (node_id, admin_user_id) in targets {
             let _ = admin_config.delete_user(node_id, admin_user_id).await;
-            let _ = mqtt.publish_update_notification(node_id, "user").await;
-            let _ = mqtt.publish_update_notification(node_id, "outbound").await;
-            let _ = mqtt.publish_update_notification(node_id, "inbound").await;
-            let _ = mqtt.publish_update_notification(node_id, "config").await;
+            let _ = node_transport
+                .publish_update_notification(node_id, "user")
+                .await;
+            let _ = node_transport
+                .publish_update_notification(node_id, "outbound")
+                .await;
+            let _ = node_transport
+                .publish_update_notification(node_id, "inbound")
+                .await;
+            let _ = node_transport
+                .publish_update_notification(node_id, "config")
+                .await;
         }
     }
 
@@ -399,7 +384,7 @@ async fn run_minute_billing_daemon(
 
                 should_revoke = true;
                 status_after = Some("insufficient_balance".to_string());
-                revoke_session_users(&admin_config, &mqtt, &session).await;
+                revoke_session_users(&admin_config, node_transport.as_ref(), &session).await;
                 info!(
                     "[billing] session stopped: session_id={}, status={}",
                     session_id,
@@ -447,7 +432,7 @@ async fn run_minute_billing_daemon(
                     continue;
                 }
 
-                revoke_session_users(&admin_config, &mqtt, &session).await;
+                revoke_session_users(&admin_config, node_transport.as_ref(), &session).await;
                 continue;
             }
 
@@ -515,7 +500,7 @@ async fn run_minute_billing_daemon(
             }
 
             if should_revoke {
-                revoke_session_users(&admin_config, &mqtt, &session).await;
+                revoke_session_users(&admin_config, node_transport.as_ref(), &session).await;
                 info!(
                     "[billing] session stopped: session_id={}, status=insufficient_balance",
                     session_id
