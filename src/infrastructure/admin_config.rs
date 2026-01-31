@@ -1288,6 +1288,13 @@ impl AdminConfigStore {
         let mem = Self::parse_percentage(status_data.get("mem")).unwrap_or(0.0).clamp(0.0, 1.0);
         let disk = Self::parse_percentage(status_data.get("disk")).unwrap_or(0.0).clamp(0.0, 1.0);
         let uptime = status_data.get("uptime").and_then(|v| v.as_u64()).unwrap_or(0);
+
+
+        // 可选硬件信息（节点可能在 nodestatus 中上报）
+        let cpu_threads = status_data.get("cpu_threads").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let mem_total = status_data.get("mem_total").and_then(|v| v.as_u64());
+        let disk_total = status_data.get("disk_total").and_then(|v| v.as_u64());
+        let public_ip = status_data.get("public_ip").and_then(|v| v.as_str()).map(|v| v.to_string());
         
         // 解析网络接口信息（如果提供）
         let network_interfaces = status_data.get("network")
@@ -1303,6 +1310,21 @@ impl AdminConfigStore {
             active_model.mem_usage = Set(Some(mem));
             active_model.disk_usage = Set(Some(disk));
             active_model.uptime = Set(Some(uptime));
+
+
+            // 更新硬件信息（如果提供）
+            if let Some(cpu_threads) = cpu_threads {
+                active_model.cpu_threads = Set(Some(cpu_threads));
+            }
+            if let Some(mem_total) = mem_total {
+                active_model.mem_total = Set(Some(mem_total));
+            }
+            if let Some(disk_total) = disk_total {
+                active_model.disk_total = Set(Some(disk_total));
+            }
+            if let Some(public_ip) = public_ip {
+                active_model.public_ip = Set(Some(public_ip));
+            }
             
             // 更新网络接口信息（如果提供）
             if let Some(network_interfaces) = network_interfaces {
