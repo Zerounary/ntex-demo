@@ -332,10 +332,10 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
                 "shadowsocks".to_string(),
                 json!({
                     "servers": [{
-                        "address": "67.209.176.181",
-                        "port": 19166,
+                        "address": "112.164.191.18",
+                        "port": 6303,
                         "method": "aes-256-gcm",
-                        "password": "bxaeWJ4Kf9ZL59R3"
+                        "password": "na71"
                     }]
                 }),
                 None,
@@ -345,10 +345,10 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
                 "shadowsocks".to_string(),
                 json!({
                     "servers": [{
-                        "address": "65.49.212.165",
-                        "port": 19166,
+                        "address": "118.40.250.41",
+                        "port": 6304,
                         "method": "aes-256-gcm",
-                        "password": "bxaeWJ4Kf9ZL59R3"
+                        "password": "na71"
                     }]
                 }),
                 None,
@@ -358,10 +358,36 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
                 "shadowsocks".to_string(),
                 json!({
                     "servers": [{
-                        "address": "65.49.212.165",
-                        "port": 19166,
+                        "address": "119.200.207.26",
+                        "port": 6305,
                         "method": "aes-256-gcm",
-                        "password": "bxaeWJ4Kf9ZL59R3"
+                        "password": "na71"
+                    }]
+                }),
+                None,
+            ),
+            (
+                "ss_4".to_string(),
+                "shadowsocks".to_string(),
+                json!({
+                    "servers": [{
+                        "address": "121.149.218.164",
+                        "port": 6306,
+                        "method": "aes-256-gcm",
+                        "password": "na71"
+                    }]
+                }),
+                None,
+            ),
+            (
+                "ss_5".to_string(),
+                "shadowsocks".to_string(),
+                json!({
+                    "servers": [{
+                        "address": "121.179.252.144",
+                        "port": 6307,
+                        "method": "aes-256-gcm",
+                        "password": "na71"
                     }]
                 }),
                 None,
@@ -387,8 +413,8 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
             ("a1b2c3d4-e5f6-7890-abcd-ef1234567890".to_string(), "ss_1".to_string()),
             ("b2c3d4e5-f6a7-8901-bcde-f12345678901".to_string(), "ss_2".to_string()),
             ("c3d4e5f6-a7b8-9012-cdef-123456789012".to_string(), "ss_3".to_string()),
-            ("d4e5f6a7-b8c9-0123-def0-234567890123".to_string(), "ss_1".to_string()),
-            ("e5f6a7b8-c9d0-1234-ef01-345678901234".to_string(), "ss_2".to_string()),
+            ("d4e5f6a7-b8c9-0123-def0-234567890123".to_string(), "ss_4".to_string()),
+            ("e5f6a7b8-c9d0-1234-ef01-345678901234".to_string(), "ss_5".to_string()),
         ];
         
         for (uuid, outbound_tag) in mappings {
