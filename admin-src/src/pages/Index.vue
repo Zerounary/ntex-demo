@@ -43,6 +43,13 @@
             <div :class="nodeStore.loading ? 'animate-spin' : ''" class="i-carbon-renew text-lg"></div>
             <span class="text-sm font-semibold tracking-wide">REFRESH</span>
           </button>
+          <button
+            @click="showCreateNodeDialog = true"
+            class="btn-secondary flex items-center gap-2.5 px-6 py-2.5"
+          >
+            <div class="i-carbon-add text-lg"></div>
+            <span class="text-sm font-semibold tracking-wide">NEW NODE</span>
+          </button>
         </div>
       </div>
 
@@ -143,6 +150,86 @@
         />
       </transition-group>
     </div>
+
+    <!-- 新增节点对话框 -->
+    <transition name="fade">
+      <div
+        v-if="showCreateNodeDialog"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+        @click.self="showCreateNodeDialog = false"
+      >
+        <div class="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl animate-slide-up">
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-2xl font-bold text-gray-900">Create New Node</h2>
+            <button
+              @click="showCreateNodeDialog = false"
+              class="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <div class="i-carbon-close text-2xl"></div>
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Node ID</label>
+              <input
+                v-model="newNodeForm.nodeId"
+                type="number"
+                placeholder="Enter node ID"
+                class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Name</label>
+              <input
+                v-model="newNodeForm.name"
+                type="text"
+                placeholder="Enter node name"
+                class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Region</label>
+              <input
+                v-model="newNodeForm.region"
+                type="text"
+                placeholder="Enter region"
+                class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all"
+              />
+            </div>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">Description</label>
+              <textarea
+                v-model="newNodeForm.description"
+                placeholder="Enter description"
+                rows="3"
+                class="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-400 focus:border-transparent transition-all resize-none"
+              />
+            </div>
+          </div>
+
+          <div class="flex gap-3 mt-8">
+            <button
+              @click="showCreateNodeDialog = false"
+              class="flex-1 btn-secondary py-3"
+            >
+              Cancel
+            </button>
+            <button
+              @click="createNode"
+              :disabled="creatingNode"
+              class="flex-1 btn-success py-3 flex items-center justify-center gap-2"
+            >
+              <div v-if="creatingNode" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              <span>{{ creatingNode ? 'Creating...' : 'Create' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -152,6 +239,7 @@ import { useRouter } from 'vue-router';
 import { useNodeStore } from '@/stores/node';
 import NodeCard from '@/components/NodeCard.vue';
 import BaseSelect from '@/components/BaseSelect.vue';
+import * as adminApi from '@/api/admin';
 
 const router = useRouter();
 const nodeStore = useNodeStore();
@@ -160,6 +248,15 @@ const filterName = ref('');
 const filterRegion = ref('');
 const filterDescription = ref('');
 const filterOnline = ref<'all' | 'online' | 'offline'>('all');
+const showCreateNodeDialog = ref(false);
+const creatingNode = ref(false);
+
+const newNodeForm = ref({
+  nodeId: '',
+  name: '',
+  region: '',
+  description: '',
+});
 
 const onlineOptions = [
   { label: 'All status', value: 'all' },
@@ -207,6 +304,37 @@ const refreshNodes = () => {
 
 const goToNodeDetail = (nodeId: number) => {
   router.push(`/node/${nodeId}`);
+};
+
+const createNode = async () => {
+  if (!newNodeForm.value.nodeId) {
+    alert('Please enter Node ID');
+    return;
+  }
+
+  creatingNode.value = true;
+  try {
+    await adminApi.createNode({
+      node_id: parseInt(newNodeForm.value.nodeId),
+      name: newNodeForm.value.name || undefined,
+      region: newNodeForm.value.region || undefined,
+      description: newNodeForm.value.description || undefined,
+    });
+    
+    showCreateNodeDialog.value = false;
+    newNodeForm.value = {
+      nodeId: '',
+      name: '',
+      region: '',
+      description: '',
+    };
+    
+    nodeStore.fetchNodes(onlineParam.value);
+  } catch (err: any) {
+    alert(`Failed to create node: ${err.message}`);
+  } finally {
+    creatingNode.value = false;
+  }
 };
 </script>
 

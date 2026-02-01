@@ -7,6 +7,7 @@ use super::handlers;
 pub fn configure(cfg: &mut web::ServiceConfig) {
     // 查询接口
     cfg.service(handlers::list_nodes);
+    cfg.service(handlers::create_node);
     cfg.service(handlers::update_node_meta);
     cfg.service(handlers::query_handler);
 

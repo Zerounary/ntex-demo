@@ -48,7 +48,7 @@ pub struct Model {
     pub node_token: Option<String>,
     #[sea_orm(nullable)]
     pub node_shared_secret: Option<String>,
-    #[sea_orm(default_value = "mqtt")]
+    #[sea_orm(default_value = "grpc")]
     pub node_comm_mode: String,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
     pub created_at: DateTimeUtc,

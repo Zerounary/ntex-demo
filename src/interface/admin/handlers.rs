@@ -13,7 +13,7 @@ use log::{info, error};
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::node_transport::NodeTransport;
 use crate::infrastructure::persistence::{
-    accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config,
+    accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config, admin_inbound, admin_outbound,
 };
 use crate::interface::admin::chain_ops;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
@@ -853,6 +853,180 @@ pub async fn refresh_node_network_interfaces(
         "data": {
             "network_interfaces": network_json
         }
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct CreateNodeRequest {
+    pub node_id: u64,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[web::post("/api/admin/nodes")]
+pub async fn create_node(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Json(body): Json<CreateNodeRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let node_id = body.node_id;
+
+    info!("[admin] creating node node_id={}", node_id);
+
+    // 检查节点是否已存在
+    let existing_node = admin_node_config::Entity::find_by_id(node_id)
+        .one(&state.db)
+        .await;
+
+    let existing_node = match existing_node {
+        Ok(node) => node,
+        Err(e) => {
+            error!("[admin] db error when checking node node_id={}: {}", node_id, e);
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("数据库查询失败: {}", e)
+            }));
+        }
+    };
+
+    if existing_node.is_some() {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("node_id={} 已存在", node_id)
+        }));
+    }
+
+    // 创建节点配置
+    let active_node = admin_node_config::ActiveModel {
+        node_id: Set(node_id),
+        node_type: Set("VlessReality".to_string()),
+        node_speed_limit: Set(0),
+        traffic_rate: Set(1.0),
+        sort: Set(1),
+        name: Set(body.name),
+        region: Set(body.region),
+        description: Set(body.description),
+        node_token: Set(Some(format!("node-token-{}", node_id))),
+        node_shared_secret: Set(Some(format!("shared-secret-{}", node_id))),
+        ..Default::default()
+    };
+
+    let inserted_node = active_node.insert(&state.db).await;
+
+    let inserted_node = match inserted_node {
+        Ok(node) => node,
+        Err(e) => {
+            error!("[admin] failed to create node config node_id={}: {}", node_id, e);
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("创建节点配置失败: {}", e)
+            }));
+        }
+    };
+
+    // 创建默认入站
+    let active_inbound = admin_inbound::ActiveModel {
+        node_id: Set(node_id),
+        tag: Set(format!("in_{}", node_id)),
+        protocol: Set("vless".to_string()),
+        port: Set(node_id as i32),
+        listen: Set(None),
+        settings: Set(serde_json::json!({
+            "decryption": "none"
+        })),
+        stream_settings: Set(Some(serde_json::json!({
+            "network": "tcp",
+            "security": "reality",
+            "realitySettings": {
+                "show": false,
+                "dest": "www.cloudflare.com:443",
+                "xver": 0,
+                "serverNames": ["www.cloudflare.com"],
+                "privateKey": "aNd7UkHbEak7xUDUAcUCycsbi8sjk71TfNB5ZOp0yUk",
+                "shortIds": ["a66cafe7"],
+                "serverName": "www.cloudflare.com",
+                "publicKey": "JbPBpbjEHQiL87HpoJ6wZ3o9wSTyjzTIN9ysP6tnywU",
+                "shortId": "a66cafe7",
+                "fingerprint": "chrome",
+                "spiderX": "/"
+            }
+        }))),
+        sniffing: Set(None),
+        ..Default::default()
+    };
+
+    let _ = active_inbound.insert(&state.db).await.map_err(|e| {
+        error!("[admin] failed to create default inbound node_id={}: {}", node_id, e);
+    });
+
+    // 创建默认出站（block 和 direct）
+    let default_outbounds = vec![
+        (
+            "block".to_string(),
+            "blackhole".to_string(),
+            serde_json::json!({
+                "response": { "type": "http" }
+            }),
+        ),
+        ("direct".to_string(), "freedom".to_string(), serde_json::json!({})),
+    ];
+
+    for (tag, protocol, settings) in default_outbounds {
+        let active_outbound = admin_outbound::ActiveModel {
+            node_id: Set(node_id),
+            tag: Set(tag.clone()),
+            protocol: Set(protocol),
+            settings: Set(settings),
+            send_through: Set(None),
+            stream_settings: Set(None),
+            ..Default::default()
+        };
+
+        let _ = active_outbound.insert(&state.db).await.map_err(|e| {
+            error!("[admin] failed to create default outbound node_id={} tag={}: {}", node_id, tag, e);
+        });
+    }
+
+    info!("[admin] node created successfully node_id={}", node_id);
+
+    // 返回创建的节点信息
+    let node_info = serde_json::json!({
+        "node_id": inserted_node.node_id,
+        "name": inserted_node.name,
+        "region": inserted_node.region,
+        "description": inserted_node.description,
+        "node_type": inserted_node.node_type,
+        "node_speed_limit": inserted_node.node_speed_limit,
+        "traffic_rate": inserted_node.traffic_rate,
+        "sort": inserted_node.sort,
+        "maintenance_mode": inserted_node.maintenance_mode,
+        "is_online": inserted_node.is_online,
+        "last_seen_at": inserted_node.last_seen_at.map(|t| t.to_rfc3339()),
+        "cpu_usage": inserted_node.cpu_usage,
+        "mem_usage": inserted_node.mem_usage,
+        "disk_usage": inserted_node.disk_usage,
+        "uptime": inserted_node.uptime,
+        "online_user_count": inserted_node.online_user_count,
+        "cpu_threads": inserted_node.cpu_threads,
+        "mem_total": inserted_node.mem_total,
+        "disk_total": inserted_node.disk_total,
+        "public_ip": inserted_node.public_ip,
+        "network_interfaces": inserted_node.network_interfaces,
+        "created_at": inserted_node.created_at.to_rfc3339(),
+        "updated_at": inserted_node.updated_at.to_rfc3339(),
+    });
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok",
+        "data": node_info
     }))
 }
 

@@ -148,6 +148,24 @@ export async function refreshNodeNetworkInterfaces(
   throw new Error(response.error || '刷新网络接口信息失败');
 }
 
+export async function createNode(
+  node: {
+    node_id: number;
+    name?: string | null;
+    region?: string | null;
+    description?: string | null;
+  }
+): Promise<NodeInfo> {
+  const response = await request<NodeInfo>(`/api/admin/nodes`, {
+    method: 'POST',
+    body: JSON.stringify(node),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '创建节点失败');
+}
+
 // ========== 用户管理 ==========
 
 export async function getUsers(nodeId: number): Promise<User[]> {
