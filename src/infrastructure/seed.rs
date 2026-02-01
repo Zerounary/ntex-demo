@@ -231,8 +231,8 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
     
     if let Some(existing) = node_config_exists {
         let mut active: admin_node_config::ActiveModel = existing.into();
-        active.node_token = Set(Some("123".to_string()));
-        active.node_shared_secret = Set(Some("dev_shared_secret".to_string()));
+        active.node_token = Set(Some("2a8fe744-1d46-43b7-9466-ebd46d058fb4".to_string()));
+        active.node_shared_secret = Set(Some("306b0579-5cc2-4e21-8ff0-e4c2ad337c8e".to_string()));
         active.node_comm_mode = Set("grpc".to_string());
         let _ = active.update(db).await?;
         return Ok(());
@@ -245,8 +245,8 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
             node_speed_limit: Set(0),
             traffic_rate: Set(1.0),
             sort: Set(1),
-            node_token: Set(Some("123".to_string())),
-            node_shared_secret: Set(Some("dev_shared_secret".to_string())),
+            node_token: Set(Some("2a8fe744-1d46-43b7-9466-ebd46d058fb4".to_string())),
+            node_shared_secret: Set(Some("306b0579-5cc2-4e21-8ff0-e4c2ad337c8e".to_string())),
             node_comm_mode: Set("grpc".to_string()),
             ..Default::default()
         }
@@ -255,7 +255,7 @@ async fn seed_admin_config(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr
 
         admin_inbound::ActiveModel {
             node_id: Set(node_id),
-            tag: Set("in_10086".to_string()),
+            tag: Set("entrydoor".to_string()),
             protocol: Set("vless".to_string()),
             port: Set(10086),
             listen: Set(None),

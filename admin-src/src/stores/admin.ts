@@ -9,6 +9,18 @@ import type {
 } from '@/api/types';
 import * as adminApi from '@/api/admin';
 
+const normalizeInboundConfig = (inbound: any): InboundConfig => {
+  const normalized: InboundConfig = {
+    ...inbound,
+    settings: inbound?.settings ?? {},
+    stream_settings: inbound?.stream_settings ?? inbound?.streamSettings ?? null,
+  };
+  if ('streamSettings' in normalized) {
+    delete (normalized as any).streamSettings;
+  }
+  return normalized;
+};
+
 export const useAdminStore = defineStore('admin', {
   state: () => ({
     // 用户管理
@@ -92,7 +104,7 @@ export const useAdminStore = defineStore('admin', {
       this.inboundsError = null;
       try {
         const data = await adminApi.getInbounds(nodeId);
-        this.inbounds = data.inbounds;
+        this.inbounds = data.inbounds.map((item) => normalizeInboundConfig(item));
       } catch (err: any) {
         this.inboundsError = err.message || '获取入站列表失败';
         console.error('Failed to fetch inbounds:', err);
@@ -115,7 +127,7 @@ export const useAdminStore = defineStore('admin', {
     ) {
       try {
         const newInbound = await adminApi.addInbound(nodeId, inbound);
-        this.inbounds.push(newInbound);
+        this.inbounds.push(normalizeInboundConfig(newInbound));
         return newInbound;
       } catch (err: any) {
         throw err;
@@ -138,7 +150,8 @@ export const useAdminStore = defineStore('admin', {
         await adminApi.updateInbound(nodeId, tag, inbound);
         const index = this.inbounds.findIndex((i) => i.tag === tag);
         if (index !== -1) {
-          this.inbounds[index] = { ...this.inbounds[index], ...inbound };
+          const merged = { ...this.inbounds[index], ...inbound };
+          this.inbounds[index] = normalizeInboundConfig(merged);
         }
       } catch (err: any) {
         throw err;

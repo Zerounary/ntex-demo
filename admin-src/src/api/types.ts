@@ -21,6 +21,8 @@ export interface NodeInfo {
   name?: string | null;
   region?: string | null;
   description?: string | null;
+  node_token?: string | null;
+  node_shared_secret?: string | null;
   node_type: string;
   node_speed_limit: number;
   traffic_rate: number;

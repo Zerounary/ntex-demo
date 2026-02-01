@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::env;
 use std::time::Instant;
 use log::{info, error};
+use uuid::Uuid;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
 use crate::infrastructure::node_transport::NodeTransport;
@@ -881,6 +882,9 @@ pub async fn create_node(
 
     info!("[admin] creating node node_id={}", node_id);
 
+    let node_token = Uuid::new_v4().to_string();
+    let node_shared_secret = Uuid::new_v4().to_string();
+
     // 检查节点是否已存在
     let existing_node = admin_node_config::Entity::find_by_id(node_id)
         .one(&state.db)
@@ -914,8 +918,8 @@ pub async fn create_node(
         name: Set(body.name),
         region: Set(body.region),
         description: Set(body.description),
-        node_token: Set(Some(format!("node-token-{}", node_id))),
-        node_shared_secret: Set(Some(format!("shared-secret-{}", node_id))),
+        node_token: Set(Some(node_token.clone())),
+        node_shared_secret: Set(Some(node_shared_secret.clone())),
         ..Default::default()
     };
 
@@ -935,9 +939,9 @@ pub async fn create_node(
     // 创建默认入站
     let active_inbound = admin_inbound::ActiveModel {
         node_id: Set(node_id),
-        tag: Set(format!("in_{}", node_id)),
+        tag: Set("entrydoor".to_string()),
         protocol: Set("vless".to_string()),
-        port: Set(node_id as i32),
+        port: Set(10086 as i32),
         listen: Set(None),
         settings: Set(serde_json::json!({
             "decryption": "none"
@@ -1020,6 +1024,8 @@ pub async fn create_node(
         "disk_total": inserted_node.disk_total,
         "public_ip": inserted_node.public_ip,
         "network_interfaces": inserted_node.network_interfaces,
+        "node_token": inserted_node.node_token,
+        "node_shared_secret": inserted_node.node_shared_secret,
         "created_at": inserted_node.created_at.to_rfc3339(),
         "updated_at": inserted_node.updated_at.to_rfc3339(),
     });

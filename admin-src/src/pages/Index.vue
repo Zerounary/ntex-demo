@@ -156,20 +156,25 @@
       <div
         v-if="showCreateNodeDialog"
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-        @click.self="showCreateNodeDialog = false"
+        @click.self="handleCloseCreateDialog"
       >
         <div class="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl animate-slide-up">
           <div class="flex items-center justify-between mb-6">
-            <h2 class="text-2xl font-bold text-gray-900">Create New Node</h2>
+            <div>
+              <h2 class="text-2xl font-bold text-gray-900">Create New Node</h2>
+              <p class="text-sm text-gray-500" v-if="creationResult">
+                Credentials are shown once. Copy them now to configure节点。
+              </p>
+            </div>
             <button
-              @click="showCreateNodeDialog = false"
+              @click="handleCloseCreateDialog"
               class="text-gray-400 hover:text-gray-600 transition-colors"
             >
               <div class="i-carbon-close text-2xl"></div>
             </button>
           </div>
 
-          <div class="space-y-4">
+          <div v-if="!creationResult" class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-2">Node ID</label>
               <input
@@ -211,20 +216,74 @@
             </div>
           </div>
 
+          <div v-else class="space-y-5">
+            <div class="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 flex items-start gap-3">
+              <div class="i-carbon-checkmark-filled text-emerald-500 text-2xl"></div>
+              <div>
+                <p class="text-sm font-semibold text-emerald-700">Node created successfully</p>
+                <p class="text-xs text-emerald-600">Copy the credentials below. They won’t be shown again.</p>
+              </div>
+            </div>
+
+            <div class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Node ID</label>
+                <div class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-sm flex items-center justify-between">
+                  <span>{{ creationResult?.node_id }}</span>
+                  <button class="text-primary-500 hover:text-primary-600" @click="copyField('Node ID', creationResult?.node_id?.toString() ?? '')">
+                    <div class="i-carbon-copy text-lg"></div>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Node Token</label>
+                <div class="credential-tile">
+                  <span class="truncate font-mono">{{ creationResult?.node_token }}</span>
+                  <button class="btn-link" @click="copyField('Node Token', creationResult?.node_token ?? undefined)">
+                    <div class="i-carbon-copy text-lg"></div>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Node Shared Secret</label>
+                <div class="credential-tile">
+                  <span class="truncate font-mono">{{ creationResult?.node_shared_secret }}</span>
+                  <button class="btn-link" @click="copyField('Shared Secret', creationResult?.node_shared_secret ?? undefined)">
+                    <div class="i-carbon-copy text-lg"></div>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <p class="text-xs text-gray-500 leading-relaxed">
+              Keep the token and shared secret safe. They are required for节点认证且此处仅展示一次。
+            </p>
+          </div>
+
           <div class="flex gap-3 mt-8">
             <button
-              @click="showCreateNodeDialog = false"
+              @click="handleCloseCreateDialog"
               class="flex-1 btn-secondary py-3"
             >
-              Cancel
+              {{ creationResult ? 'Done' : 'Cancel' }}
             </button>
             <button
+              v-if="!creationResult"
               @click="createNode"
               :disabled="creatingNode"
               class="flex-1 btn-success py-3 flex items-center justify-center gap-2"
             >
               <div v-if="creatingNode" class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
               <span>{{ creatingNode ? 'Creating...' : 'Create' }}</span>
+            </button>
+            <button
+              v-else
+              class="flex-1 btn-primary py-3"
+              @click="startAnotherCreation"
+            >
+              Create Another Node
             </button>
           </div>
         </div>
@@ -240,9 +299,12 @@ import { useNodeStore } from '@/stores/node';
 import NodeCard from '@/components/NodeCard.vue';
 import BaseSelect from '@/components/BaseSelect.vue';
 import * as adminApi from '@/api/admin';
+import { useToastStore } from '@/stores/toast';
+import type { NodeInfo } from '@/api/types';
 
 const router = useRouter();
 const nodeStore = useNodeStore();
+const toast = useToastStore();
 
 const filterName = ref('');
 const filterRegion = ref('');
@@ -250,6 +312,7 @@ const filterDescription = ref('');
 const filterOnline = ref<'all' | 'online' | 'offline'>('all');
 const showCreateNodeDialog = ref(false);
 const creatingNode = ref(false);
+const creationResult = ref<NodeInfo | null>(null);
 
 const newNodeForm = ref({
   nodeId: '',
@@ -257,6 +320,15 @@ const newNodeForm = ref({
   region: '',
   description: '',
 });
+
+const resetCreateForm = () => {
+  newNodeForm.value = {
+    nodeId: '',
+    name: '',
+    region: '',
+    description: '',
+  };
+};
 
 const onlineOptions = [
   { label: 'All status', value: 'all' },
@@ -308,32 +380,58 @@ const goToNodeDetail = (nodeId: number) => {
 
 const createNode = async () => {
   if (!newNodeForm.value.nodeId) {
-    alert('Please enter Node ID');
+    toast.warning('Please enter Node ID');
     return;
   }
 
   creatingNode.value = true;
   try {
-    await adminApi.createNode({
+    const created = await adminApi.createNode({
       node_id: parseInt(newNodeForm.value.nodeId),
       name: newNodeForm.value.name || undefined,
       region: newNodeForm.value.region || undefined,
       description: newNodeForm.value.description || undefined,
     });
-    
-    showCreateNodeDialog.value = false;
-    newNodeForm.value = {
-      nodeId: '',
-      name: '',
-      region: '',
-      description: '',
-    };
-    
+
+    creationResult.value = created;
+    toast.success('Node created. Credentials ready to copy.');
+    resetCreateForm();
     nodeStore.fetchNodes(onlineParam.value);
   } catch (err: any) {
-    alert(`Failed to create node: ${err.message}`);
+    toast.error(err?.message || 'Failed to create node');
   } finally {
     creatingNode.value = false;
+  }
+};
+
+const handleCloseCreateDialog = () => {
+  showCreateNodeDialog.value = false;
+  creationResult.value = null;
+  resetCreateForm();
+};
+
+const startAnotherCreation = () => {
+  creationResult.value = null;
+};
+
+watch(showCreateNodeDialog, (visible) => {
+  if (visible) {
+    creationResult.value = null;
+    resetCreateForm();
+  }
+});
+
+const copyField = async (label: string, value?: string) => {
+  if (!value) {
+    toast.error(`${label} unavailable`);
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(`${label} copied`);
+  } catch (error) {
+    console.error('copy failed', error);
+    toast.error('Copy failed');
   }
 };
 </script>
@@ -352,5 +450,13 @@ const createNode = async () => {
 .list-leave-to {
   opacity: 0;
   transform: scale(0.9);
+}
+
+.credential-tile {
+  @apply w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-mono text-sm flex items-center justify-between gap-3;
+}
+
+.btn-link {
+  @apply text-primary-500 hover:text-primary-600 transition-colors;
 }
 </style>

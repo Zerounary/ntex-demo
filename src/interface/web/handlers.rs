@@ -1406,8 +1406,8 @@ pub async fn session_start(
                 .map_err(|e| UsecaseError::Validation(format!("get_inbounds failed: {}", e)))?;
             let inbound = inbounds
                 .iter()
-                .find(|i| i.tag == "in_10086")
-                .ok_or_else(|| UsecaseError::Validation("missing inbound tag in_10086".to_string()))?;
+                .find(|i| i.tag == "entrydoor")
+                .ok_or_else(|| UsecaseError::Validation("missing inbound tag entrydoor".to_string()))?;
             let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
                 extract_reality_client_params(inbound)?;
 
@@ -1450,10 +1450,10 @@ pub async fn session_start(
                     })?;
                 let inbound = inbounds
                     .iter()
-                    .find(|i| i.tag == "in_10086")
+                    .find(|i| i.tag == "entrydoor")
                     .ok_or_else(|| {
                         UsecaseError::Validation(
-                            "missing inbound tag in_10086 for chain binding".to_string(),
+                            "missing inbound tag entrydoor for chain binding".to_string(),
                         )
                     })?;
                 let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
@@ -1502,10 +1502,10 @@ pub async fn session_start(
                     })?;
                 let inbound = inbounds
                     .iter()
-                    .find(|i| i.tag == "in_10086")
+                    .find(|i| i.tag == "entrydoor")
                     .ok_or_else(|| {
                         UsecaseError::Validation(
-                            "missing inbound tag in_10086 for chain binding".to_string(),
+                            "missing inbound tag entrydoor for chain binding".to_string(),
                         )
                     })?;
                 let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =

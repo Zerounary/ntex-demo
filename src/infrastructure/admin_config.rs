@@ -970,7 +970,7 @@ impl AdminConfigStore {
 
         admin_inbound::ActiveModel {
             node_id: Set(node_id),
-            tag: Set("in_10086".to_string()),
+            tag: Set("entrydoor".to_string()),
             protocol: Set("vless".to_string()),
             port: Set(10086),
             listen: Set(None),
