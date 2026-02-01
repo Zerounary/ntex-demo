@@ -1149,6 +1149,30 @@ impl AdminConfigStore {
         Ok(res.rows_affected)
     }
 
+    pub async fn set_node_public_ip_if_empty(&self, node_id: u64, public_ip: String) -> Result<(), String> {
+        let public_ip = public_ip.trim().to_string();
+        if public_ip.is_empty() {
+            return Ok(());
+        }
+
+        let node_config = admin_node_config::Entity::find_by_id(node_id)
+            .one(&self.db)
+            .await
+            .map_err(|e| format!("查询节点配置失败: {}", e))?
+            .ok_or_else(|| "节点配置不存在".to_string())?;
+
+        if node_config.public_ip.as_deref().unwrap_or("").trim().is_empty() {
+            let mut active_model: admin_node_config::ActiveModel = node_config.into();
+            active_model.public_ip = Set(Some(public_ip));
+            active_model
+                .update(&self.db)
+                .await
+                .map_err(|e| format!("更新节点 public_ip 失败: {}", e))?;
+        }
+
+        Ok(())
+    }
+
     pub async fn update_node_meta(
         &self,
         node_id: u64,

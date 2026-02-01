@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use sha2::Sha256;
 use tonic::metadata::MetadataMap;
 use tonic::{Request, Response, Status};
+use tonic::transport::server::TcpConnectInfo;
 use tokio::sync::{mpsc, oneshot, watch, Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::ReceiverStream;
@@ -492,10 +493,25 @@ impl nodecontrol::node_control_service_server::NodeControlService for NodeContro
         let node_id = self
             .authenticate_meta(request.metadata().clone())
             .await?;
-        info!("[grpc] node_stream connected node_id={}", node_id);
+        let peer_ip = request
+            .extensions()
+            .get::<TcpConnectInfo>()
+            .and_then(|i| i.remote_addr().map(|addr| addr.ip().to_string()));
+
+        info!(
+            "[grpc] node_stream connected node_id={} peer_ip={}",
+            node_id,
+            peer_ip.as_deref().unwrap_or("unknown")
+        );
 
         let admin_config_for_stream = self.admin_config.clone();
         let _ = admin_config_for_stream.set_node_online_status(node_id, true).await;
+
+        if let Some(peer_ip) = peer_ip.clone() {
+            let _ = admin_config_for_stream
+                .set_node_public_ip_if_empty(node_id, peer_ip)
+                .await;
+        }
 
         let mut inbound = request.into_inner();
 
