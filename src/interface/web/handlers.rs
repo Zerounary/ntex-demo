@@ -1133,7 +1133,7 @@ pub async fn session_start(
         };
         let mut candidates: Vec<String> = outbounds
             .into_iter()
-            .filter(|t| t != "block" && t != "direct")
+            .filter(|t| t != "block")
             .collect();
         candidates.sort();
 
