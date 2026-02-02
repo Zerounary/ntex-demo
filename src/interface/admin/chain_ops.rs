@@ -298,12 +298,7 @@ pub async fn apply_chain_udp(
         port: socks_port as i32,
         listen: Some("0.0.0.0".to_string()),
         settings: serde_json::json!({
-            "accounts": [
-                {
-                    "pass": "my-password",
-                    "user": "my-username"
-                }
-            ],
+            "accounts": [],
             "auth": "password",
             "udp": true,
             "userLevel": 0
