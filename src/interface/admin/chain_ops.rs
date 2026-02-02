@@ -91,6 +91,13 @@ pub async fn apply_chain(
         node_path.push(r.to_node_id);
     }
 
+    let mut unique_nodes = HashSet::new();
+    for node_id in node_path.iter().copied() {
+        if !unique_nodes.insert(node_id) {
+            return Err("route chain contains duplicate nodes".to_string());
+        }
+    }
+
     let mut node_ports_cache: HashMap<u64, HashSet<u16>> = HashMap::new();
     for node_id in node_path.iter().copied().take(node_path.len() - 1) {
         if node_ports_cache.contains_key(&node_id) {
@@ -226,26 +233,38 @@ pub async fn apply_chain_udp(
     let exit_node_id = *node_path
         .last()
         .ok_or_else(|| "chain has no routes".to_string())?;
-    let socks_port = allocate_listen_port(
-        exit_node_id,
-        base_port.saturating_add(node_path.len().saturating_add(1) as u16),
-        &mut node_ports_cache,
-    )?;
+
+    let socks_port_start = base_port.saturating_add(node_path.len().saturating_add(1) as u16);
+    let mut candidate = socks_port_start;
+    let socks_port = loop {
+        let available_on_all = node_path.iter().all(|node_id| {
+            node_ports_cache
+                .get(node_id)
+                .map(|ports| !ports.contains(&candidate))
+                .unwrap_or(false)
+        });
+
+        if available_on_all {
+            for node_id in node_path.iter().copied() {
+                if let Some(ports) = node_ports_cache.get_mut(&node_id) {
+                    ports.insert(candidate);
+                }
+            }
+            break candidate;
+        }
+
+        candidate = candidate.checked_add(1).ok_or_else(|| {
+            format!(
+                "no available shared port for chain={} starting at {}",
+                chain_id, socks_port_start
+            )
+        })?;
+    };
 
     let mut endpoints: Vec<(String, u16)> = Vec::new();
-    for (idx, node_id) in node_path.iter().enumerate() {
-        let ip = config.get_node_public_ip(*node_id).await?;
-
-        let port: u16 = if idx == node_path.len() - 1 {
-            socks_port
-        } else {
-            allocate_listen_port(
-                *node_id,
-                base_port.saturating_add(idx as u16),
-                &mut node_ports_cache,
-            )?
-        };
-        endpoints.push((ip, port));
+    for node_id in node_path.iter().copied() {
+        let ip = config.get_node_public_ip(node_id).await?;
+        endpoints.push((ip, socks_port));
     }
 
     let mut results: Vec<Value> = Vec::new();
