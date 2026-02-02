@@ -209,6 +209,20 @@
 
             <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1.5">Type</label>
+                <BaseSelect
+                  :model-value="activeChain.chainType || 'tcp'"
+                  :options="chainTypeOptions"
+                  placeholder="Select type"
+                  @update:modelValue="(v: string) => updateChainMeta({ chainType: v })"
+                >
+                  <template #icon>
+                    <div class="i-carbon-network-3"></div>
+                  </template>
+                </BaseSelect>
+              </div>
+
+              <div>
                 <label class="block text-xs font-medium text-gray-600 mb-1.5">Name</label>
                 <input
                   v-model="activeChain.name"
@@ -425,6 +439,19 @@ const markDirty = () => {
   dirty.value = true;
 };
 
+const updateChainMeta = (patch: Partial<ChainDefinition>) => {
+  if (!activeChain.value) return;
+  Object.assign(activeChain.value, patch);
+  markDirty();
+};
+
+const chainTypeOptions = computed(() => {
+  return [
+    { label: 'TCP', value: 'tcp', icon: 'i-carbon-link' },
+    { label: 'UDP', value: 'udp', icon: 'i-carbon-link' },
+  ];
+});
+
 const normalizeRoutesOrder = (c: ChainDefinition) => {
   c.routes
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
@@ -475,6 +502,7 @@ const save = async () => {
       id: clone.id > 0 ? clone.id : undefined,
       name: clone.name,
       protocol: clone.protocol,
+      chainType: clone.chainType || 'tcp',
       routes: clone.routes,
       description: clone.description,
     });
@@ -536,6 +564,7 @@ const createChain = () => {
     id: nextTmpId,
     name: `Chain ${chains.value.length + 1}`,
     protocol: 'transparent',
+    chainType: 'tcp',
     routes: [],
     createdAt: now,
     updatedAt: now,

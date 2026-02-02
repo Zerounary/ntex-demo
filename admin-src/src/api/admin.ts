@@ -66,12 +66,16 @@ export async function upsertChain(chain: {
   id?: number | null;
   name: string;
   protocol: string;
+  chainType?: string;
   routes: ChainRouteEntry[];
   description?: string | null;
 }): Promise<ChainDefinition> {
   const response = await request<ChainDefinition>(`/api/admin/chains`, {
     method: 'POST',
-    body: JSON.stringify(chain),
+    body: JSON.stringify({
+      ...chain,
+      chainType: chain.chainType || 'tcp',
+    }),
   });
   if (response.msg === 'ok' && response.data) {
     return response.data;

@@ -168,6 +168,171 @@ pub async fn apply_chain(
     Ok((chain_id, results))
 }
 
+pub async fn apply_chain_udp(
+    config: &AdminConfigStore,
+    transport: Option<&Arc<dyn NodeTransport>>,
+    chain_id: i64,
+    base_port: u16,
+) -> Result<(i64, Vec<Value>), String> {
+    let chains = config.get_chains().await?;
+    let chain = chains
+        .into_iter()
+        .find(|c| c.id == chain_id)
+        .ok_or_else(|| "chain not found".to_string())?;
+
+    let chain_id = chain.id;
+
+    if chain.routes.is_empty() {
+        return Err("chain has no routes".to_string());
+    }
+
+    cleanup_chain_artifacts(config, transport, chain_id).await.ok();
+
+    let mut hops = chain.routes.clone();
+    hops.sort_by_key(|r| r.order);
+
+    for r in &hops {
+        if r.from_node_id == r.to_node_id {
+            return Err("invalid route: from == to".to_string());
+        }
+    }
+
+    let mut node_path: Vec<u64> = Vec::new();
+    node_path.push(hops[0].from_node_id);
+    for r in &hops {
+        if let Some(last) = node_path.last().copied() {
+            if last != r.from_node_id {
+                return Err(format!("route chain is not continuous at order {}", r.order));
+            }
+        }
+        node_path.push(r.to_node_id);
+    }
+
+    let mut node_ports_cache: HashMap<u64, HashSet<u16>> = HashMap::new();
+    for node_id in node_path.iter().copied() {
+        if node_ports_cache.contains_key(&node_id) {
+            continue;
+        }
+        let inbounds = config.get_inbounds(node_id).await?;
+        let mut ports = HashSet::new();
+        for inbound in inbounds {
+            if inbound.port > 0 && inbound.port <= u16::MAX as i32 {
+                ports.insert(inbound.port as u16);
+            }
+        }
+        node_ports_cache.insert(node_id, ports);
+    }
+
+    let exit_node_id = *node_path
+        .last()
+        .ok_or_else(|| "chain has no routes".to_string())?;
+    let socks_port = allocate_listen_port(
+        exit_node_id,
+        base_port.saturating_add(node_path.len().saturating_add(1) as u16),
+        &mut node_ports_cache,
+    )?;
+
+    let mut endpoints: Vec<(String, u16)> = Vec::new();
+    for (idx, node_id) in node_path.iter().enumerate() {
+        let ip = config.get_node_public_ip(*node_id).await?;
+
+        let port: u16 = if idx == node_path.len() - 1 {
+            socks_port
+        } else {
+            allocate_listen_port(
+                *node_id,
+                base_port.saturating_add(idx as u16),
+                &mut node_ports_cache,
+            )?
+        };
+        endpoints.push((ip, port));
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+
+    for i in 0..(node_path.len() - 1) {
+        let node_id = node_path[i];
+        let (next_ip, next_port) = endpoints[i + 1].clone();
+        let listen_port = endpoints[i].1;
+
+        let tag = format!("chain_{}_{}", chain_id, i + 1);
+        let listen = "0.0.0.0";
+        let inbound = InboundConfig {
+            tag: tag.clone(),
+            protocol: "dokodemo-door".to_string(),
+            port: listen_port as i32,
+            listen: Some(listen.to_string()),
+            settings: serde_json::json!({
+                "address": next_ip,
+                "port": next_port,
+                "network": ["tcp", "udp"],
+                "followRedirect": false
+            }),
+            stream_settings: None,
+            sniffing: None,
+        };
+
+        let apply_res = match config.upsert_inbound(node_id, inbound).await {
+            Ok(_) => {
+                publish_updates(transport, node_id, &["inbound", "config"]);
+                serde_json::json!({
+                    "node_id": node_id,
+                    "tag": tag,
+                    "status": "ok"
+                })
+            }
+            Err(e) => serde_json::json!({
+                "node_id": node_id,
+                "tag": tag,
+                "status": "error",
+                "error": e
+            }),
+        };
+        results.push(apply_res);
+    }
+
+    let socks_tag = format!("chain_{}_socks", chain_id);
+    let socks_inbound = InboundConfig {
+        tag: socks_tag.clone(),
+        protocol: "socks".to_string(),
+        port: socks_port as i32,
+        listen: Some("0.0.0.0".to_string()),
+        settings: serde_json::json!({
+            "accounts": [
+                {
+                    "pass": "my-password",
+                    "user": "my-username"
+                }
+            ],
+            "auth": "password",
+            "udp": true,
+            "userLevel": 0
+        }),
+        stream_settings: None,
+        sniffing: None,
+    };
+
+    let socks_apply_res = match config.upsert_inbound(exit_node_id, socks_inbound).await {
+        Ok(_) => {
+            publish_updates(transport, exit_node_id, &["inbound", "config"]);
+            serde_json::json!({
+                "node_id": exit_node_id,
+                "tag": socks_tag,
+                "status": "ok"
+            })
+        }
+        Err(e) => serde_json::json!({
+            "node_id": exit_node_id,
+            "tag": socks_tag,
+            "status": "error",
+            "error": e
+        }),
+    };
+    results.push(socks_apply_res);
+
+    Ok((chain_id, results))
+}
+
 pub async fn cleanup_chain_artifacts(
     config: &AdminConfigStore,
     transport: Option<&Arc<dyn NodeTransport>>,

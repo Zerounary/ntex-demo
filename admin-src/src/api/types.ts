@@ -110,6 +110,7 @@ export interface ChainDefinition {
   id: number;
   name: string;
   protocol: string;
+  chainType: string;
   routes: ChainRouteEntry[];
   createdAt: string;
   updatedAt: string;

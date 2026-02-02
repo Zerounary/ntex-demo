@@ -122,6 +122,7 @@ pub struct ChainDefinition {
     pub id: i64,
     pub name: String,
     pub protocol: String,
+    pub chain_type: String,
     pub routes: Vec<ChainRouteEntry>,
     pub created_at: String,
     pub updated_at: String,
@@ -723,6 +724,7 @@ impl AdminConfigStore {
                 id: row.id,
                 name: row.name,
                 protocol: row.protocol,
+                chain_type: row.chain_type,
                 routes,
                 created_at: row.created_at.to_rfc3339(),
                 updated_at: row.updated_at.to_rfc3339(),
@@ -737,6 +739,7 @@ impl AdminConfigStore {
         id: Option<i64>,
         name: String,
         protocol: String,
+        chain_type: String,
         routes: Vec<ChainRouteEntry>,
         description: Option<String>,
     ) -> Result<ChainDefinition, String> {
@@ -756,6 +759,7 @@ impl AdminConfigStore {
             let mut active: admin_chain::ActiveModel = existing.into();
             active.name = Set(name);
             active.protocol = Set(protocol);
+            active.chain_type = Set(chain_type);
             active.routes = Set(routes);
             active.description = Set(description);
             active.updated_at = Set(now.into());
@@ -772,6 +776,7 @@ impl AdminConfigStore {
                 id: saved.id,
                 name: saved.name,
                 protocol: saved.protocol,
+                chain_type: saved.chain_type,
                 routes,
                 created_at: created_at.to_rfc3339(),
                 updated_at: saved.updated_at.to_rfc3339(),
@@ -782,6 +787,7 @@ impl AdminConfigStore {
                 id: NotSet,
                 name: Set(name),
                 protocol: Set(protocol),
+                chain_type: Set(chain_type),
                 routes: Set(routes),
                 description: Set(description),
                 created_at: Set(now.into()),
@@ -800,6 +806,7 @@ impl AdminConfigStore {
                 id: saved.id,
                 name: saved.name,
                 protocol: saved.protocol,
+                chain_type: saved.chain_type,
                 routes,
                 created_at: saved.created_at.to_rfc3339(),
                 updated_at: saved.updated_at.to_rfc3339(),
@@ -931,6 +938,11 @@ impl AdminConfigStore {
             .one(&self.db)
             .await
         {
+            let has_existing_public_ip = node_config
+                .public_ip
+                .as_deref()
+                .map(|ip| !ip.trim().is_empty())
+                .unwrap_or(false);
             let mut active_model: admin_node_config::ActiveModel = node_config.into();
             
             // 更新硬件信息（如果提供）
@@ -943,8 +955,14 @@ impl AdminConfigStore {
             if let Some(disk_total) = disk_total {
                 active_model.disk_total = Set(Some(disk_total));
             }
-            if let Some(public_ip) = public_ip {
-                active_model.public_ip = Set(Some(public_ip));
+            if !has_existing_public_ip {
+                if let Some(public_ip) = public_ip
+                    .as_ref()
+                    .map(|ip| ip.trim())
+                    .filter(|ip| !ip.is_empty())
+                {
+                    active_model.public_ip = Set(Some(public_ip.to_string()));
+                }
             }
             
             active_model.update(&self.db).await
@@ -1329,6 +1347,11 @@ impl AdminConfigStore {
             .one(&self.db)
             .await
         {
+            let has_existing_public_ip = node_config
+                .public_ip
+                .as_deref()
+                .map(|ip| !ip.trim().is_empty())
+                .unwrap_or(false);
             let mut active_model: admin_node_config::ActiveModel = node_config.into();
             active_model.cpu_usage = Set(Some(cpu));
             active_model.mem_usage = Set(Some(mem));
@@ -1346,8 +1369,14 @@ impl AdminConfigStore {
             if let Some(disk_total) = disk_total {
                 active_model.disk_total = Set(Some(disk_total));
             }
-            if let Some(public_ip) = public_ip {
-                active_model.public_ip = Set(Some(public_ip));
+            if !has_existing_public_ip {
+                if let Some(public_ip) = public_ip
+                    .as_ref()
+                    .map(|ip| ip.trim())
+                    .filter(|ip| !ip.is_empty())
+                {
+                    active_model.public_ip = Set(Some(public_ip.to_string()));
+                }
             }
             
             // 更新网络接口信息（如果提供）

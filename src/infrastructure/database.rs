@@ -13,6 +13,61 @@ pub async fn connect(url: &str) -> Result<DatabaseConnection, DbErr> {
     Database::connect(url).await
 }
 
+async fn migrate_admin_chain_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        log::warn!("SQLite 不支持 admin_chains 字段迁移，需要手动迁移数据");
+        return Ok(());
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        let alter_sqls = vec![
+            "ALTER TABLE admin_chains ADD COLUMN IF NOT EXISTS chain_type VARCHAR(16) NOT NULL DEFAULT 'tcp'",
+        ];
+        for sql in alter_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                    .await
+            {
+                log::warn!(
+                    "执行 admin_chains 迁移 SQL 失败（可能字段已存在或数据库版本不支持 IF NOT EXISTS）: {} - {}",
+                    sql,
+                    e
+                );
+
+                let fallback_sqls = vec![
+                    "ALTER TABLE admin_chains ADD COLUMN chain_type VARCHAR(16) NOT NULL DEFAULT 'tcp'",
+                ];
+                for fb in fallback_sqls {
+                    if let Err(e2) = db
+                        .execute(sea_orm::Statement::from_string(backend, fb.to_string()))
+                        .await
+                    {
+                        log::warn!("执行 admin_chains 迁移 fallback SQL 失败（可能字段已存在）: {} - {}", fb, e2);
+                    }
+                }
+            }
+        }
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let alter_sqls = vec![
+            "ALTER TABLE admin_chains ADD COLUMN IF NOT EXISTS chain_type VARCHAR(16) NOT NULL DEFAULT 'tcp'",
+        ];
+        for sql in alter_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                    .await
+            {
+                log::warn!("执行 admin_chains 迁移 SQL 失败（可能字段已存在）: {} - {}", sql, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn migrate_cdk_code_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
     let backend = db.get_database_backend();
 
@@ -152,6 +207,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
     migrate_game_node_binding_fields(db).await?;
     migrate_acceleration_session_fields(db).await?;
     migrate_admin_outbound_fields(db).await?;
+    migrate_admin_chain_fields(db).await?;
     migrate_user_wallet_fields(db).await?;
     migrate_cdk_code_fields(db).await?;
 

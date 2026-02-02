@@ -20,6 +20,10 @@ use crate::interface::admin::chain_ops;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
 use chrono::Utc;
 
+fn default_chain_type() -> String {
+    "tcp".to_string()
+}
+
 #[derive(Clone)]
 pub struct AdminState {
     pub config: AdminConfigStore,
@@ -528,7 +532,36 @@ pub async fn apply_chain(
         return resp;
     }
     let base_port: u16 = body.base_port.unwrap_or(40000);
-    match chain_ops::apply_chain(&state.config, state.node_transport.as_ref(), body.chain_id, base_port).await {
+
+    let chain_type = match state.config.get_chains().await {
+        Ok(chains) => chains
+            .into_iter()
+            .find(|c| c.id == body.chain_id)
+            .map(|c| c.chain_type)
+            .unwrap_or_else(|| "tcp".to_string()),
+        Err(e) => {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": e
+            }))
+        }
+    };
+
+    let chain_type = chain_type.trim().to_lowercase();
+
+    let apply_res = if chain_type == "udp" {
+        chain_ops::apply_chain_udp(
+            &state.config,
+            state.node_transport.as_ref(),
+            body.chain_id,
+            base_port,
+        )
+        .await
+    } else {
+        chain_ops::apply_chain(&state.config, state.node_transport.as_ref(), body.chain_id, base_port).await
+    };
+
+    match apply_res {
         Ok((cid, results)) => HttpResponse::Ok().json(&serde_json::json!({
             "msg": "ok",
             "data": {
@@ -569,6 +602,8 @@ pub struct UpsertChainRequest {
     pub id: Option<i64>,
     pub name: String,
     pub protocol: String,
+    #[serde(default = "default_chain_type")]
+    pub chain_type: String,
     #[serde(default)]
     pub routes: Vec<crate::infrastructure::admin_config::ChainRouteEntry>,
     #[serde(default)]
@@ -583,7 +618,14 @@ pub async fn upsert_chain(
 ) -> HttpResponse {
     match state
         .config
-        .upsert_chain(body.id, body.name, body.protocol, body.routes, body.description)
+        .upsert_chain(
+            body.id,
+            body.name,
+            body.protocol,
+            body.chain_type,
+            body.routes,
+            body.description,
+        )
         .await
     {
         Ok(chain) => HttpResponse::Ok().json(&serde_json::json!({

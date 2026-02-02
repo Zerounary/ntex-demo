@@ -7,6 +7,7 @@ pub struct Model {
     pub id: i64,
     pub name: String,
     pub protocol: String,
+    pub chain_type: String,
     pub routes: JsonValue,
     pub description: Option<String>,
     #[sea_orm(column_type = "Timestamp", default_expr = "Expr::current_timestamp()")]
