@@ -1156,22 +1156,43 @@ pub async fn session_start(
                 *counts.entry(s.outbound_tag).or_insert(0) += 1;
             }
 
-            let mut best_tag: Option<String> = None;
-            let mut best_count: u64 = u64::MAX;
-            for t in &candidates {
-                let c = counts.get(t).copied().unwrap_or(0);
-                if c < best_count {
-                    best_count = c;
-                    best_tag = Some(t.clone());
-                }
+            if candidates.is_empty() {
+                return Err(UsecaseError::Validation(format!(
+                    "no available outbound tag for node_id={}",
+                    node_id
+                )));
             }
 
-            best_tag.ok_or_else(|| {
-                UsecaseError::Validation(format!(
-                    "no available outbound tag for node_id={} (excluded block/direct)",
-                    node_id
-                ))
-            })?
+            let has_only_direct = !candidates.iter().any(|t| t != "direct");
+            if has_only_direct {
+                candidates
+                    .iter()
+                    .find(|t| *t == "direct")
+                    .cloned()
+                    .ok_or_else(|| {
+                        UsecaseError::Validation(format!(
+                            "no available outbound tag for node_id={} (only direct expected)",
+                            node_id
+                        ))
+                    })?
+            } else {
+                let mut best_tag: Option<String> = None;
+                let mut best_count: u64 = u64::MAX;
+                for t in candidates.iter().filter(|t| *t != "direct") {
+                    let c = counts.get(t).copied().unwrap_or(0);
+                    if c < best_count {
+                        best_count = c;
+                        best_tag = Some(t.clone());
+                    }
+                }
+
+                best_tag.ok_or_else(|| {
+                    UsecaseError::Validation(format!(
+                        "no available non-direct outbound tag for node_id={}",
+                        node_id
+                    ))
+                })?
+            }
         };
 
         Ok(mapped_outbound_tag)
