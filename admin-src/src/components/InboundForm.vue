@@ -69,55 +69,47 @@
     </div>
 
     <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm">
-      <div class="flex items-center justify-between mb-3">
-        <label class="flex items-center gap-2 text-sm font-semibold text-gray-700 cursor-pointer select-none group">
-          <input
-            v-model="showAdvanced"
-            type="checkbox"
-            class="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-400/50 transition-colors"
-          />
-          <span class="group-hover:text-primary-600 transition-colors">Advanced Mode (JSON)</span>
-        </label>
+      <div class="mb-4">
+        <p class="text-sm font-semibold text-gray-700">Advanced JSON Configuration</p>
+        <p class="text-xs text-gray-500 mt-1">Directly edit settings, stream settings, and sniffing JSON.</p>
       </div>
 
-      <transition name="fade">
-        <div v-if="showAdvanced" class="space-y-4">
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">Settings</label>
-            <textarea
-              v-model="settingsJson"
-              rows="6"
-              class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
-              placeholder="{}"
-            ></textarea>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">Stream Settings</label>
-            <textarea
-              v-model="streamSettingsJson"
-              rows="6"
-              class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
-              placeholder="null"
-            ></textarea>
-          </div>
-
-          <div>
-            <label class="block text-xs font-medium text-gray-600 mb-1.5">Sniffing</label>
-            <textarea
-              v-model="sniffingJson"
-              rows="4"
-              class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
-              placeholder="null"
-            ></textarea>
-          </div>
-
-          <p v-if="jsonError" class="text-xs text-red-500 flex items-center gap-1">
-            <div class="i-carbon-warning-filled"></div>
-            {{ jsonError }}
-          </p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1.5">Settings</label>
+          <textarea
+            v-model="settingsJson"
+            rows="6"
+            class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
+            placeholder="{}"
+          ></textarea>
         </div>
-      </transition>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1.5">Stream Settings</label>
+          <textarea
+            v-model="streamSettingsJson"
+            rows="6"
+            class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
+            placeholder="null"
+          ></textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1.5">Sniffing</label>
+          <textarea
+            v-model="sniffingJson"
+            rows="4"
+            class="w-full px-4 py-3 bg-gray-900 text-gray-300 border border-gray-700 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all custom-scrollbar resize-y"
+            placeholder="null"
+          ></textarea>
+        </div>
+
+        <p v-if="jsonError" class="text-xs text-red-500 flex items-center gap-1">
+          <div class="i-carbon-warning-filled"></div>
+          {{ jsonError }}
+        </p>
+      </div>
     </div>
 
     <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
@@ -173,7 +165,6 @@ const form = ref({
   listen: '',
 });
 
-const showAdvanced = ref(false);
 const settingsJson = ref('{}');
 const streamSettingsJson = ref('null');
 const sniffingJson = ref('null');
@@ -198,11 +189,6 @@ const isFormValid = computed(() => {
 });
 
 const validateJson = () => {
-  if (!showAdvanced.value) {
-    jsonError.value = '';
-    return;
-  }
-
   try {
     JSON.parse(settingsJson.value);
   } catch {
@@ -235,7 +221,7 @@ const validateJson = () => {
   jsonError.value = '';
 };
 
-watch([settingsJson, streamSettingsJson, sniffingJson, showAdvanced], validateJson);
+watch([settingsJson, streamSettingsJson, sniffingJson], validateJson);
 
 watch(
   () => props.inbound,
@@ -261,21 +247,19 @@ watch(
       streamSettingsJson.value = 'null';
       sniffingJson.value = 'null';
     }
-    showAdvanced.value = false;
     jsonError.value = '';
+    validateJson();
   },
   { immediate: true }
 );
 
 const handleSubmit = () => {
-  if (showAdvanced.value) {
-    validateJson();
-    if (jsonError.value) return;
-  }
+  validateJson();
+  if (jsonError.value) return;
 
-  const settings = showAdvanced.value ? JSON.parse(settingsJson.value) : {};
-  const stream_settings = showAdvanced.value ? JSON.parse(streamSettingsJson.value) : null;
-  const sniffing = showAdvanced.value ? JSON.parse(sniffingJson.value) : null;
+  const settings = JSON.parse(settingsJson.value);
+  const stream_settings = JSON.parse(streamSettingsJson.value);
+  const sniffing = JSON.parse(sniffingJson.value);
 
   emit('submit', {
     tag: form.value.tag.trim(),
