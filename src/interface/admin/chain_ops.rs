@@ -267,6 +267,11 @@ pub async fn apply_chain_udp(
         endpoints.push((ip, socks_port));
     }
 
+    let entry_ip = endpoints
+        .first()
+        .map(|(ip, _)| ip.clone())
+        .ok_or_else(|| "chain has no entry endpoint".to_string())?;
+
     let mut results: Vec<Value> = Vec::new();
 
     for i in 0..(node_path.len() - 1) {
@@ -320,7 +325,8 @@ pub async fn apply_chain_udp(
             "accounts": [],
             "auth": "password",
             "udp": true,
-            "userLevel": 0
+            "userLevel": 0,
+            "ip": entry_ip
         }),
         stream_settings: None,
         sniffing: None,
