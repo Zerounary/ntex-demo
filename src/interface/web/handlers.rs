@@ -1401,6 +1401,34 @@ pub async fn session_start(
         })?
         .ok_or_else(|| UsecaseError::NotFound("game"))?;
 
+    let routing_rules = {
+        let raw = game.routing_rules.trim();
+        if raw.is_empty() {
+            return Err(UsecaseError::Validation(
+                "game.routing_rules is required".to_string(),
+            )
+            .into());
+        }
+        let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+            UsecaseError::Validation(format!("invalid game.routing_rules json: {e}"))
+        })?;
+        let arr = v.as_array().ok_or_else(|| {
+            UsecaseError::Validation("game.routing_rules must be a json array".to_string())
+        })?;
+
+        let mut out: Vec<serde_json::Value> = Vec::with_capacity(arr.len());
+        for (idx, item) in arr.iter().enumerate() {
+            if !item.is_object() {
+                return Err(UsecaseError::Validation(format!(
+                    "game.routing_rules[{idx}] must be a json object"
+                ))
+                .into());
+            }
+            out.push(item.clone());
+        }
+        out
+    };
+
     let mut profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
     let mut tcp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
     let mut udp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
@@ -1580,6 +1608,7 @@ pub async fn session_start(
         profile: profile_vo,
         tcp_profile: None,
         udp_profile: None,
+        routing_rules,
     })
     .into_http(StatusCode::OK))
 }
