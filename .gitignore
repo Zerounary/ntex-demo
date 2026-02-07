@@ -2,3 +2,9 @@
 /rumqttc
 /rumqttd
 /admin/
+# WindsurfChatOpen
+.windsurfchatopen/
+.windsurfrules
+
+/tauri2-vue-app/src-tauri/icons/*
+!/tauri2-vue-app/src-tauri/icons/icon.png

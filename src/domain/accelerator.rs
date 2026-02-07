@@ -13,6 +13,7 @@ pub struct Game {
     pub status: String,
     pub ping: i32,
     pub process_name: String,
+    pub routing_rules: String,
     pub region: String,
 }
 
