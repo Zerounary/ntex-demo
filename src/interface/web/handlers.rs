@@ -1427,6 +1427,36 @@ pub async fn session_start(
         }
     };
 
+    let sniff_domains_excluded = {
+        let raw = game.sniff_domains_excluded.trim();
+        if raw.is_empty() {
+            Vec::new()
+        } else {
+            let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+                UsecaseError::Validation(format!("invalid game.sniff_domains_excluded json: {e}"))
+            })?;
+            let arr = v.as_array().ok_or_else(|| {
+                UsecaseError::Validation(
+                    "game.sniff_domains_excluded must be a json array".to_string(),
+                )
+            })?;
+
+            let mut out: Vec<String> = Vec::with_capacity(arr.len());
+            for (idx, item) in arr.iter().enumerate() {
+                let s = item.as_str().ok_or_else(|| {
+                    UsecaseError::Validation(format!(
+                        "game.sniff_domains_excluded[{idx}] must be a string"
+                    ))
+                })?;
+                let s = s.trim();
+                if !s.is_empty() {
+                    out.push(s.to_string());
+                }
+            }
+            out
+        }
+    };
+
     let mut profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
     let mut tcp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
     let mut udp_profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
@@ -1607,6 +1637,7 @@ pub async fn session_start(
         tcp_profile: None,
         udp_profile: None,
         routing_rules,
+        sniff_domains_excluded,
     })
     .into_http(StatusCode::OK))
 }

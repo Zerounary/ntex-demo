@@ -110,6 +110,7 @@ where
                     ping: 0,
                     process_name: profile_vo.process_name.clone(),
                     routing_rules: "[]".to_string(),
+                    sniff_domains_excluded: "[]".to_string(),
                     region: profile_vo.region.clone(),
                 };
                 game_map.insert(game.id.clone(), game);

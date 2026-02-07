@@ -14,6 +14,7 @@ pub struct Game {
     pub ping: i32,
     pub process_name: String,
     pub routing_rules: String,
+    pub sniff_domains_excluded: String,
     pub region: String,
 }
 

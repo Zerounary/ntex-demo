@@ -15,6 +15,8 @@ pub struct Model {
     pub process_name: String,
     #[sea_orm(column_type = "Text")]
     pub routing_rules: String,
+    #[sea_orm(column_type = "Text")]
+    pub sniff_domains_excluded: String,
     pub region: String,
 }
 

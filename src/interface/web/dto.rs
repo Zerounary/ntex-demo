@@ -486,6 +486,7 @@ pub struct SessionStartResponseVO {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub udp_profile: Option<ProfileVO>,
     pub routing_rules: Vec<serde_json::Value>,
+    pub sniff_domains_excluded: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

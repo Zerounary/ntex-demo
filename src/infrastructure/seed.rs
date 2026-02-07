@@ -29,6 +29,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             ping: Set(0),
             process_name: Set("chrome.exe,udptest.exe,LinkLatencyTester.exe".to_string()),
             routing_rules: Set("[]".to_string()),
+            sniff_domains_excluded: Set("[]".to_string()),
             region: Set("测试".to_string()),
         },
         accelerator_game::ActiveModel {
@@ -39,6 +40,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             ping: Set(0),
             process_name: Set("League of Legends.exe,LeagueClient.exe,LeagueClientUx.exe,LolClient.exe,LoLLauncher.exe,LoLPatcher.exe,LoLPatcherUx.exe,RiotClientServices.exe,RiotClientUx.exe,RiotClientUxRender.exe,LeagueClientUxRender.exe,Garena.exe,GarenaMessenger.exe,lol.exe,rads_user_kernel.exe,client.exe,LeagueCrashHandler.exe,RuinedKing.exe,steamwebhelper.exe,EALink.exe,Client.exe,Riot Client.exe,OP.GG.exe,udptest.exe,vgc.exe,chrome.exe".to_string()),
             routing_rules: Set("[]".to_string()),
+            sniff_domains_excluded: Set("[]".to_string()),
             region: Set("韩国".to_string()),
         }];
 
