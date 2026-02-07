@@ -15,6 +15,7 @@ use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, Inb
 use crate::infrastructure::node_transport::NodeTransport;
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config, admin_inbound, admin_outbound,
+    config_entry,
 };
 use crate::interface::admin::chain_ops;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set};
@@ -57,6 +58,130 @@ pub async fn get_game(
         Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
             "msg": "error",
             "error": format!("query game failed: {}", e)
+        })),
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorInviteRewardTier {
+    pub inviter_count: i32,
+    pub reward_type: String,
+    #[serde(default)]
+    pub duration_minutes: Option<i64>,
+    #[serde(default)]
+    pub bandwidth_mbps: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorActivityConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub invite_rewards: Vec<AcceleratorInviteRewardTier>,
+}
+
+const ACCELERATOR_ACTIVITY_KEY: &str = "accelerator_activity";
+
+#[web::get("/api/admin/accelerator_activity")]
+pub async fn get_accelerator_activity(state: State<AdminState>, req: HttpRequest) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let row = match config_entry::Entity::find_by_id(ACCELERATOR_ACTIVITY_KEY.to_string())
+        .one(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query config failed: {}", e)
+            }))
+        }
+    };
+
+    let cfg: AcceleratorActivityConfig = match row {
+        Some(m) => match serde_json::from_value(m.payload) {
+            Ok(v) => v,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": format!("invalid config payload: {}", e)
+                }))
+            }
+        },
+        None => AcceleratorActivityConfig {
+            enabled: false,
+            invite_rewards: vec![],
+        },
+    };
+
+    HttpResponse::Ok().json(&serde_json::json!({
+        "msg": "ok",
+        "data": cfg
+    }))
+}
+
+#[web::post("/api/admin/accelerator_activity")]
+pub async fn set_accelerator_activity(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Json(body): Json<AcceleratorActivityConfig>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let payload = match serde_json::to_value(&body) {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("serialize config failed: {}", e)
+            }))
+        }
+    };
+
+    let now = Utc::now();
+    let existing = match config_entry::Entity::find_by_id(ACCELERATOR_ACTIVITY_KEY.to_string())
+        .one(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query config failed: {}", e)
+            }))
+        }
+    };
+
+    let save_res = if let Some(m) = existing {
+        let mut active: config_entry::ActiveModel = m.into();
+        active.payload = Set(payload);
+        active.updated_at = Set(now.into());
+        active.update(&state.db).await.map(|_| ())
+    } else {
+        config_entry::ActiveModel {
+            key: Set(ACCELERATOR_ACTIVITY_KEY.to_string()),
+            payload: Set(payload),
+            updated_at: Set(now.into()),
+        }
+        .insert(&state.db)
+        .await
+        .map(|_| ())
+    };
+
+    match save_res {
+        Ok(_) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": body
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("save config failed: {}", e)
         })),
     }
 }

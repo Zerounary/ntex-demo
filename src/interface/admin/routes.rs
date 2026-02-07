@@ -59,6 +59,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     // 维护模式管理
     cfg.service(handlers::get_maintenance_mode);
     cfg.service(handlers::set_maintenance_mode);
+
+    // accelerator_activity 活动配置
+    cfg.service(handlers::get_accelerator_activity);
+    cfg.service(handlers::set_accelerator_activity);
     
 }
 

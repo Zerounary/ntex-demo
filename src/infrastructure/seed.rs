@@ -96,6 +96,8 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
         accelerator_user::ActiveModel {
             id: Set(user_id.clone()),
             name: Set("User".to_string()),
+            invite_code: Set("TESTINVITE".to_string()),
+            inviter_id: Set(None),
             valid_until: Set((now + Duration::days(365)).into()),
         }
         .insert(db)
@@ -121,6 +123,7 @@ async fn seed_config_entries(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
         ("library", library_payload()),
         ("settings_meta", settings_payload()),
         ("navigation", navigation_payload()),
+        ("accelerator_activity", accelerator_activity_payload()),
     ];
 
     for (key, payload) in entries {
@@ -199,6 +202,26 @@ fn navigation_payload() -> JsonValue {
             { "name": "首页", "path": "/", "icon": "i-mdi-home-variant-outline" },
             { "name": "我的加速", "path": "/my-boosts", "icon": "i-mdi-rocket-launch-outline" },
             { "name": "游戏库", "path": "/library", "icon": "i-mdi-gamepad-variant-outline" }
+        ]
+    })
+}
+
+fn accelerator_activity_payload() -> JsonValue {
+    json!({
+        "enabled": true,
+        "inviteRewards": [
+            {
+                "inviterCount": 1,
+                "rewardType": "day"
+            },
+            {
+                "inviterCount": 3,
+                "rewardType": "month"
+            },
+            {
+                "inviterCount": 10,
+                "rewardType": "year"
+            }
         ]
     })
 }

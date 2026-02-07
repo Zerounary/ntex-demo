@@ -7,10 +7,56 @@ use crate::infrastructure::persistence::{
     cdk_code, config_entry, node_illegal_log, node_online_user_log, node_outbound_event_log,
     node_outbound_latency_log, node_status_log, node_traffic_log, wechat_ticket,
     acceleration_session, user_wallet,
+    accelerator_invite_reward_grant,
 };
 
 pub async fn connect(url: &str) -> Result<DatabaseConnection, DbErr> {
     Database::connect(url).await
+}
+
+async fn migrate_accelerator_user_invite_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        log::warn!("SQLite 不支持 accelerator_users 字段迁移，需要手动迁移数据");
+        return Ok(());
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        let alter_sqls = vec![
+            "ALTER TABLE accelerator_users ADD COLUMN IF NOT EXISTS invite_code VARCHAR(32) NOT NULL DEFAULT ''",
+            "ALTER TABLE accelerator_users ADD COLUMN IF NOT EXISTS inviter_id VARCHAR(64) NULL",
+        ];
+        for sql in alter_sqls {
+            if let Err(e) = db
+                .execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                .await
+            {
+                log::warn!(
+                    "执行 accelerator_users 迁移 SQL 失败（可能字段已存在或数据库版本不支持 IF NOT EXISTS）: {} - {}",
+                    sql,
+                    e
+                );
+            }
+        }
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let alter_sqls = vec![
+            "ALTER TABLE accelerator_users ADD COLUMN IF NOT EXISTS invite_code VARCHAR(32) NOT NULL DEFAULT ''",
+            "ALTER TABLE accelerator_users ADD COLUMN IF NOT EXISTS inviter_id VARCHAR(64)",
+        ];
+        for sql in alter_sqls {
+            if let Err(e) = db
+                .execute(sea_orm::Statement::from_string(backend, sql.to_string()))
+                .await
+            {
+                log::warn!("执行 accelerator_users 迁移 SQL 失败（可能字段已存在）: {} - {}", sql, e);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn migrate_admin_chain_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
@@ -179,6 +225,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
         schema.create_table_from_entity(account_user::Entity),
         schema.create_table_from_entity(user_wallet::Entity),
         schema.create_table_from_entity(acceleration_session::Entity),
+        schema.create_table_from_entity(accelerator_invite_reward_grant::Entity),
         schema.create_table_from_entity(admin_node_config::Entity),
         schema.create_table_from_entity(admin_user::Entity),
         schema.create_table_from_entity(admin_inbound::Entity),
@@ -210,6 +257,7 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
     migrate_admin_chain_fields(db).await?;
     migrate_user_wallet_fields(db).await?;
     migrate_cdk_code_fields(db).await?;
+    migrate_accelerator_user_invite_fields(db).await?;
 
     Ok(())
 }

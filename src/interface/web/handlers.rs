@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::env;
 use uuid::Uuid;
 use log::{info, error};
+use rand::Rng;
 
 use crate::infrastructure::admin_config::AdminConfigStore;
 use crate::interface::grpc_server::controlplane;
@@ -22,6 +23,7 @@ use crate::application::auth_usecase::AuthUseCase;
 use crate::application::cdk_usecase::CdkUseCase;
 use crate::application::content_usecase::ContentUseCase;
 use crate::application::node_usecase::NodeUseCase;
+use crate::application::ports::AuthRepository;
 use crate::application::errors::UsecaseError;
 use crate::domain::cdk::AccountValidationRequest;
 use crate::infrastructure::persistence::repositories::{
@@ -31,7 +33,7 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile,
     acceleration_session, accelerator_user, accelerator_user_credential, accelerator_user_session,
-    admin_chain, admin_node_config, user_wallet,
+    accelerator_invite_reward_grant, admin_chain, admin_node_config, config_entry, user_wallet,
 };
 use crate::infrastructure::admin_config::ChainRouteEntry;
 
@@ -50,6 +52,27 @@ use super::dto::{
     PagedResponseVO, SearchItemVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceleratorInviteRewardTier {
+    inviter_count: i32,
+    reward_type: String,
+    #[serde(default)]
+    duration_minutes: Option<i64>,
+    #[serde(default)]
+    bandwidth_mbps: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AcceleratorActivityConfig {
+    enabled: bool,
+    #[serde(default)]
+    invite_rewards: Vec<AcceleratorInviteRewardTier>,
+}
+
+const ACCELERATOR_ACTIVITY_KEY: &str = "accelerator_activity";
 
 fn extract_reality_client_params(
     inbound: &crate::infrastructure::admin_config::InboundConfig,
@@ -92,6 +115,131 @@ fn extract_reality_client_params(
         .unwrap_or_else(|| "/".to_string());
 
     Ok((server_name, public_key, short_id, fingerprint, spider_x))
+}
+
+async fn apply_invite_rewards(
+    db: &sea_orm::DatabaseConnection,
+    inviter_id: &str,
+    invitee_id: &str,
+) -> Result<(), String> {
+    let row = config_entry::Entity::find_by_id(ACCELERATOR_ACTIVITY_KEY.to_string())
+        .one(db)
+        .await
+        .map_err(|e| format!("query accelerator_activity failed: {}", e))?;
+
+    let cfg: AcceleratorActivityConfig = match row {
+        Some(m) => serde_json::from_value(m.payload)
+            .map_err(|e| format!("invalid accelerator_activity payload: {}", e))?,
+        None => {
+            return Ok(());
+        }
+    };
+
+    if !cfg.enabled {
+        return Ok(());
+    }
+
+    let inviter_count = accelerator_user::Entity::find()
+        .filter(accelerator_user::Column::InviterId.eq(inviter_id))
+        .count(db)
+        .await
+        .map_err(|e| format!("count inviter users failed: {}", e))? as i32;
+
+    if inviter_count <= 0 {
+        return Ok(());
+    }
+
+    let mut tiers = cfg
+        .invite_rewards
+        .into_iter()
+        .filter(|t| t.inviter_count > 0)
+        .collect::<Vec<_>>();
+    tiers.sort_by_key(|t| t.inviter_count);
+
+    let auth_repo = AuthRepositoryImpl::new(db);
+
+    for tier in tiers {
+        if inviter_count < tier.inviter_count {
+            continue;
+        }
+
+        let already = accelerator_invite_reward_grant::Entity::find()
+            .filter(accelerator_invite_reward_grant::Column::InviterId.eq(inviter_id))
+            .filter(accelerator_invite_reward_grant::Column::Tier.eq(tier.inviter_count))
+            .one(db)
+            .await
+            .map_err(|e| format!("query invite_reward_grant failed: {}", e))?
+            .is_some();
+        if already {
+            continue;
+        }
+
+        let reward_type = tier.reward_type.trim().to_lowercase();
+        let mut duration_minutes: i64 = tier.duration_minutes.unwrap_or(0);
+        let bandwidth_mbps: Option<i64> = tier.bandwidth_mbps;
+
+        if reward_type == "day" {
+            duration_minutes = 24 * 60;
+        }
+        if reward_type == "month" {
+            duration_minutes = 30 * 24 * 60;
+        }
+        if reward_type == "year" {
+            duration_minutes = 365 * 24 * 60;
+        }
+
+        if reward_type == "bandwidth" {
+            let bw = bandwidth_mbps.ok_or_else(|| "missing bandwidth_mbps".to_string())?;
+            auth_repo
+                .set_bandwidth_mbps(inviter_id, bw)
+                .await
+                .map_err(|e| format!("set_bandwidth_mbps failed: {:?}", e))?;
+        } else if reward_type == "minute" {
+            if duration_minutes <= 0 {
+                return Err("invalid duration_minutes for minute reward".to_string());
+            }
+            auth_repo
+                .add_remaining_minutes(inviter_id, duration_minutes)
+                .await
+                .map_err(|e| format!("add_remaining_minutes failed: {:?}", e))?;
+        } else {
+            if duration_minutes <= 0 {
+                return Err("invalid duration_minutes for pass reward".to_string());
+            }
+            let inviter = auth_repo
+                .get_user_by_id(inviter_id)
+                .await
+                .map_err(|e| format!("get_user_by_id failed: {:?}", e))?
+                .ok_or_else(|| "inviter not found".to_string())?;
+            let now = chrono::Utc::now();
+            let next = if inviter.valid_until > now {
+                inviter.valid_until + chrono::Duration::minutes(duration_minutes)
+            } else {
+                now + chrono::Duration::minutes(duration_minutes)
+            };
+            auth_repo
+                .update_user_valid_until(inviter_id, next)
+                .await
+                .map_err(|e| format!("update_user_valid_until failed: {:?}", e))?;
+        }
+
+        let grant = accelerator_invite_reward_grant::ActiveModel {
+            id: sea_orm::NotSet,
+            inviter_id: Set(inviter_id.to_string()),
+            invitee_id: Set(invitee_id.to_string()),
+            tier: Set(tier.inviter_count),
+            reward_type: Set(reward_type),
+            duration_minutes: Set(duration_minutes),
+            bandwidth_mbps: Set(bandwidth_mbps),
+            granted_at: Set(chrono::Utc::now().into()),
+        };
+        grant
+            .insert(db)
+            .await
+            .map_err(|e| format!("insert invite_reward_grant failed: {}", e))?;
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1915,9 +2063,30 @@ pub async fn accelerator_user_register(
     }
 
     let now = chrono::Utc::now();
+    let user_id = body.user_id.clone();
+
+    let invite_code = generate_invite_code();
+    let inviter_id: Option<String> = match body.invite_code.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(code) => {
+            let inviter = accelerator_user::Entity::find()
+                .filter(accelerator_user::Column::InviteCode.eq(code))
+                .one(&state.db)
+                .await
+                .map_err(|e| {
+                    UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                        e.to_string(),
+                    ))
+                })?;
+            inviter.map(|u| u.id)
+        }
+        None => None,
+    };
+
     accelerator_user::ActiveModel {
-        id: Set(body.user_id.clone()),
+        id: Set(user_id.clone()),
         name: Set(body.name),
+        invite_code: Set(invite_code),
+        inviter_id: Set(inviter_id.clone()),
         valid_until: Set(now.into()),
     }
     .insert(&state.db)
@@ -1929,7 +2098,7 @@ pub async fn accelerator_user_register(
     })?;
 
     accelerator_user_credential::ActiveModel {
-        user_id: Set(body.user_id),
+        user_id: Set(user_id.clone()),
         password_hash: Set(hash_password(&body.password)),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -1942,10 +2111,28 @@ pub async fn accelerator_user_register(
         ))
     })?;
 
+    if let Some(inviter_id) = inviter_id {
+        if let Err(e) = apply_invite_rewards(&state.db, &inviter_id, &user_id).await {
+            log::warn!("apply_invite_rewards failed (ignored): {}", e);
+        }
+    }
+
     Ok(ApiResponse::success(MessageResponse {
         message: "User registered".into(),
     })
     .into_http(StatusCode::CREATED))
+}
+
+fn generate_invite_code() -> String {
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const LEN: usize = 8;
+    let mut rng = rand::thread_rng();
+    (0..LEN)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect()
 }
 
 #[web::post("/auth/accelerator/login")]

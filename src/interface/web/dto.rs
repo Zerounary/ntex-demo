@@ -39,6 +39,8 @@ pub struct AcceleratorUserRegisterRequestVO {
     pub user_id: String,
     pub name: String,
     pub password: String,
+    #[serde(default)]
+    pub invite_code: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
