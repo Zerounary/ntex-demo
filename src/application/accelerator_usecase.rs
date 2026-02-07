@@ -109,7 +109,7 @@ where
                     status: "idle".to_string(),
                     ping: 0,
                     process_name: profile_vo.process_name.clone(),
-                    routing_rules: "".to_string(),
+                    routing_rules: "[]".to_string(),
                     region: profile_vo.region.clone(),
                 };
                 game_map.insert(game.id.clone(), game);

@@ -1404,29 +1404,27 @@ pub async fn session_start(
     let routing_rules = {
         let raw = game.routing_rules.trim();
         if raw.is_empty() {
-            return Err(UsecaseError::Validation(
-                "game.routing_rules is required".to_string(),
-            )
-            .into());
-        }
-        let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
-            UsecaseError::Validation(format!("invalid game.routing_rules json: {e}"))
-        })?;
-        let arr = v.as_array().ok_or_else(|| {
-            UsecaseError::Validation("game.routing_rules must be a json array".to_string())
-        })?;
+            Vec::new()
+        } else {
+            let v: serde_json::Value = serde_json::from_str(raw).map_err(|e| {
+                UsecaseError::Validation(format!("invalid game.routing_rules json: {e}"))
+            })?;
+            let arr = v.as_array().ok_or_else(|| {
+                UsecaseError::Validation("game.routing_rules must be a json array".to_string())
+            })?;
 
-        let mut out: Vec<serde_json::Value> = Vec::with_capacity(arr.len());
-        for (idx, item) in arr.iter().enumerate() {
-            if !item.is_object() {
-                return Err(UsecaseError::Validation(format!(
-                    "game.routing_rules[{idx}] must be a json object"
-                ))
-                .into());
+            let mut out: Vec<serde_json::Value> = Vec::with_capacity(arr.len());
+            for (idx, item) in arr.iter().enumerate() {
+                if !item.is_object() {
+                    return Err(UsecaseError::Validation(format!(
+                        "game.routing_rules[{idx}] must be a json object"
+                    ))
+                    .into());
+                }
+                out.push(item.clone());
             }
-            out.push(item.clone());
+            out
         }
-        out
     };
 
     let mut profile_vo: Option<crate::interface::web::dto::ProfileVO> = None;
