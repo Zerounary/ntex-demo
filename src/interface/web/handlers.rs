@@ -1402,7 +1402,7 @@ pub async fn session_start(
         .ok_or_else(|| UsecaseError::NotFound("game"))?;
 
     let routing_rules = {
-        let raw = game.routing_rules.trim();
+        let raw = game.routing_rules.as_deref().unwrap_or("").trim();
         if raw.is_empty() {
             Vec::new()
         } else {
@@ -1428,7 +1428,11 @@ pub async fn session_start(
     };
 
     let sniff_domains_excluded = {
-        let raw = game.sniff_domains_excluded.trim();
+        let raw = game
+            .sniff_domains_excluded
+            .as_deref()
+            .unwrap_or("")
+            .trim();
         if raw.is_empty() {
             Vec::new()
         } else {

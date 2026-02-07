@@ -551,6 +551,11 @@ export interface GameVO {
   region: string;
 }
 
+export interface GameDetailVO extends GameVO {
+  routing_rules: string;
+  sniff_domains_excluded: string;
+}
+
 export interface AcceleratorNodeVO {
   id: string;
   mode: string;
@@ -582,6 +587,45 @@ export async function listGames(params?: { keyword?: string }): Promise<GameVO[]
     return response.data;
   }
   throw new Error(response.error || '获取游戏列表失败');
+}
+
+export async function getGame(gameId: string): Promise<GameDetailVO> {
+  const response = await request<GameDetailVO>(`/api/admin/games/${gameId}`);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取游戏详情失败');
+}
+
+export async function createGame(payload: GameDetailVO): Promise<GameDetailVO> {
+  const response = await request<GameDetailVO>(`/api/admin/games`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '创建游戏失败');
+}
+
+export async function updateGame(gameId: string, payload: GameDetailVO): Promise<GameDetailVO> {
+  const response = await request<GameDetailVO>(`/api/admin/games/${gameId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '更新游戏失败');
+}
+
+export async function deleteGame(gameId: string): Promise<void> {
+  const response = await request(`/api/admin/games/${gameId}`, {
+    method: 'DELETE',
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '删除游戏失败');
+  }
 }
 
 export async function listAcceleratorNodes(): Promise<AcceleratorNodeVO[]> {

@@ -21,6 +21,14 @@
             <div class="i-carbon-arrow-left text-lg"></div>
             <span>BACK TO NODES</span>
           </button>
+          <button
+            type="button"
+            class="btn-secondary flex items-center gap-2 shadow-sm hover:shadow-md"
+            @click="router.push('/games/manage')"
+          >
+            <div class="i-carbon-edit text-lg"></div>
+            <span>MANAGE GAMES</span>
+          </button>
         </div>
       </div>
 

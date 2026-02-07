@@ -24,6 +24,262 @@ fn default_chain_type() -> String {
     "tcp".to_string()
 }
 
+#[web::get("/api/admin/games/{game_id}")]
+pub async fn get_game(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<String>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let game_id = path.into_inner();
+    match accelerator_game::Entity::find_by_id(game_id).one(&state.db).await {
+        Ok(Some(m)) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": {
+                "id": m.id,
+                "name": m.name,
+                "icon": m.icon,
+                "status": m.status,
+                "ping": m.ping,
+                "process_name": m.process_name,
+                "routing_rules": m.routing_rules.unwrap_or_else(|| "[]".to_string()),
+                "sniff_domains_excluded": m.sniff_domains_excluded.unwrap_or_else(|| "[]".to_string()),
+                "region": m.region
+            }
+        })),
+        Ok(None) => HttpResponse::NotFound().json(&serde_json::json!({
+            "msg": "error",
+            "error": "game not found"
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("query game failed: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CreateGameRequest {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub ping: i32,
+    #[serde(default, alias = "process_name")]
+    pub process_name: String,
+    #[serde(default, alias = "routing_rules")]
+    pub routing_rules: String,
+    #[serde(default, alias = "sniff_domains_excluded")]
+    pub sniff_domains_excluded: String,
+    #[serde(default)]
+    pub region: String,
+}
+
+#[web::post("/api/admin/games")]
+pub async fn create_game(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Json(body): Json<CreateGameRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let id = body.id.trim().to_string();
+    if id.is_empty() {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "id is required"
+        }));
+    }
+
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "name is required"
+        }));
+    }
+
+    match accelerator_game::Entity::find_by_id(id.clone()).one(&state.db).await {
+        Ok(Some(_)) => {
+            return HttpResponse::BadRequest().json(&serde_json::json!({
+                "msg": "error",
+                "error": "game already exists"
+            }));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query game failed: {}", e)
+            }))
+        }
+    }
+
+    let active = accelerator_game::ActiveModel {
+        id: Set(id.clone()),
+        name: Set(name),
+        icon: Set(body.icon.trim().to_string()),
+        status: Set(body.status.trim().to_string()),
+        ping: Set(body.ping),
+        process_name: Set(body.process_name.trim().to_string()),
+        routing_rules: Set(Some(body.routing_rules.trim().to_string())),
+        sniff_domains_excluded: Set(Some(body.sniff_domains_excluded.trim().to_string())),
+        region: Set(body.region.trim().to_string()),
+    };
+
+    match active.insert(&state.db).await {
+        Ok(m) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": {
+                "id": m.id,
+                "name": m.name,
+                "icon": m.icon,
+                "status": m.status,
+                "ping": m.ping,
+                "process_name": m.process_name,
+                "routing_rules": m.routing_rules.unwrap_or_else(|| "[]".to_string()),
+                "sniff_domains_excluded": m.sniff_domains_excluded.unwrap_or_else(|| "[]".to_string()),
+                "region": m.region
+            }
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("create game failed: {}", e)
+        })),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateGameRequest {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub ping: i32,
+    #[serde(default, alias = "process_name")]
+    pub process_name: String,
+    #[serde(default, alias = "routing_rules")]
+    pub routing_rules: String,
+    #[serde(default, alias = "sniff_domains_excluded")]
+    pub sniff_domains_excluded: String,
+    #[serde(default)]
+    pub region: String,
+}
+
+#[web::put("/api/admin/games/{game_id}")]
+pub async fn update_game(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<String>,
+    Json(body): Json<UpdateGameRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let game_id = path.into_inner();
+    let existing = match accelerator_game::Entity::find_by_id(game_id.clone()).one(&state.db).await {
+        Ok(v) => v,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(&serde_json::json!({
+                "msg": "error",
+                "error": format!("query game failed: {}", e)
+            }))
+        }
+    };
+
+    let existing = match existing {
+        Some(v) => v,
+        None => {
+            return HttpResponse::NotFound().json(&serde_json::json!({
+                "msg": "error",
+                "error": "game not found"
+            }))
+        }
+    };
+
+    let name = body.name.trim();
+    if name.is_empty() {
+        return HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "name is required"
+        }));
+    }
+
+    let mut active: accelerator_game::ActiveModel = existing.into();
+    active.name = Set(name.to_string());
+    active.icon = Set(body.icon.trim().to_string());
+    active.status = Set(body.status.trim().to_string());
+    active.ping = Set(body.ping);
+    active.process_name = Set(body.process_name.trim().to_string());
+    active.routing_rules = Set(Some(body.routing_rules.trim().to_string()));
+    active.sniff_domains_excluded = Set(Some(body.sniff_domains_excluded.trim().to_string()));
+    active.region = Set(body.region.trim().to_string());
+
+    match active.update(&state.db).await {
+        Ok(m) => HttpResponse::Ok().json(&serde_json::json!({
+            "msg": "ok",
+            "data": {
+                "id": m.id,
+                "name": m.name,
+                "icon": m.icon,
+                "status": m.status,
+                "ping": m.ping,
+                "process_name": m.process_name,
+                "routing_rules": m.routing_rules.unwrap_or_else(|| "[]".to_string()),
+                "sniff_domains_excluded": m
+                    .sniff_domains_excluded
+                    .unwrap_or_else(|| "[]".to_string()),
+                "region": m.region
+            }
+        })),
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("update game failed: {}", e)
+        })),
+    }
+}
+
+#[web::delete("/api/admin/games/{game_id}")]
+pub async fn delete_game(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<String>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let game_id = path.into_inner();
+    match accelerator_game::Entity::delete_by_id(game_id).exec(&state.db).await {
+        Ok(res) => {
+            if res.rows_affected == 0 {
+                HttpResponse::NotFound().json(&serde_json::json!({
+                    "msg": "error",
+                    "error": "game not found"
+                }))
+            } else {
+                HttpResponse::Ok().json(&serde_json::json!({ "msg": "ok" }))
+            }
+        }
+        Err(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("delete game failed: {}", e)
+        })),
+    }
+}
+
 #[derive(Clone)]
 pub struct AdminState {
     pub config: AdminConfigStore,

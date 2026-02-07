@@ -13,6 +13,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
 
     // 游戏配置（Game Config）
     cfg.service(handlers::list_games);
+    cfg.service(handlers::get_game);
+    cfg.service(handlers::create_game);
+    cfg.service(handlers::update_game);
+    cfg.service(handlers::delete_game);
     cfg.service(handlers::list_accelerator_nodes);
     cfg.service(handlers::list_game_bindings);
     cfg.service(handlers::upsert_game_binding);
