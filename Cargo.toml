@@ -38,6 +38,7 @@ bytes = "1.5"
 tokio-native-tls = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "smtp-transport", "builder", "tokio1-rustls", "ring", "webpki-roots"] }
 
 tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"

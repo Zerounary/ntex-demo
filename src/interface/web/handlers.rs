@@ -18,6 +18,10 @@ use once_cell::sync::Lazy;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use moka::future::Cache;
+use lettre::message::{Mailbox, Message};
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 
 use crate::infrastructure::admin_config::AdminConfigStore;
 use crate::interface::grpc_server::controlplane;
@@ -54,6 +58,7 @@ use super::dto::{
     GameNodeBindingRequest, GameNodeVO,
     SessionStartRequestVO, SessionStartResponseVO, SessionStopRequestVO, SessionStopResponseVO,
     AcceleratorUserRegisterRequestVO, AcceleratorUserLoginRequestVO, AcceleratorUserLoginResponseVO,
+    AcceleratorUserSendEmailCodeRequestVO,
     AcceleratorUserUpdateProfileRequestVO, AcceleratorUserChangePasswordRequestVO, UserVO,
     PagedResponseVO, SearchItemVO,
 };
@@ -110,6 +115,87 @@ static USER_NOTIFICATION_BUS: Lazy<broadcast::Sender<UserNotificationEvent>> = L
     let (tx, _rx) = broadcast::channel(512);
     tx
 });
+
+static EMAIL_CODE_CACHE: Lazy<Cache<String, String>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(50_000)
+        .time_to_live(std::time::Duration::from_secs(5 * 60))
+        .build()
+});
+
+fn read_env(key: &str) -> Option<String> {
+    std::env::var(key).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+async fn send_email_code(to_email: &str, code: &str) -> Result<(), UsecaseError> {
+    let host = read_env("SMTP_HOST").ok_or_else(|| UsecaseError::Validation("missing SMTP_HOST".to_string()))?;
+    let port: u16 = read_env("SMTP_PORT")
+        .ok_or_else(|| UsecaseError::Validation("missing SMTP_PORT".to_string()))?
+        .parse()
+        .map_err(|_| UsecaseError::Validation("invalid SMTP_PORT".to_string()))?;
+    let username = read_env("SMTP_USERNAME").ok_or_else(|| UsecaseError::Validation("missing SMTP_USERNAME".to_string()))?;
+    let password = read_env("SMTP_PASSWORD").ok_or_else(|| UsecaseError::Validation("missing SMTP_PASSWORD".to_string()))?;
+    let from_email = read_env("SMTP_FROM").unwrap_or_else(|| username.clone());
+    let from_name = read_env("SMTP_FROM_NAME").unwrap_or_else(|| "NEBULA".to_string());
+
+    let from: Mailbox = format!("{} <{}>", from_name, from_email)
+        .parse()
+        .map_err(|_| UsecaseError::Validation("invalid SMTP_FROM/SMTP_FROM_NAME".to_string()))?;
+    let to: Mailbox = to_email
+        .parse()
+        .map_err(|_| UsecaseError::Validation("invalid email".to_string()))?;
+
+    let email = Message::builder()
+        .from(from)
+        .to(to)
+        .subject("登录验证码")
+        .body(format!("你的登录验证码是：{}（5分钟内有效）", code))
+        .map_err(|_| UsecaseError::Validation("build email failed".to_string()))?;
+
+    let creds = Credentials::new(username, password);
+
+    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
+        .map_err(|_| UsecaseError::Validation("invalid SMTP host".to_string()))?
+        .port(port)
+        .credentials(creds)
+        .build();
+
+    mailer
+        .send(email)
+        .await
+        .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?;
+
+    Ok(())
+}
+
+fn generate_email_code() -> String {
+    let mut rng = rand::thread_rng();
+    format!("{:06}", rng.gen_range(0..1_000_000u32))
+}
+
+#[web::post("/auth/accelerator/email-code")]
+pub async fn accelerator_user_send_email_code(
+    _state: State<AppState>,
+    Json(body): Json<AcceleratorUserSendEmailCodeRequestVO>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = body.user_id.trim().to_string();
+    if !user_id.contains('@') {
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "BAD_REQUEST",
+            "请输入正确的邮箱地址".to_string(),
+        )
+        .into_http(StatusCode::BAD_REQUEST));
+    }
+
+    let code = generate_email_code();
+    EMAIL_CODE_CACHE.insert(user_id.clone(), code.clone()).await;
+    send_email_code(&user_id, &code).await?;
+
+    Ok(ApiResponse::success(MessageResponse {
+        message: "验证码已发送".into(),
+    })
+    .into_http(StatusCode::OK))
+}
 
 async fn user_id_by_token(state: &AppState, token: &str) -> Result<String, UsecaseError> {
     let now = chrono::Utc::now();
@@ -2243,6 +2329,30 @@ pub async fn accelerator_user_login(
     let ip = extract_ip_from_headers(&req);
     let ua = extract_user_agent(&req);
     let now = chrono::Utc::now();
+
+    // 邮箱验证码校验
+    let cached = EMAIL_CODE_CACHE.get(&body.user_id).await;
+    if cached.as_deref() != Some(body.email_code.trim()) {
+        let _ = accelerator_user_login_log::ActiveModel {
+            user_id: Set(body.user_id.clone()),
+            ip: Set(ip),
+            user_agent: Set(ua),
+            success: Set(false),
+            reason_code: Set("EMAIL_CODE_INVALID".to_string()),
+            reason_message: Set("invalid email code".to_string()),
+            created_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&state.db)
+        .await;
+
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "EMAIL_CODE_INVALID",
+            "验证码错误或已过期".to_string(),
+        )
+        .into_http(StatusCode::BAD_REQUEST));
+    }
+    EMAIL_CODE_CACHE.invalidate(&body.user_id).await;
 
     let cred = accelerator_user_credential::Entity::find_by_id(body.user_id.clone())
         .one(&state.db)

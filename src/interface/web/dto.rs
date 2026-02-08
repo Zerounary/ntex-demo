@@ -48,6 +48,7 @@ pub struct AcceleratorUserRegisterRequestVO {
 pub struct AcceleratorUserLoginRequestVO {
     pub user_id: String,
     pub password: String,
+    pub email_code: String,
     pub remember: bool,
 }
 
@@ -57,6 +58,12 @@ pub struct AcceleratorUserLoginResponseVO {
     pub success: bool,
     pub token: String,
     pub user: UserVO,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceleratorUserSendEmailCodeRequestVO {
+    pub user_id: String,
 }
 
 #[derive(Debug, Deserialize)]
