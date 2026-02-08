@@ -36,7 +36,7 @@ pub struct GameNodeVO {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorUserRegisterRequestVO {
-    pub user_id: String,
+    pub email: String,
     pub name: String,
     pub password: String,
     pub email_code: String,
@@ -47,7 +47,7 @@ pub struct AcceleratorUserRegisterRequestVO {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorUserLoginRequestVO {
-    pub user_id: String,
+    pub email: String,
     pub password: String,
     pub remember: bool,
 }
@@ -63,7 +63,7 @@ pub struct AcceleratorUserLoginResponseVO {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorUserSendEmailCodeRequestVO {
-    pub user_id: String,
+    pub email: String,
 }
 
 #[derive(Debug, Deserialize)]

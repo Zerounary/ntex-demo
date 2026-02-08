@@ -178,8 +178,8 @@ pub async fn accelerator_user_send_email_code(
     _state: State<AppState>,
     Json(body): Json<AcceleratorUserSendEmailCodeRequestVO>,
 ) -> Result<HttpResponse, AppError> {
-    let user_id = body.user_id.trim().to_string();
-    if !user_id.contains('@') {
+    let email = body.email.trim().to_string();
+    if !email.contains('@') {
         return Ok(ApiResponse::<MessageResponse>::error(
             "BAD_REQUEST",
             "请输入正确的邮箱地址".to_string(),
@@ -188,8 +188,8 @@ pub async fn accelerator_user_send_email_code(
     }
 
     let code = generate_email_code();
-    EMAIL_CODE_CACHE.insert(user_id.clone(), code.clone()).await;
-    send_email_code(&user_id, &code).await?;
+    EMAIL_CODE_CACHE.insert(email.clone(), code.clone()).await;
+    send_email_code(&email, &code).await?;
 
     Ok(ApiResponse::success(MessageResponse {
         message: "验证码已发送".into(),
@@ -2227,25 +2227,25 @@ pub async fn accelerator_user_register(
     state: State<AppState>,
     Json(body): Json<AcceleratorUserRegisterRequestVO>,
 ) -> Result<HttpResponse, AppError> {
-    if body.user_id.trim().is_empty() {
-        return Err(UsecaseError::Validation("user_id is required".to_string()).into());
+    if body.email.trim().is_empty() {
+        return Err(UsecaseError::Validation("email is required".to_string()).into());
     }
     if body.password.trim().is_empty() {
         return Err(UsecaseError::Validation("password is required".to_string()).into());
     }
 
     // 注册时邮箱验证码校验
-    let cached = EMAIL_CODE_CACHE.get(&body.user_id).await;
+    let cached = EMAIL_CODE_CACHE.get(&body.email).await;
     if cached.as_deref() != Some(body.email_code.trim()) {
         return Ok(ApiResponse::<MessageResponse>::error(
             "EMAIL_CODE_INVALID",
-            "验证码错误或已过期".to_string(),
+            "邮箱验证码错误或已过期".to_string(),
         )
         .into_http(StatusCode::BAD_REQUEST));
     }
-    EMAIL_CODE_CACHE.invalidate(&body.user_id).await;
+    EMAIL_CODE_CACHE.invalidate(&body.email).await;
 
-    let email = body.user_id.trim().to_string();
+    let email = body.email.trim().to_string();
     let exists = accelerator_user::Entity::find()
         .filter(accelerator_user::Column::Email.eq(email.as_str()))
         .one(&state.db)
@@ -2345,7 +2345,7 @@ pub async fn accelerator_user_login(
     let ua = extract_user_agent(&req);
     let now = chrono::Utc::now();
 
-    let email = body.user_id.trim().to_string();
+    let email = body.email.trim().to_string();
     let user = accelerator_user::Entity::find()
         .filter(accelerator_user::Column::Email.eq(email.as_str()))
         .one(&state.db)
