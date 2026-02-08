@@ -48,7 +48,8 @@ pub struct Node {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AcceleratorUser {
-    pub id: String,
+    pub id: i64,
+    pub email: String,
     pub name: String,
     pub valid_until: DateTime<Utc>,
 }

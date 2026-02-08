@@ -139,9 +139,10 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
     let user_count = accelerator_user::Entity::find().count(db).await?;
     if user_count == 0 {
         let now = Utc::now();
-        let user_id = "123".to_string();
-        accelerator_user::ActiveModel {
-            id: Set(user_id.clone()),
+        let email = "test@example.com".to_string();
+        let inserted = accelerator_user::ActiveModel {
+            id: sea_orm::NotSet,
+            email: Set(email.clone()),
             name: Set("User".to_string()),
             invite_code: Set("TESTINVITE".to_string()),
             inviter_id: Set(None),
@@ -149,6 +150,7 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
         }
         .insert(db)
         .await?;
+        let user_id = inserted.id;
 
         // 默认密码与 account_users 一致：secret
         accelerator_user_credential::ActiveModel {

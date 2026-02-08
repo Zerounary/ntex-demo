@@ -5,10 +5,8 @@ use sea_orm::{entity::prelude::*, sea_query::Expr};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     pub id: i64,
-    #[sea_orm(column_type = "String(Some(64))")]
-    pub inviter_id: String,
-    #[sea_orm(column_type = "String(Some(64))")]
-    pub invitee_id: String,
+    pub inviter_id: i64,
+    pub invitee_id: i64,
     pub tier: i32,
     #[sea_orm(column_type = "String(Some(16))")]
     pub cdk_type: String,

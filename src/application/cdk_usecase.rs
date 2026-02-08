@@ -61,7 +61,7 @@ where
         // 验证用户是否存在
         let user = self
             .auth_repo
-            .get_user_by_id(&request.user_id)
+            .get_user_by_id(request.user_id)
             .await?
             .ok_or_else(|| UsecaseError::Validation("user not found".into()))?;
 
@@ -81,7 +81,7 @@ where
             }
 
             self.auth_repo
-                .set_bandwidth_mbps(&request.user_id, bw)
+                .set_bandwidth_mbps(request.user_id, bw)
                 .await?;
 
             return Ok(CdkRedeemResponse {
@@ -95,7 +95,10 @@ where
         }
 
         if cdk.cdk_type == crate::domain::cdk::CdkType::Minute {
-            let remaining = self.auth_repo.add_remaining_minutes(&request.user_id, cdk.num).await?;
+            let remaining = self
+                .auth_repo
+                .add_remaining_minutes(request.user_id, cdk.num)
+                .await?;
 
             return Ok(CdkRedeemResponse {
                 success: true,
@@ -123,7 +126,7 @@ where
         };
 
         self.auth_repo
-            .update_user_valid_until(&request.user_id, new_valid_until)
+            .update_user_valid_until(request.user_id, new_valid_until)
             .await?;
 
         Ok(CdkRedeemResponse {
@@ -153,13 +156,13 @@ where
     ) -> Result<AccountValidationResponse, UsecaseError> {
         let user = self
             .auth_repo
-            .get_user_by_id(&request.user_id)
+            .get_user_by_id(request.user_id)
             .await?
             .ok_or_else(|| UsecaseError::Validation("user not found".into()))?;
 
         let now = chrono::Utc::now();
         let is_paid = user.valid_until > now;
-        let remaining_minutes = self.auth_repo.get_remaining_minutes(&request.user_id).await?;
+        let remaining_minutes = self.auth_repo.get_remaining_minutes(request.user_id).await?;
         let is_valid = is_paid || remaining_minutes > 0;
 
         let billing_mode = if is_paid {

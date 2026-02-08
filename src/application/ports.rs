@@ -40,17 +40,17 @@ pub trait AuthRepository: Send + Sync {
         &self,
         request: AccountLoginRequest,
     ) -> Result<AccountLoginResponse, RepositoryError>;
-    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<AcceleratorUser>, RepositoryError>;
+    async fn get_user_by_id(&self, user_id: i64) -> Result<Option<AcceleratorUser>, RepositoryError>;
     async fn update_user_valid_until(
         &self,
-        user_id: &str,
+        user_id: i64,
         valid_until: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), RepositoryError>;
 
-    async fn get_remaining_minutes(&self, user_id: &str) -> Result<i64, RepositoryError>;
-    async fn add_remaining_minutes(&self, user_id: &str, minutes: i64) -> Result<i64, RepositoryError>;
-    async fn get_bandwidth_mbps(&self, user_id: &str) -> Result<Option<i64>, RepositoryError>;
-    async fn set_bandwidth_mbps(&self, user_id: &str, bandwidth_mbps: i64) -> Result<(), RepositoryError>;
+    async fn get_remaining_minutes(&self, user_id: i64) -> Result<i64, RepositoryError>;
+    async fn add_remaining_minutes(&self, user_id: i64, minutes: i64) -> Result<i64, RepositoryError>;
+    async fn get_bandwidth_mbps(&self, user_id: i64) -> Result<Option<i64>, RepositoryError>;
+    async fn set_bandwidth_mbps(&self, user_id: i64, bandwidth_mbps: i64) -> Result<(), RepositoryError>;
 }
 
 #[async_trait]

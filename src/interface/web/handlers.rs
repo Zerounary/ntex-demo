@@ -107,7 +107,7 @@ pub async fn accelerator_user_notifications_stream(
 
 #[derive(Debug, Clone)]
 struct UserNotificationEvent {
-    pub user_id: String,
+    pub user_id: i64,
     pub payload: UserNotificationPayload,
 }
 
@@ -197,7 +197,7 @@ pub async fn accelerator_user_send_email_code(
     .into_http(StatusCode::OK))
 }
 
-async fn user_id_by_token(state: &AppState, token: &str) -> Result<String, UsecaseError> {
+async fn user_id_by_token(state: &AppState, token: &str) -> Result<i64, UsecaseError> {
     let now = chrono::Utc::now();
     let session = accelerator_user_session::Entity::find_by_id(token.to_string())
         .one(&state.db)
@@ -305,8 +305,8 @@ fn extract_reality_client_params(
 
 async fn apply_invite_rewards(
     db: &sea_orm::DatabaseConnection,
-    inviter_id: &str,
-    invitee_id: &str,
+    inviter_id: i64,
+    invitee_id: i64,
 ) -> Result<(), String> {
     let row = config_entry::Entity::find_by_id(ACCELERATOR_ACTIVITY_KEY.to_string())
         .one(db)
@@ -410,8 +410,8 @@ async fn apply_invite_rewards(
 
         let grant = accelerator_invite_reward_grant::ActiveModel {
             id: sea_orm::NotSet,
-            inviter_id: Set(inviter_id.to_string()),
-            invitee_id: Set(invitee_id.to_string()),
+            inviter_id: Set(inviter_id),
+            invitee_id: Set(invitee_id),
             tier: Set(tier.inviter_count),
             cdk_type: Set(cdk_type),
             num: Set(num),
@@ -1397,7 +1397,7 @@ pub async fn session_start(
 
     // 单用户同一时刻只允许一个 active 会话：存在则先 stop（best effort）
     if let Ok(Some(existing)) = acceleration_session::Entity::find()
-        .filter(acceleration_session::Column::UserId.eq(user_id.as_str()))
+        .filter(acceleration_session::Column::UserId.eq(user_id))
         .filter(acceleration_session::Column::Status.eq("active"))
         .order_by_desc(acceleration_session::Column::StartedAt)
         .one(&state.db)
@@ -2234,7 +2234,20 @@ pub async fn accelerator_user_register(
         return Err(UsecaseError::Validation("password is required".to_string()).into());
     }
 
-    let exists = accelerator_user::Entity::find_by_id(body.user_id.clone())
+    // 注册时邮箱验证码校验
+    let cached = EMAIL_CODE_CACHE.get(&body.user_id).await;
+    if cached.as_deref() != Some(body.email_code.trim()) {
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "EMAIL_CODE_INVALID",
+            "验证码错误或已过期".to_string(),
+        )
+        .into_http(StatusCode::BAD_REQUEST));
+    }
+    EMAIL_CODE_CACHE.invalidate(&body.user_id).await;
+
+    let email = body.user_id.trim().to_string();
+    let exists = accelerator_user::Entity::find()
+        .filter(accelerator_user::Column::Email.eq(email.as_str()))
         .one(&state.db)
         .await
         .map_err(|e| {
@@ -2248,10 +2261,9 @@ pub async fn accelerator_user_register(
     }
 
     let now = chrono::Utc::now();
-    let user_id = body.user_id.clone();
 
     let invite_code = generate_invite_code();
-    let inviter_id: Option<String> = match body.invite_code.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    let inviter_id: Option<i64> = match body.invite_code.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
         Some(code) => {
             let inviter = accelerator_user::Entity::find()
                 .filter(accelerator_user::Column::InviteCode.eq(code))
@@ -2267,8 +2279,9 @@ pub async fn accelerator_user_register(
         None => None,
     };
 
-    accelerator_user::ActiveModel {
-        id: Set(user_id.clone()),
+    let inserted = accelerator_user::ActiveModel {
+        id: sea_orm::NotSet,
+        email: Set(email.clone()),
         name: Set(body.name),
         invite_code: Set(invite_code),
         inviter_id: Set(inviter_id.clone()),
@@ -2282,8 +2295,10 @@ pub async fn accelerator_user_register(
         ))
     })?;
 
+    let new_user_id = inserted.id;
+
     accelerator_user_credential::ActiveModel {
-        user_id: Set(user_id.clone()),
+        user_id: Set(new_user_id),
         password_hash: Set(hash_password(&body.password)),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -2297,7 +2312,7 @@ pub async fn accelerator_user_register(
     })?;
 
     if let Some(inviter_id) = inviter_id {
-        if let Err(e) = apply_invite_rewards(&state.db, &inviter_id, &user_id).await {
+        if let Err(e) = apply_invite_rewards(&state.db, inviter_id, new_user_id).await {
             log::warn!("apply_invite_rewards failed (ignored): {}", e);
         }
     }
@@ -2330,31 +2345,20 @@ pub async fn accelerator_user_login(
     let ua = extract_user_agent(&req);
     let now = chrono::Utc::now();
 
-    // 邮箱验证码校验
-    let cached = EMAIL_CODE_CACHE.get(&body.user_id).await;
-    if cached.as_deref() != Some(body.email_code.trim()) {
-        let _ = accelerator_user_login_log::ActiveModel {
-            user_id: Set(body.user_id.clone()),
-            ip: Set(ip),
-            user_agent: Set(ua),
-            success: Set(false),
-            reason_code: Set("EMAIL_CODE_INVALID".to_string()),
-            reason_message: Set("invalid email code".to_string()),
-            created_at: Set(now.into()),
-            ..Default::default()
-        }
-        .insert(&state.db)
-        .await;
+    let email = body.user_id.trim().to_string();
+    let user = accelerator_user::Entity::find()
+        .filter(accelerator_user::Column::Email.eq(email.as_str()))
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
 
-        return Ok(ApiResponse::<MessageResponse>::error(
-            "EMAIL_CODE_INVALID",
-            "验证码错误或已过期".to_string(),
-        )
-        .into_http(StatusCode::BAD_REQUEST));
-    }
-    EMAIL_CODE_CACHE.invalidate(&body.user_id).await;
-
-    let cred = accelerator_user_credential::Entity::find_by_id(body.user_id.clone())
+    let user_id = user.id;
+    let cred = accelerator_user_credential::Entity::find_by_id(user_id)
         .one(&state.db)
         .await
         .map_err(|e| {
@@ -2366,7 +2370,7 @@ pub async fn accelerator_user_login(
 
     if cred.password_hash != hash_password(&body.password) {
         let _ = accelerator_user_login_log::ActiveModel {
-            user_id: Set(body.user_id.clone()),
+            user_id: Set(user_id),
             ip: Set(ip),
             user_agent: Set(ua),
             success: Set(false),
@@ -2382,13 +2386,13 @@ pub async fn accelerator_user_login(
 
     // 如果该账号存在 active 加速会话，则禁止再次登录（避免 A 抢占 B 的加速中账号）
     if let Ok(Some(_existing)) = acceleration_session::Entity::find()
-        .filter(acceleration_session::Column::UserId.eq(body.user_id.as_str()))
+        .filter(acceleration_session::Column::UserId.eq(user_id))
         .filter(acceleration_session::Column::Status.eq("active"))
         .one(&state.db)
         .await
     {
         let _ = USER_NOTIFICATION_BUS.send(UserNotificationEvent {
-            user_id: body.user_id.clone(),
+            user_id,
             payload: UserNotificationPayload {
                 kind: "SECURITY_WARNING".to_string(),
                 message: "当前账号在IP处登录，请检查账号是否泄露".to_string(),
@@ -2398,7 +2402,7 @@ pub async fn accelerator_user_login(
         });
 
         let _ = accelerator_user_login_log::ActiveModel {
-            user_id: Set(body.user_id.clone()),
+            user_id: Set(user_id),
             ip: Set(ip),
             user_agent: Set(ua),
             success: Set(false),
@@ -2417,23 +2421,13 @@ pub async fn accelerator_user_login(
         .into_http(StatusCode::FORBIDDEN));
     }
 
-    let user = accelerator_user::Entity::find_by_id(body.user_id.clone())
-        .one(&state.db)
-        .await
-        .map_err(|e| {
-            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
-                e.to_string(),
-            ))
-        })?
-        .ok_or(UsecaseError::Unauthorized)?;
-
     let ttl_days = if body.remember { 30 } else { 1 };
     let expires_at = now + chrono::Duration::days(ttl_days);
     let token = Uuid::new_v4().to_string();
 
     accelerator_user_session::ActiveModel {
         token: Set(token.clone()),
-        user_id: Set(body.user_id),
+        user_id: Set(user_id),
         expires_at: Set(expires_at.into()),
         created_at: Set(now.into()),
     }
@@ -2448,7 +2442,7 @@ pub async fn accelerator_user_login(
     let domain_user: crate::domain::accelerator::AcceleratorUser = user.into();
 
     let _ = accelerator_user_login_log::ActiveModel {
-        user_id: Set(domain_user.id.clone()),
+        user_id: Set(domain_user.id),
         ip: Set(ip),
         user_agent: Set(ua),
         success: Set(true),
@@ -2588,7 +2582,7 @@ pub async fn redeem_cdk(
     let auth_repo = AuthRepositoryImpl::new(&state.db);
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
     let mut request: crate::domain::cdk::CdkRedeemRequest = body.into();
-    request.user_id = user.user.id.clone();
+    request.user_id = user.user.id;
     let response = usecase.redeem_cdk(request).await?;
     Ok(ApiResponse::success(CdkRedeemResponseVO::from(response)).into_http(StatusCode::OK))
 }
@@ -2618,7 +2612,7 @@ pub async fn validate_account(
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
     
     let mut request: AccountValidationRequest = body.into();
-    request.user_id = user.user.id.clone();
+    request.user_id = user.user.id;
     
     let response = usecase.validate_account(request).await?;
     Ok(ApiResponse::success(AccountValidationResponseVO::from(response)).into_http(StatusCode::OK))
@@ -2695,7 +2689,7 @@ pub async fn start_acceleration(
     let usecase = CdkUseCase::new(cdk_repo, auth_repo);
     
     let mut request: AccountValidationRequest = body.into();
-    request.user_id = user.user.id.clone();
+    request.user_id = user.user.id;
     
     let validation = usecase.validate_account(request).await?;
 

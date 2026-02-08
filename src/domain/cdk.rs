@@ -94,7 +94,7 @@ pub struct CdkGenerateRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CdkRedeemRequest {
     pub code: String,
-    pub user_id: String,
+    pub user_id: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -109,7 +109,7 @@ pub struct CdkRedeemResponse {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccountValidationRequest {
-    pub user_id: String,
+    pub user_id: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

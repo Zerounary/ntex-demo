@@ -39,6 +39,7 @@ pub struct AcceleratorUserRegisterRequestVO {
     pub user_id: String,
     pub name: String,
     pub password: String,
+    pub email_code: String,
     #[serde(default)]
     pub invite_code: Option<String>,
 }
@@ -48,7 +49,6 @@ pub struct AcceleratorUserRegisterRequestVO {
 pub struct AcceleratorUserLoginRequestVO {
     pub user_id: String,
     pub password: String,
-    pub email_code: String,
     pub remember: bool,
 }
 
@@ -227,7 +227,7 @@ impl From<Profile> for ProfileVO {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserVO {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub valid_until: String,
 }
@@ -404,7 +404,7 @@ impl From<CdkRedeemRequestVO> for CdkRedeemRequest {
     fn from(value: CdkRedeemRequestVO) -> Self {
         Self {
             code: value.code,
-            user_id: "".to_string(), // This will be overridden in the handler
+            user_id: 0, // This will be overridden in the handler
         }
     }
 }
@@ -473,7 +473,7 @@ pub struct AccountValidationRequestVO {
 impl From<AccountValidationRequestVO> for AccountValidationRequest {
     fn from(_value: AccountValidationRequestVO) -> Self {
         Self {
-            user_id: "".to_string(), // This will be overridden in the handler
+            user_id: 0, // This will be overridden in the handler
         }
     }
 }

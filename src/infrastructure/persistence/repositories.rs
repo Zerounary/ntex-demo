@@ -342,11 +342,14 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
 
         if let Some(model) = model {
             let user = match &model.user_id {
-                Some(user_id) => accelerator_user::Entity::find_by_id(user_id.clone())
-                    .one(self.db)
-                    .await
-                    .map_err(|err| RepositoryError::Persistence(err.to_string()))?
-                    .map(Into::into),
+                Some(user_id) => match user_id.parse::<i64>() {
+                    Ok(uid) => accelerator_user::Entity::find_by_id(uid)
+                        .one(self.db)
+                        .await
+                        .map_err(|err| RepositoryError::Persistence(err.to_string()))?
+                        .map(Into::into),
+                    Err(_) => None,
+                },
                 None => None,
             };
             let mut ticket = ticket_from_model(model);
@@ -377,7 +380,7 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
         active.status = Set(ticket.status.as_str().to_string());
         active.scene = Set(ticket.scene.clone());
         active.success = Set(ticket.success);
-        active.user_id = Set(ticket.user.as_ref().map(|u| u.id.clone()));
+        active.user_id = Set(ticket.user.as_ref().map(|u| u.id.to_string()));
         active.updated_at = Set(Utc::now().into());
 
         info!(
@@ -418,55 +421,26 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
         Ok(response)
     }
 
-    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<AcceleratorUser>, RepositoryError> {
-        // 先尝试从 accelerator_users 表查找
-        let user = accelerator_user::Entity::find_by_id(user_id.to_string())
+    async fn get_user_by_id(&self, user_id: i64) -> Result<Option<AcceleratorUser>, RepositoryError> {
+        let user = accelerator_user::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-        
-        if let Some(user) = user {
-            return Ok(Some(user.into()));
-        }
-
-        // 如果不存在，从 account_users 表查找
-        let account = account_user::Entity::find_by_id(user_id.to_string())
-            .one(self.db)
-            .await
-            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-        
-        Ok(account.map(Into::into))
+        Ok(user.map(Into::into))
     }
 
     async fn update_user_valid_until(
         &self,
-        user_id: &str,
+        user_id: i64,
         valid_until: chrono::DateTime<chrono::Utc>,
     ) -> Result<(), RepositoryError> {
-        // 先尝试更新 accelerator_users
-        let user = accelerator_user::Entity::find_by_id(user_id.to_string())
-            .one(self.db)
-            .await
-            .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-
-        if let Some(user) = user {
-            let mut active: accelerator_user::ActiveModel = user.into();
-            active.valid_until = Set(valid_until.into());
-            active
-                .update(self.db)
-                .await
-                .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
-            return Ok(());
-        }
-
-        // 如果不存在，更新 account_users
-        let account = account_user::Entity::find_by_id(user_id.to_string())
+        let user = accelerator_user::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?
             .ok_or_else(|| RepositoryError::Persistence("user not found".into()))?;
 
-        let mut active: account_user::ActiveModel = account.into();
+        let mut active: accelerator_user::ActiveModel = user.into();
         active.valid_until = Set(valid_until.into());
         active
             .update(self.db)
@@ -475,20 +449,20 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
         Ok(())
     }
 
-    async fn get_remaining_minutes(&self, user_id: &str) -> Result<i64, RepositoryError> {
-        let wallet = user_wallet::Entity::find_by_id(user_id.to_string())
+    async fn get_remaining_minutes(&self, user_id: i64) -> Result<i64, RepositoryError> {
+        let wallet = user_wallet::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
         Ok(wallet.map(|w| w.remaining_minutes).unwrap_or(0))
     }
 
-    async fn add_remaining_minutes(&self, user_id: &str, minutes: i64) -> Result<i64, RepositoryError> {
+    async fn add_remaining_minutes(&self, user_id: i64, minutes: i64) -> Result<i64, RepositoryError> {
         if minutes <= 0 {
             return Err(RepositoryError::Persistence("minutes must be positive".into()));
         }
 
-        let existing = user_wallet::Entity::find_by_id(user_id.to_string())
+        let existing = user_wallet::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
@@ -508,7 +482,7 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
             }
             None => {
                 let active = user_wallet::ActiveModel {
-                    user_id: Set(user_id.to_string()),
+                    user_id: Set(user_id),
                     remaining_minutes: Set(minutes),
                     bandwidth: Set(None),
                     updated_at: Set(Utc::now().into()),
@@ -522,20 +496,20 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
         }
     }
 
-    async fn get_bandwidth_mbps(&self, user_id: &str) -> Result<Option<i64>, RepositoryError> {
-        let wallet = user_wallet::Entity::find_by_id(user_id.to_string())
+    async fn get_bandwidth_mbps(&self, user_id: i64) -> Result<Option<i64>, RepositoryError> {
+        let wallet = user_wallet::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
         Ok(wallet.and_then(|w| w.bandwidth))
     }
 
-    async fn set_bandwidth_mbps(&self, user_id: &str, bandwidth_mbps: i64) -> Result<(), RepositoryError> {
+    async fn set_bandwidth_mbps(&self, user_id: i64, bandwidth_mbps: i64) -> Result<(), RepositoryError> {
         if bandwidth_mbps <= 0 {
             return Err(RepositoryError::Persistence("bandwidth_mbps must be positive".into()));
         }
 
-        let existing = user_wallet::Entity::find_by_id(user_id.to_string())
+        let existing = user_wallet::Entity::find_by_id(user_id)
             .one(self.db)
             .await
             .map_err(|err| RepositoryError::Persistence(err.to_string()))?;
@@ -552,7 +526,7 @@ impl<'a> AuthRepository for AuthRepositoryImpl<'a> {
             }
             None => {
                 let active = user_wallet::ActiveModel {
-                    user_id: Set(user_id.to_string()),
+                    user_id: Set(user_id),
                     remaining_minutes: Set(0),
                     bandwidth: Set(Some(bandwidth_mbps)),
                     updated_at: Set(Utc::now().into()),
@@ -577,7 +551,7 @@ fn ticket_into_active(ticket: &WechatTicket) -> wechat_ticket::ActiveModel {
         status: Set(ticket.status.as_str().to_string()),
         scene: Set(ticket.scene.clone()),
         success: Set(ticket.success),
-        user_id: Set(ticket.user.as_ref().map(|u| u.id.clone())),
+        user_id: Set(ticket.user.as_ref().map(|u| u.id.to_string())),
         created_at: Set(Utc::now().into()),
         updated_at: Set(Utc::now().into()),
     }
@@ -604,8 +578,10 @@ fn hash_password(input: &str) -> String {
 
 impl From<account_user::Model> for AcceleratorUser {
     fn from(model: account_user::Model) -> Self {
+        let id = model.id.parse::<i64>().unwrap_or(0);
         AcceleratorUser {
-            id: model.id,
+            id,
+            email: model.phone.clone(),
             name: model.name,
             valid_until: model.valid_until.into(),
         }
@@ -700,7 +676,7 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
         // 更新CDK状态
         let mut active: cdk_code::ActiveModel = model.into();
         active.status = Set(CdkStatus::Used.as_str().to_string());
-        active.used_by = Set(Some(request.user_id.clone()));
+        active.used_by = Set(Some(request.user_id.to_string()));
         active.used_at = Set(Some(Utc::now().into()));
         active
             .update(self.db)

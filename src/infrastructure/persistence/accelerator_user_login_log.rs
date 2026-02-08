@@ -5,8 +5,7 @@ use sea_orm::{entity::prelude::*, sea_query::Expr};
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = true)]
     pub id: u64,
-    #[sea_orm(column_type = "String(Some(64))")]
-    pub user_id: String,
+    pub user_id: i64,
     #[sea_orm(column_type = "String(Some(64))")]
     pub ip: String,
     #[sea_orm(column_type = "String(Some(255))")]
