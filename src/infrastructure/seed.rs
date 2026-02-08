@@ -39,8 +39,55 @@ async fn seed_accelerator(db: &DatabaseConnection) -> Result<(), sea_orm::DbErr>
             status: Set("idle".to_string()),
             ping: Set(0),
             process_name: Set("League of Legends.exe,LeagueClient.exe,LeagueClientUx.exe,LolClient.exe,LoLLauncher.exe,LoLPatcher.exe,LoLPatcherUx.exe,RiotClientServices.exe,RiotClientUx.exe,RiotClientUxRender.exe,LeagueClientUxRender.exe,Garena.exe,GarenaMessenger.exe,lol.exe,rads_user_kernel.exe,client.exe,LeagueCrashHandler.exe,RuinedKing.exe,steamwebhelper.exe,EALink.exe,Client.exe,Riot Client.exe,OP.GG.exe,udptest.exe,vgc.exe,chrome.exe".to_string()),
-            routing_rules: Set(Some("[]".to_string())),
-            sniff_domains_excluded: Set(Some("[]".to_string())),
+            routing_rules: Set(Some(
+                json!([
+                    {
+                        "type": "field",
+                        "outboundTag": "direct",
+                        "domain": [
+                            "domain:lol.dyn.riotcdn.net",
+                            "domain:legendspatch-lol.cdn.x-cdn.com",
+                            "domain:lol.secure.dyn.riotcdn.net",
+                            "domain:123cha.com",
+                            "domain:ip112.com"
+                        ],
+                        "enabled": true
+                    }
+                ])
+                .to_string(),
+            )),
+            sniff_domains_excluded: Set(Some(
+                json!([
+                    "rbsxbxp-mim.vivox.com",
+                    "rbsxbxp.www.vivox.com",
+                    "rbsxbxp-ws.vivox.com",
+                    "rbspsxp.www.vivox.com",
+                    "rbspsxp-mim.vivox.com",
+                    "rbspsxp-ws.vivox.com",
+                    "rbswxp.www.vivox.com",
+                    "rbswxp-mim.vivox.com",
+                    "disp-rbspsp-5-1.vivox.com",
+                    "disp-rbsxbp-5-1.vivox.com",
+                    "proxy.rbsxbp.vivox.com",
+                    "proxy.rbspsp.vivox.com",
+                    "proxy.rbswp.vivox.com",
+                    "rbswp.vivox.com",
+                    "rbsxbp.vivox.com",
+                    "rbspsp.vivox.com",
+                    "rbspsp.www.vivox.com",
+                    "rbswp.www.vivox.com",
+                    "rbsxbp.www.vivox.com",
+                    "rbsxbxp.vivox.com",
+                    "rbspsxp.vivox.com",
+                    "rbswxp.vivox.com",
+                    "pubwxp.vivox.com",
+                    "lolsnxp.vivox.com",
+                    "lolsnxp.www.vivox.com",
+                    "lolsnxp-mim1.vivox.com",
+                    "lolsnxp-mim2.vivox.com"
+                ])
+                .to_string(),
+            )),
             region: Set("韩国".to_string()),
         }];
 
