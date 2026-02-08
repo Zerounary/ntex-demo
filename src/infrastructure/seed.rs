@@ -212,15 +212,18 @@ fn accelerator_activity_payload() -> JsonValue {
         "inviteRewards": [
             {
                 "inviterCount": 1,
-                "rewardType": "day"
+                "cdkType": "day",
+                "num": 3
             },
             {
                 "inviterCount": 3,
-                "rewardType": "month"
+                "cdkType": "day",
+                "num": 15
             },
             {
-                "inviterCount": 10,
-                "rewardType": "year"
+                "inviterCount": 5,
+                "cdkType": "day",
+                "num": 30
             }
         ]
     })

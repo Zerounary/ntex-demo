@@ -257,7 +257,207 @@ pub async fn init(db: &DatabaseConnection) -> Result<(), DbErr> {
     migrate_admin_chain_fields(db).await?;
     migrate_user_wallet_fields(db).await?;
     migrate_cdk_code_fields(db).await?;
+    migrate_cdk_code_num_field(db).await?;
     migrate_accelerator_user_invite_fields(db).await?;
+    migrate_accelerator_invite_reward_grant_fields(db).await?;
+
+    Ok(())
+}
+
+async fn migrate_accelerator_invite_reward_grant_fields(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        log::warn!(
+            "SQLite 不支持 accelerator_invite_reward_grants 字段迁移（列重命名/删除），需要手动迁移数据"
+        );
+        return Ok(());
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        // 1) 先尝试直接 rename（MySQL 8 支持 RENAME COLUMN；5.7 不支持）
+        let rename_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants RENAME COLUMN reward_type TO cdk_type",
+            "ALTER TABLE accelerator_invite_reward_grants RENAME COLUMN duration_minutes TO num",
+        ];
+        for sql in &rename_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants rename SQL 失败（可能列已改名或版本不支持）: {} - {}", sql, e);
+            }
+        }
+
+        // 2) fallback: add new cols + copy + drop old (尽量不失败)
+        let alter_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants ADD COLUMN IF NOT EXISTS cdk_type VARCHAR(16) NOT NULL DEFAULT ''",
+            "ALTER TABLE accelerator_invite_reward_grants ADD COLUMN IF NOT EXISTS num BIGINT NOT NULL DEFAULT 0",
+        ];
+        for sql in &alter_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants add-column SQL 失败（可能已存在或版本不支持）: {} - {}", sql, e);
+            }
+        }
+
+        // copy data best-effort
+        let copy_sqls = vec![
+            "UPDATE accelerator_invite_reward_grants SET cdk_type = reward_type WHERE (cdk_type IS NULL OR cdk_type = '') AND reward_type IS NOT NULL",
+            "UPDATE accelerator_invite_reward_grants SET num = duration_minutes WHERE (num IS NULL OR num = 0) AND duration_minutes IS NOT NULL",
+        ];
+        for sql in &copy_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants copy SQL 失败（可能旧列不存在）: {} - {}", sql, e);
+            }
+        }
+
+        // drop old cols best-effort
+        let drop_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants DROP COLUMN reward_type",
+            "ALTER TABLE accelerator_invite_reward_grants DROP COLUMN duration_minutes",
+        ];
+        for sql in &drop_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants drop-column SQL 失败（可能已删除或版本不支持）: {} - {}", sql, e);
+            }
+        }
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let rename_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants RENAME COLUMN reward_type TO cdk_type",
+            "ALTER TABLE accelerator_invite_reward_grants RENAME COLUMN duration_minutes TO num",
+        ];
+        for sql in &rename_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants rename SQL 失败（可能列已改名）: {} - {}", sql, e);
+            }
+        }
+
+        let add_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants ADD COLUMN IF NOT EXISTS cdk_type VARCHAR(16) NOT NULL DEFAULT ''",
+            "ALTER TABLE accelerator_invite_reward_grants ADD COLUMN IF NOT EXISTS num BIGINT NOT NULL DEFAULT 0",
+        ];
+        for sql in &add_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants add-column SQL 失败（可能已存在）: {} - {}", sql, e);
+            }
+        }
+
+        let copy_sqls = vec![
+            "UPDATE accelerator_invite_reward_grants SET cdk_type = reward_type WHERE (cdk_type IS NULL OR cdk_type = '') AND reward_type IS NOT NULL",
+            "UPDATE accelerator_invite_reward_grants SET num = duration_minutes WHERE (num IS NULL OR num = 0) AND duration_minutes IS NOT NULL",
+        ];
+        for sql in &copy_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants copy SQL 失败（可能旧列不存在）: {} - {}", sql, e);
+            }
+        }
+
+        let drop_sqls = vec![
+            "ALTER TABLE accelerator_invite_reward_grants DROP COLUMN IF EXISTS reward_type",
+            "ALTER TABLE accelerator_invite_reward_grants DROP COLUMN IF EXISTS duration_minutes",
+        ];
+        for sql in &drop_sqls {
+            if let Err(e) =
+                db.execute(sea_orm::Statement::from_string(backend, sql.to_string())).await
+            {
+                log::warn!("执行 invite_reward_grants drop-column SQL 失败（可能已删除）: {} - {}", sql, e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn migrate_cdk_code_num_field(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let backend = db.get_database_backend();
+
+    if matches!(backend, sea_orm::DatabaseBackend::Sqlite) {
+        log::warn!("SQLite 不支持 cdk_codes 字段迁移（列重命名/删除），需要手动迁移数据");
+        return Ok(());
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::MySql) {
+        // rename first
+        let rename_sql = "ALTER TABLE cdk_codes RENAME COLUMN duration_minutes TO num";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, rename_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes rename SQL 失败（可能已改名或版本不支持）: {} - {}", rename_sql, e);
+        }
+
+        // fallback: add + copy + drop
+        let add_sql = "ALTER TABLE cdk_codes ADD COLUMN IF NOT EXISTS num BIGINT NOT NULL DEFAULT 0";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, add_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes add-column SQL 失败（可能已存在或版本不支持）: {} - {}", add_sql, e);
+        }
+
+        let copy_sql = "UPDATE cdk_codes SET num = duration_minutes WHERE (num IS NULL OR num = 0) AND duration_minutes IS NOT NULL";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, copy_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes copy SQL 失败（可能旧列不存在）: {} - {}", copy_sql, e);
+        }
+
+        let drop_sql = "ALTER TABLE cdk_codes DROP COLUMN duration_minutes";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, drop_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes drop-column SQL 失败（可能已删除或版本不支持）: {} - {}", drop_sql, e);
+        }
+    }
+
+    if matches!(backend, sea_orm::DatabaseBackend::Postgres) {
+        let rename_sql = "ALTER TABLE cdk_codes RENAME COLUMN duration_minutes TO num";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, rename_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes rename SQL 失败（可能已改名）: {} - {}", rename_sql, e);
+        }
+
+        let add_sql = "ALTER TABLE cdk_codes ADD COLUMN IF NOT EXISTS num BIGINT NOT NULL DEFAULT 0";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, add_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes add-column SQL 失败（可能已存在）: {} - {}", add_sql, e);
+        }
+
+        let copy_sql = "UPDATE cdk_codes SET num = duration_minutes WHERE (num IS NULL OR num = 0) AND duration_minutes IS NOT NULL";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, copy_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes copy SQL 失败（可能旧列不存在）: {} - {}", copy_sql, e);
+        }
+
+        let drop_sql = "ALTER TABLE cdk_codes DROP COLUMN IF EXISTS duration_minutes";
+        if let Err(e) = db
+            .execute(sea_orm::Statement::from_string(backend, drop_sql.to_string()))
+            .await
+        {
+            log::warn!("执行 cdk_codes drop-column SQL 失败（可能已删除）: {} - {}", drop_sql, e);
+        }
+    }
 
     Ok(())
 }

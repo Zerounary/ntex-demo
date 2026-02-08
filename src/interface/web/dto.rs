@@ -369,7 +369,7 @@ impl From<NodeRegisterRequest> for crate::domain::accelerator::Node {
 pub struct CdkGenerateRequestVO {
     pub cdk_type: String,
     pub count: u32,
-    pub duration_minutes: Option<i64>,
+    pub num: Option<i64>,
     pub bandwidth_mbps: Option<i64>,
     pub expires_at: Option<String>,
 }
@@ -380,7 +380,7 @@ impl From<CdkGenerateRequestVO> for CdkGenerateRequest {
         Self {
             cdk_type: CdkType::from_str(&value.cdk_type).unwrap_or(CdkType::Day),
             count: value.count,
-            duration_minutes: value.duration_minutes,
+            num: value.num,
             bandwidth_mbps: value.bandwidth_mbps,
             expires_at: value.expires_at.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&chrono::Utc))),
         }
@@ -407,7 +407,8 @@ impl From<CdkRedeemRequestVO> for CdkRedeemRequest {
 pub struct CdkRedeemResponseVO {
     pub success: bool,
     pub message: String,
-    pub duration_minutes: i64,
+    pub cdk_type: String,
+    pub num: i64,
     pub valid_until: Option<String>,
     pub remaining_minutes: Option<i64>,
 }
@@ -417,7 +418,8 @@ impl From<CdkRedeemResponse> for CdkRedeemResponseVO {
         Self {
             success: value.success,
             message: value.message,
-            duration_minutes: value.duration_minutes,
+            cdk_type: value.cdk_type.as_str().to_string(),
+            num: value.num,
             valid_until: value
                 .valid_until
                 .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),
@@ -432,7 +434,7 @@ pub struct CdkCodeVO {
     pub id: String,
     pub code: String,
     pub cdk_type: String,
-    pub duration_minutes: i64,
+    pub num: i64,
     pub status: String,
     pub used_by: Option<String>,
     pub used_at: Option<String>,
@@ -446,7 +448,7 @@ impl From<CdkCode> for CdkCodeVO {
             id: value.id,
             code: value.code,
             cdk_type: value.cdk_type.as_str().to_string(),
-            duration_minutes: value.duration_minutes,
+            num: value.num,
             status: value.status.as_str().to_string(),
             used_by: value.used_by,
             used_at: value.used_at.map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string()),

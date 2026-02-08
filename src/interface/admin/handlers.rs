@@ -66,11 +66,8 @@ pub async fn get_game(
 #[serde(rename_all = "camelCase")]
 pub struct AcceleratorInviteRewardTier {
     pub inviter_count: i32,
-    pub reward_type: String,
-    #[serde(default)]
-    pub duration_minutes: Option<i64>,
-    #[serde(default)]
-    pub bandwidth_mbps: Option<i64>,
+    pub cdk_type: String,
+    pub num: i64,
 }
 
 #[derive(Debug, Clone, Deserialize, serde::Serialize)]

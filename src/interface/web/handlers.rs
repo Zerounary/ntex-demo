@@ -57,11 +57,8 @@ use super::errors::{ApiResponse, AppError, MessageResponse};
 #[serde(rename_all = "camelCase")]
 struct AcceleratorInviteRewardTier {
     inviter_count: i32,
-    reward_type: String,
-    #[serde(default)]
-    duration_minutes: Option<i64>,
-    #[serde(default)]
-    bandwidth_mbps: Option<i64>,
+    cdk_type: String,
+    num: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -174,43 +171,42 @@ async fn apply_invite_rewards(
             continue;
         }
 
-        let reward_type = tier.reward_type.trim().to_lowercase();
-        let mut duration_minutes: i64 = tier.duration_minutes.unwrap_or(0);
-        let bandwidth_mbps: Option<i64> = tier.bandwidth_mbps;
-
-        if reward_type == "day" {
-            duration_minutes = 24 * 60;
-        }
-        if reward_type == "month" {
-            duration_minutes = 30 * 24 * 60;
-        }
-        if reward_type == "year" {
-            duration_minutes = 365 * 24 * 60;
+        let cdk_type = tier.cdk_type.trim().to_lowercase();
+        let num = tier.num;
+        if num <= 0 {
+            return Err("invalid num for invite reward".to_string());
         }
 
-        if reward_type == "bandwidth" {
-            let bw = bandwidth_mbps.ok_or_else(|| "missing bandwidth_mbps".to_string())?;
+        if cdk_type == "bandwidth" {
             auth_repo
-                .set_bandwidth_mbps(inviter_id, bw)
+                .set_bandwidth_mbps(inviter_id, num)
                 .await
                 .map_err(|e| format!("set_bandwidth_mbps failed: {:?}", e))?;
-        } else if reward_type == "minute" {
-            if duration_minutes <= 0 {
-                return Err("invalid duration_minutes for minute reward".to_string());
-            }
+        } else if cdk_type == "minute" {
             auth_repo
-                .add_remaining_minutes(inviter_id, duration_minutes)
+                .add_remaining_minutes(inviter_id, num)
                 .await
                 .map_err(|e| format!("add_remaining_minutes failed: {:?}", e))?;
         } else {
-            if duration_minutes <= 0 {
-                return Err("invalid duration_minutes for pass reward".to_string());
+            let cdk_type_enum = crate::domain::cdk::CdkType::from_str(&cdk_type)
+                .ok_or_else(|| format!("invalid cdkType: {}", cdk_type))?;
+            if cdk_type_enum == crate::domain::cdk::CdkType::Minute
+                || cdk_type_enum == crate::domain::cdk::CdkType::Bandwidth
+            {
+                return Err(format!("invalid pass-type cdkType: {}", cdk_type));
             }
+
             let inviter = auth_repo
                 .get_user_by_id(inviter_id)
                 .await
                 .map_err(|e| format!("get_user_by_id failed: {:?}", e))?
                 .ok_or_else(|| "inviter not found".to_string())?;
+
+            let duration_minutes = cdk_type_enum.duration_minutes() * num;
+            if duration_minutes <= 0 {
+                return Err("invalid duration computed for pass reward".to_string());
+            }
+
             let now = chrono::Utc::now();
             let next = if inviter.valid_until > now {
                 inviter.valid_until + chrono::Duration::minutes(duration_minutes)
@@ -228,9 +224,9 @@ async fn apply_invite_rewards(
             inviter_id: Set(inviter_id.to_string()),
             invitee_id: Set(invitee_id.to_string()),
             tier: Set(tier.inviter_count),
-            reward_type: Set(reward_type),
-            duration_minutes: Set(duration_minutes),
-            bandwidth_mbps: Set(bandwidth_mbps),
+            cdk_type: Set(cdk_type),
+            num: Set(num),
+            bandwidth_mbps: Set(None),
             granted_at: Set(chrono::Utc::now().into()),
         };
         grant

@@ -73,7 +73,7 @@ pub struct CdkCode {
     pub id: String,
     pub code: String,
     pub cdk_type: CdkType,
-    pub duration_minutes: i64, // 实际时长（分钟），对于分钟卡需要指定
+    pub num: i64, // 数量：day/月/年=张数单位数量；minute=分钟数；bandwidth=Mbps
     pub bandwidth_mbps: Option<i64>,
     pub status: CdkStatus,
     pub used_by: Option<String>, // 使用用户ID
@@ -86,8 +86,8 @@ pub struct CdkCode {
 pub struct CdkGenerateRequest {
     pub cdk_type: CdkType,
     pub count: u32,
-    pub duration_minutes: Option<i64>, // 仅用于分钟卡
-    pub bandwidth_mbps: Option<i64>,
+    pub num: Option<i64>,
+    pub bandwidth_mbps: Option<i64>, // 兼容字段：带宽卡可用 num 或 bandwidth_mbps
     pub expires_at: Option<DateTime<Utc>>, // CDK过期时间
 }
 
@@ -101,7 +101,8 @@ pub struct CdkRedeemRequest {
 pub struct CdkRedeemResponse {
     pub success: bool,
     pub message: String,
-    pub duration_minutes: i64,
+    pub cdk_type: CdkType,
+    pub num: i64,
     pub valid_until: Option<DateTime<Utc>>,
     pub remaining_minutes: Option<i64>,
 }

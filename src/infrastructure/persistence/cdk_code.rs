@@ -9,7 +9,7 @@ pub struct Model {
     pub code: String,
     #[sea_orm(column_type = "String(Some(16))")]
     pub cdk_type: String,
-    pub duration_minutes: i64,
+    pub num: i64,
     #[sea_orm(nullable)]
     pub bandwidth_mbps: Option<i64>,
     #[sea_orm(column_type = "String(Some(16))")]
@@ -36,7 +36,7 @@ impl From<Model> for crate::domain::cdk::CdkCode {
             id: model.id,
             code: model.code,
             cdk_type: CdkType::from_str(&model.cdk_type).unwrap_or(CdkType::Day),
-            duration_minutes: model.duration_minutes,
+            num: model.num,
             bandwidth_mbps: model.bandwidth_mbps,
             status: CdkStatus::from_str(&model.status),
             used_by: model.used_by,

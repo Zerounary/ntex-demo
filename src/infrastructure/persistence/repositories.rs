@@ -627,16 +627,13 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
     async fn generate_cdks(&self, request: CdkGenerateRequest) -> Result<Vec<CdkCode>, RepositoryError> {
         use uuid::Uuid;
         let mut cdks = Vec::new();
-        let duration = if request.cdk_type == CdkType::Minute {
-            request.duration_minutes.unwrap_or(0)
-        } else if request.cdk_type == CdkType::Bandwidth {
-            0
-        } else {
-            request.cdk_type.duration_minutes()
-        };
+        let num = request.num.unwrap_or(0);
+        if num <= 0 {
+            return Err(RepositoryError::Persistence("num must be greater than 0".into()));
+        }
 
         let bandwidth_mbps = if request.cdk_type == CdkType::Bandwidth {
-            request.bandwidth_mbps
+            Some(request.bandwidth_mbps.unwrap_or(num))
         } else {
             None
         };
@@ -648,7 +645,7 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
                 id: id.clone(),
                 code: code.clone(),
                 cdk_type: request.cdk_type.clone(),
-                duration_minutes: duration,
+                num,
                 bandwidth_mbps,
                 status: CdkStatus::Unused,
                 used_by: None,
@@ -712,16 +709,18 @@ impl<'a> CdkRepository for CdkRepositoryImpl<'a> {
 
         // 计算新的有效期
         let now = Utc::now();
-        let valid_until = if cdk.cdk_type == CdkType::Bandwidth {
+        let valid_until = if cdk.cdk_type == CdkType::Bandwidth || cdk.cdk_type == CdkType::Minute {
             None
         } else {
-            Some(now + chrono::Duration::minutes(cdk.duration_minutes))
+            let minutes = cdk.cdk_type.duration_minutes() * cdk.num;
+            Some(now + chrono::Duration::minutes(minutes))
         };
 
         Ok(CdkRedeemResponse {
             success: true,
             message: "CDK redeemed successfully".into(),
-            duration_minutes: cdk.duration_minutes,
+            cdk_type: cdk.cdk_type,
+            num: cdk.num,
             valid_until,
             remaining_minutes: None,
         })
@@ -745,7 +744,7 @@ fn cdk_into_active_model(cdk: CdkCode) -> cdk_code::ActiveModel {
         id: Set(cdk.id),
         code: Set(cdk.code),
         cdk_type: Set(cdk.cdk_type.as_str().to_string()),
-        duration_minutes: Set(cdk.duration_minutes),
+        num: Set(cdk.num),
         bandwidth_mbps: Set(cdk.bandwidth_mbps),
         status: Set(cdk.status.as_str().to_string()),
         used_by: Set(cdk.used_by),

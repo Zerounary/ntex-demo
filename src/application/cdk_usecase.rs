@@ -36,18 +36,16 @@ where
             ));
         }
 
-        if request.cdk_type == crate::domain::cdk::CdkType::Minute {
-            if request.duration_minutes.is_none() || request.duration_minutes.unwrap() <= 0 {
-                return Err(UsecaseError::Validation(
-                    "duration_minutes is required for minute cards".into(),
-                ));
-            }
+        let num = request.num.unwrap_or(0);
+        if num <= 0 {
+            return Err(UsecaseError::Validation("num must be greater than 0".into()));
         }
 
         if request.cdk_type == crate::domain::cdk::CdkType::Bandwidth {
-            if request.bandwidth_mbps.is_none() || request.bandwidth_mbps.unwrap() <= 0 {
+            let bw = request.bandwidth_mbps.unwrap_or(num);
+            if bw <= 0 {
                 return Err(UsecaseError::Validation(
-                    "bandwidth_mbps is required for bandwidth cards".into(),
+                    "num/bandwidth_mbps must be greater than 0 for bandwidth cards".into(),
                 ));
             }
         }
@@ -77,11 +75,9 @@ where
         let response = self.cdk_repo.redeem_cdk(request.clone()).await?;
 
         if cdk.cdk_type == crate::domain::cdk::CdkType::Bandwidth {
-            let bw = cdk
-                .bandwidth_mbps
-                .ok_or_else(|| UsecaseError::Validation("missing bandwidth_mbps for bandwidth cdk".into()))?;
+            let bw = cdk.bandwidth_mbps.unwrap_or(cdk.num);
             if bw <= 0 {
-                return Err(UsecaseError::Validation("bandwidth_mbps must be positive".into()));
+                return Err(UsecaseError::Validation("bandwidth must be positive".into()));
             }
 
             self.auth_repo
@@ -91,39 +87,39 @@ where
             return Ok(CdkRedeemResponse {
                 success: true,
                 message: format!("CDK redeemed successfully. Bandwidth set to {} Mbps", bw),
-                duration_minutes: 0,
+                cdk_type: cdk.cdk_type,
+                num: cdk.num,
                 valid_until: None,
                 remaining_minutes: None,
             });
         }
 
         if cdk.cdk_type == crate::domain::cdk::CdkType::Minute {
-            let remaining = self
-                .auth_repo
-                .add_remaining_minutes(&request.user_id, response.duration_minutes)
-                .await?;
+            let remaining = self.auth_repo.add_remaining_minutes(&request.user_id, cdk.num).await?;
 
             return Ok(CdkRedeemResponse {
                 success: true,
-                message: format!(
-                    "CDK redeemed successfully. Remaining minutes: {}",
-                    remaining
-                ),
-                duration_minutes: response.duration_minutes,
+                message: format!("CDK redeemed successfully. Remaining minutes: {}", remaining),
+                cdk_type: cdk.cdk_type,
+                num: cdk.num,
                 valid_until: None,
                 remaining_minutes: Some(remaining),
             });
         }
 
-        // Day/Month/Year: 更新用户有效期
-        let redeemed_until = response
-            .valid_until
-            .ok_or_else(|| UsecaseError::Validation("missing valid_until for non-minute cdk".into()))?;
+        // Day/Month/Year: 更新用户有效期（num 表示多少天/月/年）
+        if cdk.num <= 0 {
+            return Err(UsecaseError::Validation("num must be positive for pass cards".into()));
+        }
+        let minutes = cdk.cdk_type.duration_minutes() * cdk.num;
+        if minutes <= 0 {
+            return Err(UsecaseError::Validation("invalid pass duration computed".into()));
+        }
 
         let new_valid_until = if user.valid_until > chrono::Utc::now() {
-            user.valid_until + chrono::Duration::minutes(response.duration_minutes)
+            user.valid_until + chrono::Duration::minutes(minutes)
         } else {
-            redeemed_until
+            chrono::Utc::now() + chrono::Duration::minutes(minutes)
         };
 
         self.auth_repo
@@ -136,7 +132,8 @@ where
                 "CDK redeemed successfully. Valid until: {}",
                 new_valid_until.format("%Y-%m-%d %H:%M:%S")
             ),
-            duration_minutes: response.duration_minutes,
+            cdk_type: cdk.cdk_type,
+            num: cdk.num,
             valid_until: Some(new_valid_until),
             remaining_minutes: None,
         })
