@@ -5,6 +5,7 @@ pub mod accelerator_profile;
 pub mod accelerator_user;
 pub mod accelerator_user_credential;
 pub mod accelerator_user_session;
+pub mod accelerator_user_login_log;
 pub mod accelerator_invite_reward_grant;
 pub mod account_user;
 pub mod admin_node_config;

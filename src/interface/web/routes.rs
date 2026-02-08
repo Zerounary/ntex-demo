@@ -15,6 +15,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
             .service(handlers::session_stop)
             .service(handlers::accelerator_user_register)
             .service(handlers::accelerator_user_login)
+            .service(handlers::accelerator_user_notifications_stream)
             .service(handlers::accelerator_user_me)
             .service(handlers::accelerator_user_update_profile)
             .service(handlers::accelerator_user_change_password)

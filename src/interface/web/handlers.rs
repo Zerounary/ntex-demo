@@ -1,6 +1,7 @@
 use ntex::http::StatusCode;
 use ntex::web::types::{Json, Query, State};
-use ntex::web::{self, HttpResponse};
+use ntex::web::{self, HttpResponse, HttpRequest};
+use ntex::util::Bytes;
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
@@ -13,6 +14,10 @@ use std::env;
 use uuid::Uuid;
 use log::{info, error};
 use rand::Rng;
+use once_cell::sync::Lazy;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 
 use crate::infrastructure::admin_config::AdminConfigStore;
 use crate::interface::grpc_server::controlplane;
@@ -33,6 +38,7 @@ use crate::infrastructure::persistence::repositories::{
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, accelerator_profile,
     acceleration_session, accelerator_user, accelerator_user_credential, accelerator_user_session,
+    accelerator_user_login_log,
     accelerator_invite_reward_grant, admin_chain, admin_node_config, config_entry, user_wallet,
 };
 use crate::infrastructure::admin_config::ChainRouteEntry;
@@ -52,6 +58,103 @@ use super::dto::{
     PagedResponseVO, SearchItemVO,
 };
 use super::errors::{ApiResponse, AppError, MessageResponse};
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserNotificationPayload {
+    pub kind: String,
+    pub message: String,
+    pub ip: String,
+    pub ts: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationStreamQuery {
+    pub token: String,
+}
+
+#[web::get("/auth/accelerator/notifications/stream")]
+pub async fn accelerator_user_notifications_stream(
+    state: State<AppState>,
+    Query(query): Query<NotificationStreamQuery>,
+) -> Result<HttpResponse, AppError> {
+    let user_id = user_id_by_token(&state, &query.token).await?;
+    let rx = USER_NOTIFICATION_BUS.subscribe();
+
+    let stream = BroadcastStream::new(rx).filter_map(move |item| {
+        match item {
+            Ok(ev) if ev.user_id == user_id => {
+                let json = serde_json::to_string(&ev.payload).ok()?;
+                let frame = format!("data: {}\n\n", json);
+                Some(Ok::<Bytes, ntex::web::Error>(Bytes::from(frame)))
+            }
+            _ => None,
+        }
+    });
+
+    Ok(HttpResponse::Ok()
+        .set_header("Content-Type", "text/event-stream")
+        .set_header("Cache-Control", "no-cache")
+        .set_header("Connection", "keep-alive")
+        .streaming(stream))
+}
+
+#[derive(Debug, Clone)]
+struct UserNotificationEvent {
+    pub user_id: String,
+    pub payload: UserNotificationPayload,
+}
+
+static USER_NOTIFICATION_BUS: Lazy<broadcast::Sender<UserNotificationEvent>> = Lazy::new(|| {
+    let (tx, _rx) = broadcast::channel(512);
+    tx
+});
+
+async fn user_id_by_token(state: &AppState, token: &str) -> Result<String, UsecaseError> {
+    let now = chrono::Utc::now();
+    let session = accelerator_user_session::Entity::find_by_id(token.to_string())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(
+                e.to_string(),
+            ))
+        })?
+        .ok_or(UsecaseError::Unauthorized)?;
+
+    let expires_at: chrono::DateTime<chrono::Utc> = session.expires_at.into();
+    if expires_at <= now {
+        return Err(UsecaseError::Unauthorized);
+    }
+
+    Ok(session.user_id)
+}
+
+fn extract_ip_from_headers(req: &HttpRequest) -> String {
+    if let Some(v) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let ip = v.split(',').next().unwrap_or("").trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
+    if let Some(v) = req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let ip = v.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
+        }
+    }
+    "unknown".to_string()
+}
+
+fn extract_user_agent(req: &HttpRequest) -> String {
+    req.headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2134,8 +2237,13 @@ fn generate_invite_code() -> String {
 #[web::post("/auth/accelerator/login")]
 pub async fn accelerator_user_login(
     state: State<AppState>,
+    req: HttpRequest,
     Json(body): Json<AcceleratorUserLoginRequestVO>,
 ) -> Result<HttpResponse, AppError> {
+    let ip = extract_ip_from_headers(&req);
+    let ua = extract_user_agent(&req);
+    let now = chrono::Utc::now();
+
     let cred = accelerator_user_credential::Entity::find_by_id(body.user_id.clone())
         .one(&state.db)
         .await
@@ -2147,7 +2255,56 @@ pub async fn accelerator_user_login(
         .ok_or(UsecaseError::Unauthorized)?;
 
     if cred.password_hash != hash_password(&body.password) {
+        let _ = accelerator_user_login_log::ActiveModel {
+            user_id: Set(body.user_id.clone()),
+            ip: Set(ip),
+            user_agent: Set(ua),
+            success: Set(false),
+            reason_code: Set("UNAUTHORIZED".to_string()),
+            reason_message: Set("invalid password".to_string()),
+            created_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&state.db)
+        .await;
         return Err(UsecaseError::Unauthorized.into());
+    }
+
+    // 如果该账号存在 active 加速会话，则禁止再次登录（避免 A 抢占 B 的加速中账号）
+    if let Ok(Some(_existing)) = acceleration_session::Entity::find()
+        .filter(acceleration_session::Column::UserId.eq(body.user_id.as_str()))
+        .filter(acceleration_session::Column::Status.eq("active"))
+        .one(&state.db)
+        .await
+    {
+        let _ = USER_NOTIFICATION_BUS.send(UserNotificationEvent {
+            user_id: body.user_id.clone(),
+            payload: UserNotificationPayload {
+                kind: "SECURITY_WARNING".to_string(),
+                message: "当前账号在IP处登录，请检查账号是否泄露".to_string(),
+                ip: ip.clone(),
+                ts: now.timestamp(),
+            },
+        });
+
+        let _ = accelerator_user_login_log::ActiveModel {
+            user_id: Set(body.user_id.clone()),
+            ip: Set(ip),
+            user_agent: Set(ua),
+            success: Set(false),
+            reason_code: Set("ACCOUNT_IN_USE".to_string()),
+            reason_message: Set("account is accelerating".to_string()),
+            created_at: Set(now.into()),
+            ..Default::default()
+        }
+        .insert(&state.db)
+        .await;
+
+        return Ok(ApiResponse::<MessageResponse>::error(
+            "ACCOUNT_IN_USE",
+            "当前账号正在登录加速， 禁止登录。".to_string(),
+        )
+        .into_http(StatusCode::FORBIDDEN));
     }
 
     let user = accelerator_user::Entity::find_by_id(body.user_id.clone())
@@ -2160,7 +2317,6 @@ pub async fn accelerator_user_login(
         })?
         .ok_or(UsecaseError::Unauthorized)?;
 
-    let now = chrono::Utc::now();
     let ttl_days = if body.remember { 30 } else { 1 };
     let expires_at = now + chrono::Duration::days(ttl_days);
     let token = Uuid::new_v4().to_string();
@@ -2180,6 +2336,19 @@ pub async fn accelerator_user_login(
     })?;
 
     let domain_user: crate::domain::accelerator::AcceleratorUser = user.into();
+
+    let _ = accelerator_user_login_log::ActiveModel {
+        user_id: Set(domain_user.id.clone()),
+        ip: Set(ip),
+        user_agent: Set(ua),
+        success: Set(true),
+        reason_code: Set("OK".to_string()),
+        reason_message: Set("".to_string()),
+        created_at: Set(now.into()),
+        ..Default::default()
+    }
+    .insert(&state.db)
+    .await;
 
     Ok(ApiResponse::success(AcceleratorUserLoginResponseVO {
         success: true,

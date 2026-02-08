@@ -42,7 +42,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tonic = { version = "0.12", features = ["transport"] }
 prost = "0.13"
 prost-types = "0.13"
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 tower = "0.4"
 tokio-rustls = "0.26"
 rustls-pemfile = "2.1"
