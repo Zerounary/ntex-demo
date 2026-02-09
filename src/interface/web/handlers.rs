@@ -19,10 +19,6 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use moka::future::Cache;
-use lettre::message::{Mailbox, Message};
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
-
 use crate::infrastructure::admin_config::AdminConfigStore;
 use crate::interface::grpc_server::controlplane;
 use tonic::transport::Channel;
@@ -33,7 +29,7 @@ use crate::application::cdk_usecase::CdkUseCase;
 use crate::application::content_usecase::ContentUseCase;
 use crate::application::node_usecase::NodeUseCase;
 use crate::application::ports::AuthRepository;
-use crate::application::errors::UsecaseError;
+use crate::application::errors::{UsecaseError, RepositoryError};
 use crate::domain::cdk::AccountValidationRequest;
 use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
@@ -123,49 +119,25 @@ static EMAIL_CODE_CACHE: Lazy<Cache<String, String>> = Lazy::new(|| {
         .build()
 });
 
-fn read_env(key: &str) -> Option<String> {
-    std::env::var(key).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+async fn send_email_code(to_email: &str, code: &str) -> Result<(), UsecaseError> {
+    let body = format!("你的登录验证码是：{}（5分钟内有效）", code);
+    crate::email::send_text_email(to_email, "登录验证码", &body)
+        .await
+        .map_err(map_email_error)
 }
 
-async fn send_email_code(to_email: &str, code: &str) -> Result<(), UsecaseError> {
-    let host = read_env("SMTP_HOST").ok_or_else(|| UsecaseError::Validation("missing SMTP_HOST".to_string()))?;
-    let port: u16 = read_env("SMTP_PORT")
-        .ok_or_else(|| UsecaseError::Validation("missing SMTP_PORT".to_string()))?
-        .parse()
-        .map_err(|_| UsecaseError::Validation("invalid SMTP_PORT".to_string()))?;
-    let username = read_env("SMTP_USERNAME").ok_or_else(|| UsecaseError::Validation("missing SMTP_USERNAME".to_string()))?;
-    let password = read_env("SMTP_PASSWORD").ok_or_else(|| UsecaseError::Validation("missing SMTP_PASSWORD".to_string()))?;
-    let from_email = read_env("SMTP_FROM").unwrap_or_else(|| username.clone());
-    let from_name = read_env("SMTP_FROM_NAME").unwrap_or_else(|| "NEBULA".to_string());
-
-    let from: Mailbox = format!("{} <{}>", from_name, from_email)
-        .parse()
-        .map_err(|_| UsecaseError::Validation("invalid SMTP_FROM/SMTP_FROM_NAME".to_string()))?;
-    let to: Mailbox = to_email
-        .parse()
-        .map_err(|_| UsecaseError::Validation("invalid email".to_string()))?;
-
-    let email = Message::builder()
-        .from(from)
-        .to(to)
-        .subject("登录验证码")
-        .body(format!("你的登录验证码是：{}（5分钟内有效）", code))
-        .map_err(|_| UsecaseError::Validation("build email failed".to_string()))?;
-
-    let creds = Credentials::new(username, password);
-
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&host)
-        .map_err(|_| UsecaseError::Validation("invalid SMTP host".to_string()))?
-        .port(port)
-        .credentials(creds)
-        .build();
-
-    mailer
-        .send(email)
-        .await
-        .map_err(|e| UsecaseError::Repository(crate::application::errors::RepositoryError::Persistence(e.to_string())))?;
-
-    Ok(())
+fn map_email_error(err: crate::email::EmailError) -> UsecaseError {
+    match err {
+        crate::email::EmailError::InvalidRecipient(_) =>
+            UsecaseError::Validation("invalid email".to_string()),
+        crate::email::EmailError::BuildEmail =>
+            UsecaseError::Validation("build email failed".to_string()),
+        crate::email::EmailError::MissingEnv(key) |
+        crate::email::EmailError::InvalidEnv(key) =>
+            UsecaseError::Repository(RepositoryError::Persistence(format!("smtp config error: {}", key))),
+        crate::email::EmailError::Transport(msg) =>
+            UsecaseError::Repository(RepositoryError::Persistence(msg)),
+    }
 }
 
 fn generate_email_code() -> String {

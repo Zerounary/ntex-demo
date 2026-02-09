@@ -3,7 +3,7 @@
 /rumqttd
 /admin/
 # WindsurfChatOpen
-.windsurfchatopen/
+# .windsurfchatopen/  # required for automation script
 .windsurfrules
 
 /tauri2-vue-app/src-tauri/icons/*

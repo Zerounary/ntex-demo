@@ -1,6 +1,7 @@
 mod application;
 mod config;
 mod domain;
+mod email;
 mod infrastructure;
 mod interface;
 

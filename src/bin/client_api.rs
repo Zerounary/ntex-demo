@@ -4,6 +4,8 @@ mod application;
 mod config;
 #[path = "../domain/mod.rs"]
 mod domain;
+#[path = "../email.rs"]
+mod email;
 #[path = "../infrastructure/mod.rs"]
 mod infrastructure;
 #[path = "../interface/mod.rs"]
