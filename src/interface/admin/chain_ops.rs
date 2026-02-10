@@ -74,12 +74,6 @@ pub async fn apply_chain(
     let mut hops = chain.routes.clone();
     hops.sort_by_key(|r| r.order);
 
-    for r in &hops {
-        if r.from_node_id == r.to_node_id {
-            return Err("invalid route: from == to".to_string());
-        }
-    }
-
     let mut node_path: Vec<u64> = Vec::new();
     node_path.push(hops[0].from_node_id);
     for r in &hops {
@@ -92,10 +86,16 @@ pub async fn apply_chain(
     }
 
     let mut unique_nodes = HashSet::new();
+    let mut prev_node: Option<u64> = None;
     for node_id in node_path.iter().copied() {
+        if prev_node == Some(node_id) {
+            prev_node = Some(node_id);
+            continue;
+        }
         if !unique_nodes.insert(node_id) {
             return Err("route chain contains duplicate nodes".to_string());
         }
+        prev_node = Some(node_id);
     }
 
     let mut node_ports_cache: HashMap<u64, HashSet<u16>> = HashMap::new();
@@ -133,10 +133,22 @@ pub async fn apply_chain(
 
     for i in 0..(node_path.len() - 1) {
         let node_id = node_path[i];
+        let next_node_id = node_path[i + 1];
+        let tag = format!("chain_{}_{}", chain_id, i + 1);
+
+        if node_id == next_node_id {
+            results.push(serde_json::json!({
+                "node_id": node_id,
+                "tag": tag,
+                "status": "skipped",
+                "reason": "same_node_hop"
+            }));
+            continue;
+        }
+
         let (next_ip, next_port) = endpoints[i + 1].clone();
         let listen_port = endpoints[i].1;
 
-        let tag = format!("chain_{}_{}", chain_id, i + 1);
         let listen = "0.0.0.0";
         let inbound = InboundConfig {
             tag: tag.clone(),
@@ -198,12 +210,6 @@ pub async fn apply_chain_udp(
     let mut hops = chain.routes.clone();
     hops.sort_by_key(|r| r.order);
 
-    for r in &hops {
-        if r.from_node_id == r.to_node_id {
-            return Err("invalid route: from == to".to_string());
-        }
-    }
-
     let mut node_path: Vec<u64> = Vec::new();
     node_path.push(hops[0].from_node_id);
     for r in &hops {
@@ -213,6 +219,19 @@ pub async fn apply_chain_udp(
             }
         }
         node_path.push(r.to_node_id);
+    }
+
+    let mut unique_nodes = HashSet::new();
+    let mut prev_node: Option<u64> = None;
+    for node_id in node_path.iter().copied() {
+        if prev_node == Some(node_id) {
+            prev_node = Some(node_id);
+            continue;
+        }
+        if !unique_nodes.insert(node_id) {
+            return Err("route chain contains duplicate nodes".to_string());
+        }
+        prev_node = Some(node_id);
     }
 
     let mut node_ports_cache: HashMap<u64, HashSet<u16>> = HashMap::new();
@@ -276,10 +295,22 @@ pub async fn apply_chain_udp(
 
     for i in 0..(node_path.len() - 1) {
         let node_id = node_path[i];
+        let next_node_id = node_path[i + 1];
+        let tag = format!("chain_{}_{}", chain_id, i + 1);
+
+        if node_id == next_node_id {
+            results.push(serde_json::json!({
+                "node_id": node_id,
+                "tag": tag,
+                "status": "skipped",
+                "reason": "same_node_hop"
+            }));
+            continue;
+        }
+
         let (next_ip, next_port) = endpoints[i + 1].clone();
         let listen_port = endpoints[i].1;
 
-        let tag = format!("chain_{}_{}", chain_id, i + 1);
         let listen = "0.0.0.0";
         let inbound = InboundConfig {
             tag: tag.clone(),

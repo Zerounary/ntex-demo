@@ -276,6 +276,7 @@
                   <tr class="text-left">
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">#</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">From</th>
+                    <th class="px-2 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Swap</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">To</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Remark</th>
                     <th class="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
@@ -300,6 +301,16 @@
                           <div class="i-carbon-data-base text-lg"></div>
                         </template>
                       </BaseSelect>
+                    </td>
+                    <td class="px-2 py-3 text-center">
+                      <button
+                        type="button"
+                        class="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-full transition-colors"
+                        title="Swap from/to"
+                        @click="swapRowEndpoints(row.id)"
+                      >
+                        <div class="i-carbon-swap-horizontal text-base"></div>
+                      </button>
                     </td>
                     <td class="px-4 py-3">
                       <BaseSelect
@@ -483,11 +494,6 @@ const save = async () => {
     toast.error('Please select a chain to save');
     return;
   }
-  const invalid = activeChain.value.routes.some((r) => r.fromNodeId === r.toNodeId);
-  if (invalid) {
-    toast.error('Save blocked: some routes have FROM equal to TO');
-    return;
-  }
   try {
     const clone: ChainDefinition = JSON.parse(JSON.stringify(activeChain.value));
     normalizeRoutesOrder(clone);
@@ -639,40 +645,17 @@ const updateRow = (rowId: string, patch: Partial<ChainRouteEntry>) => {
   if (!activeChain.value) return;
   const row = activeChain.value.routes.find((r) => r.id === rowId);
   if (!row) return;
-  const originalFrom = row.fromNodeId;
-  const originalTo = row.toNodeId;
-
-  const wantsSwapFrom =
-    patch.fromNodeId !== undefined &&
-    patch.fromNodeId === originalTo &&
-    originalFrom !== originalTo &&
-    (patch.toNodeId === undefined || patch.toNodeId === originalTo);
-  const wantsSwapTo =
-    patch.toNodeId !== undefined &&
-    patch.toNodeId === originalFrom &&
-    originalFrom !== originalTo &&
-    (patch.fromNodeId === undefined || patch.fromNodeId === originalFrom);
-
-  if (wantsSwapFrom || wantsSwapTo) {
-    row.fromNodeId = originalTo;
-    row.toNodeId = originalFrom;
-    markDirty();
-    return;
-  }
-
-  const nextFrom = patch.fromNodeId ?? originalFrom;
-  const nextTo = patch.toNodeId ?? originalTo;
-  if (
-    nextFrom !== undefined &&
-    nextTo !== undefined &&
-    nextFrom !== null &&
-    nextTo !== null &&
-    nextFrom === nextTo
-  ) {
-    toast.error('FROM and TO cannot be the same');
-    return;
-  }
   Object.assign(row, patch);
+  markDirty();
+};
+
+const swapRowEndpoints = (rowId: string) => {
+  if (!activeChain.value) return;
+  const row = activeChain.value.routes.find((r) => r.id === rowId);
+  if (!row) return;
+  const { fromNodeId, toNodeId } = row;
+  row.fromNodeId = toNodeId;
+  row.toNodeId = fromNodeId;
   markDirty();
 };
 
@@ -686,11 +669,6 @@ const appendHopFromPending = () => {
   if (!activeChain.value) return;
   if (!pendingFromNodeId.value) return;
   if (!selectedNodeId.value) return;
-  if (pendingFromNodeId.value === selectedNodeId.value) {
-    toast.error('FROM and TO cannot be the same');
-    return;
-  }
-
   const row: ChainRouteEntry = {
     id: uuidv4(),
     order: activeChain.value.routes.length + 1,

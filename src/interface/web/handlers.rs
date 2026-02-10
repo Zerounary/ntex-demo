@@ -1844,7 +1844,20 @@ pub async fn session_start(
                     })?;
                 let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
                     extract_reality_client_params(inbound)?;
-                let tcp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                let tcp_port = match resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await {
+                    Ok(p) => p,
+                    Err(e) if entry_node_id == exit_node_id => state
+                        .admin_config
+                        .select_default_forward_port(entry_node_id)
+                        .await
+                        .map_err(|err| {
+                            UsecaseError::Validation(format!(
+                                "select_default_forward_port failed: {} (previous resolve_inbound_port_by_tag error: {})",
+                                err, e
+                            ))
+                        })?,
+                    Err(e) => return Err(e.into()),
+                };
                 tcp_entry_endpoint = Some((server.clone(), tcp_port));
 
                 tcp_profile_vo = Some(build_profile(
@@ -1878,7 +1891,7 @@ pub async fn session_start(
                     .map_err(|e| {
                         UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
                     })?;
-                let tag = format!("chain_{}_1", udp_chain_id);
+                let first_hop_tag = format!("chain_{}_1", udp_chain_id);
                 let inbounds = state
                     .admin_config
                     .get_inbounds(exit_node_id)
@@ -1896,7 +1909,43 @@ pub async fn session_start(
                     })?;
                 let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
                     extract_reality_client_params(inbound)?;
-                let udp_port = resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &tag).await?;
+                let udp_port = match resolve_inbound_port_by_tag(&state.admin_config, entry_node_id, &first_hop_tag).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        // fallback: look for matching inbounds on entry node tagged as chain_{id}_*
+                        let socks_tag = format!("chain_{}_socks", udp_chain_id);
+                        if let Ok(port) = resolve_inbound_port_by_tag(&state.admin_config, exit_node_id, &socks_tag).await {
+                            port
+                        } else if entry_node_id == exit_node_id {
+                            // fallback to first matching hop inbound on same node
+                            let candidate = format!("chain_{}_", udp_chain_id);
+                            let entry_inbounds = state
+                                .admin_config
+                                .get_inbounds(entry_node_id)
+                                .await
+                                .map_err(|err| {
+                                    UsecaseError::Validation(format!(
+                                        "get_inbounds failed for entry node: {}",
+                                        err
+                                    ))
+                                })?;
+                            let hop_port = entry_inbounds
+                                .iter()
+                                .find(|ib| ib.tag.starts_with(&candidate))
+                                .map(|ib| ib.port)
+                                .and_then(|p| if p > 0 { Some(p) } else { None })
+                                .ok_or_else(|| {
+                                    UsecaseError::Validation(format!(
+                                        "resolve_inbound_port_by_tag failed: {} and no fallback inbound found",
+                                        e
+                                    ))
+                                })?;
+                            hop_port
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                };
                 udp_entry_endpoint = Some((server.clone(), udp_port));
 
                 udp_profile_vo = Some(build_profile(
