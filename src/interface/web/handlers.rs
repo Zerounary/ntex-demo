@@ -8,6 +8,7 @@ use sea_orm::{
     QuerySelect, Set,
 };
 use serde::Deserialize;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::env;
@@ -231,6 +232,35 @@ struct AcceleratorActivityConfig {
 }
 
 const ACCELERATOR_ACTIVITY_KEY: &str = "accelerator_activity";
+const ENTRY_CONFIG_KEY: &str = "entry_config";
+
+#[web::get("/entry_config")]
+pub async fn entry_config(state: State<AppState>) -> Result<HttpResponse, AppError> {
+    let row = config_entry::Entity::find_by_id(ENTRY_CONFIG_KEY.to_string())
+        .one(&state.db)
+        .await
+        .map_err(|e| {
+            UsecaseError::Repository(RepositoryError::Persistence(format!(
+                "query entry_config failed: {}",
+                e
+            )))
+        })?;
+
+    let payload = row
+        .map(|m| m.payload)
+        .unwrap_or_else(|| {
+            json!({
+                "client": {
+                    "support": "--"
+                },
+                "business": {
+                    "cooperation": "--"
+                }
+            })
+        });
+
+    Ok(ApiResponse::success(payload).into_http(StatusCode::OK))
+}
 
 fn extract_reality_client_params(
     inbound: &crate::infrastructure::admin_config::InboundConfig,

@@ -7,6 +7,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::scope("/api")
             .service(handlers::accelerator_bootstrap)
             .service(handlers::accelerator_games)
+            .service(handlers::entry_config)
             .service(handlers::dashboard_announcements)
             .service(handlers::library_games)
             .service(handlers::accelerator_search)

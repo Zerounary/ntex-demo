@@ -173,6 +173,7 @@ async fn seed_config_entries(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
         ("settings_meta", settings_payload()),
         ("navigation", navigation_payload()),
         ("accelerator_activity", accelerator_activity_payload()),
+        ("entry_config", entry_config_payload()),
     ];
 
     for (key, payload) in entries {
@@ -275,6 +276,17 @@ fn accelerator_activity_payload() -> JsonValue {
                 "num": 30
             }
         ]
+    })
+}
+
+fn entry_config_payload() -> JsonValue {
+    json!({
+        "client": {
+            "support": "--"
+        },
+        "business": {
+            "cooperation": "--"
+        }
     })
 }
 
