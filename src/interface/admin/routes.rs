@@ -29,6 +29,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     cfg.service(handlers::delete_chain);
 
     cfg.service(handlers::refresh_node_network_interfaces);
+
+    cfg.service(handlers::firewall_list_rules);
+    cfg.service(handlers::firewall_upsert_port_rule);
+    cfg.service(handlers::firewall_delete_rule);
     
     // 用户管理
     cfg.service(handlers::add_user);

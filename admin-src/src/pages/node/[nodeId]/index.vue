@@ -298,6 +298,7 @@
               <OutboundManagement v-if="activeTab === 'outbounds'" />
               <RoutingManagement v-if="activeTab === 'routing'" />
               <UserMapping v-if="activeTab === 'mapping'" />
+              <FirewallManagement v-if="activeTab === 'firewall'" />
               <MaintenanceMode v-if="activeTab === 'maintenance'" />
             </div>
           </transition>
@@ -381,6 +382,7 @@ import OutboundManagement from '@/components/OutboundManagement.vue';
 import RoutingManagement from '@/components/RoutingManagement.vue';
 import UserMapping from '@/components/UserMapping.vue';
 import MaintenanceMode from '@/components/MaintenanceMode.vue';
+import FirewallManagement from '@/components/FirewallManagement.vue';
 import * as adminApi from '@/api/admin';
 import { useToastStore } from '@/stores/toast';
 
@@ -408,6 +410,7 @@ const tabs = [
   { id: 'outbounds', label: 'Outbounds' },
   { id: 'routing', label: 'Routing' },
   { id: 'mapping', label: 'User Map' },
+  { id: 'firewall', label: 'Firewall' },
   { id: 'maintenance', label: 'Maintenance' },
 ];
 

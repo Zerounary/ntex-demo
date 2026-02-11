@@ -409,6 +409,163 @@ pub struct AdminState {
     pub node_transport: Option<std::sync::Arc<dyn NodeTransport>>,
 }
 
+#[derive(Deserialize)]
+pub struct FirewallListQuery {
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub list_prefix: Option<String>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+#[web::get("/api/admin/nodes/{node_id}/firewall/rules")]
+pub async fn firewall_list_rules(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<u64>,
+    Query(query): Query<FirewallListQuery>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let node_id = path.into_inner();
+    let transport = match &state.node_transport {
+        Some(t) => t,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                "msg": "error",
+                "error": "node transport 未配置，无法查询防火墙规则"
+            }))
+        }
+    };
+
+    let timeout = query.timeout.unwrap_or(12);
+    let result = transport
+        .firewall_list(node_id, query.prefix, query.list_prefix, timeout)
+        .await;
+    let Some(result) = result else {
+        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+            "msg": "error",
+            "error": "查询防火墙规则超时或失败"
+        }));
+    };
+
+    HttpResponse::Ok().json(&result)
+}
+
+#[derive(Deserialize)]
+pub struct FirewallUpsertPortRequest {
+    #[serde(default)]
+    pub prefix: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub proto: Option<String>,
+    #[serde(default)]
+    pub port: i32,
+    #[serde(default)]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub remote: Option<Vec<String>>,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+#[web::post("/api/admin/nodes/{node_id}/firewall/rules/upsert_port")]
+pub async fn firewall_upsert_port_rule(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<u64>,
+    Json(body): Json<FirewallUpsertPortRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let node_id = path.into_inner();
+    let transport = match &state.node_transport {
+        Some(t) => t,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                "msg": "error",
+                "error": "node transport 未配置，无法更新防火墙规则"
+            }))
+        }
+    };
+
+    let timeout = body.timeout.unwrap_or(12);
+    let payload = serde_json::json!({
+        "data": {
+            "prefix": body.prefix,
+            "name": body.name,
+            "display_name": body.display_name,
+            "proto": body.proto,
+            "port": body.port,
+            "action": body.action,
+            "dir": body.dir,
+            "remote": body.remote,
+        }
+    });
+
+    let result = transport.firewall_upsert_port(node_id, payload, timeout).await;
+    let Some(result) = result else {
+        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+            "msg": "error",
+            "error": "更新防火墙规则超时或失败"
+        }));
+    };
+    HttpResponse::Ok().json(&result)
+}
+
+#[derive(Deserialize)]
+pub struct FirewallDeleteRequest {
+    #[serde(default)]
+    pub prefix: Option<String>,
+    pub display_name: String,
+    #[serde(default)]
+    pub timeout: Option<u64>,
+}
+
+#[web::post("/api/admin/nodes/{node_id}/firewall/rules/delete")]
+pub async fn firewall_delete_rule(
+    state: State<AdminState>,
+    req: HttpRequest,
+    path: web::types::Path<u64>,
+    Json(body): Json<FirewallDeleteRequest>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let node_id = path.into_inner();
+    let transport = match &state.node_transport {
+        Some(t) => t,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(&serde_json::json!({
+                "msg": "error",
+                "error": "node transport 未配置，无法删除防火墙规则"
+            }))
+        }
+    };
+
+    let timeout = body.timeout.unwrap_or(12);
+    let result = transport
+        .firewall_delete(node_id, body.prefix, body.display_name, timeout)
+        .await;
+    let Some(result) = result else {
+        return HttpResponse::GatewayTimeout().json(&serde_json::json!({
+            "msg": "error",
+            "error": "删除防火墙规则超时或失败"
+        }));
+    };
+    HttpResponse::Ok().json(&result)
+}
+
 fn require_admin_token(req: &HttpRequest) -> Result<(), HttpResponse> {
     let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
     if expected.is_empty() {

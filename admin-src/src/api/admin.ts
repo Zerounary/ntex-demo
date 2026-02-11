@@ -17,6 +17,9 @@ import type {
   MaintenanceMode,
   UserLog,
   UdpLatencyResult,
+  FirewallListResult,
+  FirewallUpsertPortPayload,
+  FirewallDeletePayload,
 } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_BASE_URL || '';
@@ -150,6 +153,47 @@ export async function refreshNodeNetworkInterfaces(
     return response.data;
   }
   throw new Error(response.error || '刷新网络接口信息失败');
+}
+
+export async function firewallListRules(
+  nodeId: number,
+  params?: { prefix?: string | null; list_prefix?: string | null; timeout?: number | null }
+): Promise<FirewallListResult> {
+  const query = params ? buildQuery(params as any) : '';
+  const url = query
+    ? `/api/admin/nodes/${nodeId}/firewall/rules?${query}`
+    : `/api/admin/nodes/${nodeId}/firewall/rules`;
+  const response = await request<FirewallListResult>(url);
+  if (response.msg === 'ok' && response.data) {
+    return response.data;
+  }
+  throw new Error(response.error || '获取防火墙规则失败');
+}
+
+export async function firewallUpsertPortRule(
+  nodeId: number,
+  payload: FirewallUpsertPortPayload
+): Promise<void> {
+  const response = await request(`/api/admin/nodes/${nodeId}/firewall/rules/upsert_port`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '更新防火墙规则失败');
+  }
+}
+
+export async function firewallDeleteRule(
+  nodeId: number,
+  payload: FirewallDeletePayload
+): Promise<void> {
+  const response = await request(`/api/admin/nodes/${nodeId}/firewall/rules/delete`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  if (response.msg !== 'ok') {
+    throw new Error(response.error || '删除防火墙规则失败');
+  }
 }
 
 export async function createNode(

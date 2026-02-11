@@ -33,6 +33,12 @@ pub trait NodeTransport: Send + Sync {
         outbound_tag: &str,
         timeout: u64,
     ) -> Option<Value>;
+
+    async fn firewall_list(&self, node_id: u64, prefix: Option<String>, list_prefix: Option<String>, timeout: u64) -> Option<Value>;
+
+    async fn firewall_upsert_port(&self, node_id: u64, payload: Value, timeout: u64) -> Option<Value>;
+
+    async fn firewall_delete(&self, node_id: u64, prefix: Option<String>, display_name: String, timeout: u64) -> Option<Value>;
 }
 
 #[derive(Clone)]
@@ -84,6 +90,48 @@ impl NodeTransport for GrpcTransport {
             }
         });
         grpc_server::query_node_command(node_id, "udp_probe", payload, timeout)
+            .await
+            .ok()
+    }
+
+    async fn firewall_list(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        list_prefix: Option<String>,
+        timeout: u64,
+    ) -> Option<Value> {
+        let payload = serde_json::json!({
+            "data": {
+                "prefix": prefix,
+                "list_prefix": list_prefix,
+            }
+        });
+        grpc_server::query_node_command(node_id, "firewall_list", payload, timeout)
+            .await
+            .ok()
+    }
+
+    async fn firewall_upsert_port(&self, node_id: u64, payload: Value, timeout: u64) -> Option<Value> {
+        grpc_server::query_node_command(node_id, "firewall_upsert_port", payload, timeout)
+            .await
+            .ok()
+    }
+
+    async fn firewall_delete(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        display_name: String,
+        timeout: u64,
+    ) -> Option<Value> {
+        let payload = serde_json::json!({
+            "data": {
+                "prefix": prefix,
+                "display_name": display_name,
+            }
+        });
+        grpc_server::query_node_command(node_id, "firewall_delete", payload, timeout)
             .await
             .ok()
     }
@@ -209,6 +257,72 @@ impl NodeTransport for DispatchTransport {
             None => None,
         }
     }
+
+    async fn firewall_list(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        list_prefix: Option<String>,
+        timeout: u64,
+    ) -> Option<Value> {
+        let mode = self.node_comm_mode(node_id).await;
+        if mode == "grpc" {
+            return self.grpc.firewall_list(node_id, prefix, list_prefix, timeout).await;
+        }
+        if self.should_try_grpc(node_id, &mode) {
+            if let Some(v) = self.grpc.firewall_list(node_id, prefix.clone(), list_prefix.clone(), timeout).await {
+                return Some(v);
+            }
+        }
+        match self.mqtt.as_ref() {
+            Some(mqtt) => mqtt.firewall_list(node_id, prefix, list_prefix, timeout).await,
+            None => None,
+        }
+    }
+
+    async fn firewall_upsert_port(&self, node_id: u64, payload: Value, timeout: u64) -> Option<Value> {
+        let mode = self.node_comm_mode(node_id).await;
+        if mode == "grpc" {
+            return self.grpc.firewall_upsert_port(node_id, payload, timeout).await;
+        }
+        if self.should_try_grpc(node_id, &mode) {
+            if let Some(v) = self.grpc.firewall_upsert_port(node_id, payload.clone(), timeout).await {
+                return Some(v);
+            }
+        }
+        match self.mqtt.as_ref() {
+            Some(mqtt) => mqtt.firewall_upsert_port(node_id, payload, timeout).await,
+            None => None,
+        }
+    }
+
+    async fn firewall_delete(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        display_name: String,
+        timeout: u64,
+    ) -> Option<Value> {
+        let mode = self.node_comm_mode(node_id).await;
+        if mode == "grpc" {
+            return self.grpc
+                .firewall_delete(node_id, prefix, display_name, timeout)
+                .await;
+        }
+        if self.should_try_grpc(node_id, &mode) {
+            if let Some(v) = self
+                .grpc
+                .firewall_delete(node_id, prefix.clone(), display_name.clone(), timeout)
+                .await
+            {
+                return Some(v);
+            }
+        }
+        match self.mqtt.as_ref() {
+            Some(mqtt) => mqtt.firewall_delete(node_id, prefix, display_name, timeout).await,
+            None => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -256,6 +370,46 @@ impl NodeTransport for MqttTransport {
     ) -> Option<Value> {
         self.mqtt
             .query_udp_latency(node_id, outbound_tag, timeout)
+            .await
+    }
+
+    async fn firewall_list(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        list_prefix: Option<String>,
+        timeout: u64,
+    ) -> Option<Value> {
+        self.mqtt
+            .query_node_command(
+                node_id,
+                "firewall_list",
+                serde_json::json!({"data": {"prefix": prefix, "list_prefix": list_prefix}}),
+                timeout,
+            )
+            .await
+    }
+
+    async fn firewall_upsert_port(&self, node_id: u64, payload: Value, timeout: u64) -> Option<Value> {
+        self.mqtt
+            .query_node_command(node_id, "firewall_upsert_port", payload, timeout)
+            .await
+    }
+
+    async fn firewall_delete(
+        &self,
+        node_id: u64,
+        prefix: Option<String>,
+        display_name: String,
+        timeout: u64,
+    ) -> Option<Value> {
+        self.mqtt
+            .query_node_command(
+                node_id,
+                "firewall_delete",
+                serde_json::json!({"data": {"prefix": prefix, "display_name": display_name}}),
+                timeout,
+            )
             .await
     }
 }

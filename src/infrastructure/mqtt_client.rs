@@ -339,6 +339,70 @@ impl MqttClientManager {
         }
     }
 
+    pub async fn query_node_command(
+        &self,
+        node_id: u64,
+        action: &str,
+        payload: Value,
+        timeout: u64,
+    ) -> Option<Value> {
+        let request_id = format!(
+            "cmd_{}_{}_{}",
+            action,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            node_id
+        );
+
+        let data = payload.get("data").cloned().unwrap_or(payload);
+        let request_data = serde_json::json!({
+            "node_id": node_id,
+            "token": "123",
+            "action": action,
+            "data": data,
+        });
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        {
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.insert(request_id.clone(), tx);
+        }
+
+        let request_topic = format!("xrayr/node/{}/request/{}", node_id, request_id);
+        let request_json = serde_json::to_string(&request_data)
+            .unwrap_or_else(|_| r#"{\"msg\":\"error\",\"error\":\"序列化请求失败\"}"#.to_string());
+
+        if let Err(e) = self
+            .client
+            .publish(&request_topic, QoS::AtLeastOnce, false, request_json.as_bytes())
+            .await
+        {
+            error!(
+                "❌ [MQTT Command] 发送节点命令失败: topic={}, action={}, error={}",
+                request_topic, action, e
+            );
+            let mut waiters = self.response_waiters.lock().await;
+            waiters.remove(&request_id);
+            return None;
+        }
+
+        match time::timeout(Duration::from_secs(timeout), rx).await {
+            Ok(Ok(response)) => Some(response),
+            Ok(Err(_)) => {
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                None
+            }
+            Err(_) => {
+                let mut waiters = self.response_waiters.lock().await;
+                waiters.remove(&request_id);
+                None
+            }
+        }
+    }
+
     /// 等待节点拉取指定类型的配置。
     ///
     /// 节点收到 update 通知后，会通过 request(action=user/outbound/...) 来拉取数据。

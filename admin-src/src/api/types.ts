@@ -155,3 +155,36 @@ export interface UdpLatencyResult {
   error?: string;
 }
 
+export interface FirewallRule {
+  display_name: string;
+  enabled: string;
+  direction: string;
+  action: string;
+  profile: string;
+  protocol: string;
+  local_port: string;
+  remote_address: string;
+}
+
+export interface FirewallListResult {
+  rules: FirewallRule[];
+}
+
+export interface FirewallUpsertPortPayload {
+  prefix?: string | null;
+  name: string;
+  display_name?: string | null;
+  proto?: string | null;
+  port: number;
+  action?: string | null;
+  dir?: string | null;
+  remote?: string[] | null;
+  timeout?: number | null;
+}
+
+export interface FirewallDeletePayload {
+  prefix?: string | null;
+  display_name: string;
+  timeout?: number | null;
+}
+
