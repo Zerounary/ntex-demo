@@ -32,6 +32,7 @@ use crate::application::node_usecase::NodeUseCase;
 use crate::application::ports::AuthRepository;
 use crate::application::errors::{UsecaseError, RepositoryError};
 use crate::domain::cdk::AccountValidationRequest;
+use crate::grant_cdk_reward;
 use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
     NodeRepositoryImpl,
@@ -377,47 +378,7 @@ async fn apply_invite_rewards(
             return Err("invalid num for invite reward".to_string());
         }
 
-        if cdk_type == "bandwidth" {
-            auth_repo
-                .set_bandwidth_mbps(inviter_id, num)
-                .await
-                .map_err(|e| format!("set_bandwidth_mbps failed: {:?}", e))?;
-        } else if cdk_type == "minute" {
-            auth_repo
-                .add_remaining_minutes(inviter_id, num)
-                .await
-                .map_err(|e| format!("add_remaining_minutes failed: {:?}", e))?;
-        } else {
-            let cdk_type_enum = crate::domain::cdk::CdkType::from_str(&cdk_type)
-                .ok_or_else(|| format!("invalid cdkType: {}", cdk_type))?;
-            if cdk_type_enum == crate::domain::cdk::CdkType::Minute
-                || cdk_type_enum == crate::domain::cdk::CdkType::Bandwidth
-            {
-                return Err(format!("invalid pass-type cdkType: {}", cdk_type));
-            }
-
-            let inviter = auth_repo
-                .get_user_by_id(inviter_id)
-                .await
-                .map_err(|e| format!("get_user_by_id failed: {:?}", e))?
-                .ok_or_else(|| "inviter not found".to_string())?;
-
-            let duration_minutes = cdk_type_enum.duration_minutes() * num;
-            if duration_minutes <= 0 {
-                return Err("invalid duration computed for pass reward".to_string());
-            }
-
-            let now = chrono::Utc::now();
-            let next = if inviter.valid_until > now {
-                inviter.valid_until + chrono::Duration::minutes(duration_minutes)
-            } else {
-                now + chrono::Duration::minutes(duration_minutes)
-            };
-            auth_repo
-                .update_user_valid_until(inviter_id, next)
-                .await
-                .map_err(|e| format!("update_user_valid_until failed: {:?}", e))?;
-        }
+        grant_cdk_reward(&auth_repo, inviter_id, &cdk_type, num).await?;
 
         let grant = accelerator_invite_reward_grant::ActiveModel {
             id: sea_orm::NotSet,
@@ -465,49 +426,7 @@ async fn apply_user_register_activity_reward(
     }
 
     let auth_repo = AuthRepositoryImpl::new(db);
-    let cdk_type = cfg.cdk_type.trim().to_lowercase();
-
-    if cdk_type == "bandwidth" {
-        auth_repo
-            .set_bandwidth_mbps(user_id, num)
-            .await
-            .map_err(|e| format!("set_bandwidth_mbps failed: {:?}", e))?;
-    } else if cdk_type == "minute" {
-        auth_repo
-            .add_remaining_minutes(user_id, num)
-            .await
-            .map_err(|e| format!("add_remaining_minutes failed: {:?}", e))?;
-    } else {
-        let cdk_type_enum = crate::domain::cdk::CdkType::from_str(&cdk_type)
-            .ok_or_else(|| format!("invalid cdkType: {}", cdk_type))?;
-        if cdk_type_enum == crate::domain::cdk::CdkType::Minute
-            || cdk_type_enum == crate::domain::cdk::CdkType::Bandwidth
-        {
-            return Err(format!("invalid pass-type cdkType: {}", cdk_type));
-        }
-
-        let user = auth_repo
-            .get_user_by_id(user_id)
-            .await
-            .map_err(|e| format!("get_user_by_id failed: {:?}", e))?
-            .ok_or_else(|| "user not found".to_string())?;
-
-        let duration_minutes = cdk_type_enum.duration_minutes() * num;
-        if duration_minutes <= 0 {
-            return Err("invalid duration computed for register reward".to_string());
-        }
-
-        let now = chrono::Utc::now();
-        let next = if user.valid_until > now {
-            user.valid_until + chrono::Duration::minutes(duration_minutes)
-        } else {
-            now + chrono::Duration::minutes(duration_minutes)
-        };
-        auth_repo
-            .update_user_valid_until(user_id, next)
-            .await
-            .map_err(|e| format!("update_user_valid_until failed: {:?}", e))?;
-    }
+    grant_cdk_reward(&auth_repo, user_id, &cfg.cdk_type, num).await?;
 
     Ok(())
 }
