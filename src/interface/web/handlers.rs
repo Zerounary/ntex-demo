@@ -315,6 +315,30 @@ fn extract_reality_client_params(
     Ok((server_name, public_key, short_id, fingerprint, spider_x))
 }
 
+fn pick_inbound_host(public_ip: &str, listen: Option<&str>) -> String {
+    match listen.map(str::trim) {
+        Some(v) if !v.is_empty() && v != "0.0.0.0" && v != "::" => v.to_string(),
+        _ => public_ip.to_string(),
+    }
+}
+
+async fn resolve_inbound_host_by_tag(
+    config: &crate::infrastructure::admin_config::AdminConfigStore,
+    node_id: u64,
+    inbound_tag: &str,
+    public_ip: &str,
+) -> Result<String, UsecaseError> {
+    let inbounds = config
+        .get_inbounds(node_id)
+        .await
+        .map_err(|e| UsecaseError::Validation(format!("get_inbounds failed: {}", e)))?;
+    let listen = inbounds
+        .into_iter()
+        .find(|i| i.tag == inbound_tag)
+        .and_then(|i| i.listen);
+    Ok(pick_inbound_host(public_ip, listen.as_deref()))
+}
+
 async fn apply_invite_rewards(
     db: &sea_orm::DatabaseConnection,
     inviter_id: i64,
@@ -1804,7 +1828,7 @@ pub async fn session_start(
 
     match binding.r#type.as_str() {
         "node" => {
-            let server = state
+            let public_ip = state
                 .admin_config
                 .get_node_public_ip(primary_node_id)
                 .await
@@ -1828,6 +1852,7 @@ pub async fn session_start(
                 .ok_or_else(|| UsecaseError::Validation("missing inbound tag entrydoor".to_string()))?;
             let (reality_server_name, reality_public_key, reality_short_id, reality_fingerprint, reality_spider_x) =
                 extract_reality_client_params(inbound)?;
+            let server = pick_inbound_host(&public_ip, inbound.listen.as_deref());
 
             profile_vo = Some(build_profile(
                 primary_node_id.to_string(),
@@ -1851,7 +1876,7 @@ pub async fn session_start(
             if let Some(tcp_chain_id) = binding.tcp_chain_id {
                 let entry_node_id = resolve_chain_entry_node_id(&state.db, tcp_chain_id).await?;
                 let exit_node_id = resolve_chain_exit_node_id(&state.db, tcp_chain_id).await?;
-                let server = state
+                let public_ip = state
                     .admin_config
                     .get_node_public_ip(entry_node_id)
                     .await
@@ -1890,12 +1915,19 @@ pub async fn session_start(
                         })?,
                     Err(e) => return Err(e.into()),
                 };
-                tcp_entry_endpoint = Some((server.clone(), tcp_port));
+                let tcp_server = resolve_inbound_host_by_tag(
+                    &state.admin_config,
+                    entry_node_id,
+                    &tag,
+                    &public_ip,
+                )
+                .await?;
+                tcp_entry_endpoint = Some((tcp_server.clone(), tcp_port));
 
                 tcp_profile_vo = Some(build_profile(
                     entry_node_id.to_string(),
                     primary_admin_uuid.clone(),
-                    server.clone(),
+                    tcp_server.clone(),
                     tcp_port,
                     reality_server_name,
                     reality_public_key,
@@ -1916,7 +1948,7 @@ pub async fn session_start(
             if let Some(udp_chain_id) = binding.udp_chain_id {
                 let entry_node_id = resolve_chain_entry_node_id(&state.db, udp_chain_id).await?;
                 let exit_node_id = resolve_chain_exit_node_id(&state.db, udp_chain_id).await?;
-                let server = state
+                let public_ip = state
                     .admin_config
                     .get_node_public_ip(entry_node_id)
                     .await
@@ -1924,6 +1956,7 @@ pub async fn session_start(
                         UsecaseError::Validation(format!("get_node_public_ip failed: {}", e))
                     })?;
                 let first_hop_tag = format!("chain_{}_1", udp_chain_id);
+                let socks_tag = format!("chain_{}_socks", udp_chain_id);
                 let inbounds = state
                     .admin_config
                     .get_inbounds(exit_node_id)
@@ -1945,7 +1978,6 @@ pub async fn session_start(
                     Ok(p) => p,
                     Err(e) => {
                         // fallback: look for matching inbounds on entry node tagged as chain_{id}_*
-                        let socks_tag = format!("chain_{}_socks", udp_chain_id);
                         if let Ok(port) = resolve_inbound_port_by_tag(&state.admin_config, exit_node_id, &socks_tag).await {
                             port
                         } else if entry_node_id == exit_node_id {
@@ -1978,12 +2010,19 @@ pub async fn session_start(
                         }
                     }
                 };
-                udp_entry_endpoint = Some((server.clone(), udp_port));
+                let udp_server = resolve_inbound_host_by_tag(
+                    &state.admin_config,
+                    entry_node_id,
+                    &socks_tag,
+                    &public_ip,
+                )
+                .await?;
+                udp_entry_endpoint = Some((udp_server.clone(), udp_port));
 
                 udp_profile_vo = Some(build_profile(
                     entry_node_id.to_string(),
                     primary_admin_uuid.clone(),
-                    server.clone(),
+                    udp_server.clone(),
                     udp_port,
                     reality_server_name,
                     reality_public_key,
