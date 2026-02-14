@@ -308,12 +308,8 @@ fn entry_config_payload() -> JsonValue {
             "actions": [
                 {
                     "label": "立即注册",
-                    "variant": "primary"
-                },
-                {
-                    "label": "稍后再说",
-                    "variant": "ghost",
-                    "autoClose": true
+                    "variant": "primary",
+                    "action": "login"
                 }
             ]
         }
