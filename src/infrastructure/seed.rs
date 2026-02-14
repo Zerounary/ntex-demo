@@ -295,6 +295,27 @@ fn entry_config_payload() -> JsonValue {
         },
         "business": {
             "cooperation": "--"
+        },
+        "launchModal": {
+            "id": "nebula-campaign-202402",
+            "enabled": true,
+            "title": "新用户福利",
+            "subtitle": "注册即送 3 天加速时长",
+            "description": "新用户注册即享 3 天免费加速特权，立即开启流畅网络体验！",
+            "image": "https://cdn.jsdelivr.net/gh/zerounary/cdn-assets/nebula/launch-modal.png",
+            "accent": "linear-gradient(135deg, #ff8a5c, #7c3aed)",
+            "dismissible": true,
+            "actions": [
+                {
+                    "label": "立即注册",
+                    "variant": "primary"
+                },
+                {
+                    "label": "稍后再说",
+                    "variant": "ghost",
+                    "autoClose": true
+                }
+            ]
         }
     })
 }

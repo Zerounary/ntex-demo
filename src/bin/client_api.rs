@@ -1,5 +1,7 @@
 #[path = "../application/mod.rs"]
 mod application;
+#[path = "../cdk.rs"]
+mod cdk;
 #[path = "../config.rs"]
 mod config;
 #[path = "../domain/mod.rs"]

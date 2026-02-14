@@ -32,7 +32,7 @@ use crate::application::node_usecase::NodeUseCase;
 use crate::application::ports::AuthRepository;
 use crate::application::errors::{UsecaseError, RepositoryError};
 use crate::domain::cdk::AccountValidationRequest;
-use crate::grant_cdk_reward;
+use crate::cdk::grant_cdk_reward;
 use crate::infrastructure::persistence::repositories::{
     AcceleratorRepositoryImpl, AuthRepositoryImpl, CdkRepositoryImpl, ConfigRepositoryImpl,
     NodeRepositoryImpl,
