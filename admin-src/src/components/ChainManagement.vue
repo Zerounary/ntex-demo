@@ -131,6 +131,7 @@
                           TRANSPARENT
                         </span>
                         <span class="text-[10px] text-gray-400">{{ c.routes.length }} hops</span>
+                        <span class="text-[10px] text-gray-300">ID: {{ c.id }}</span>
                       </div>
                     </div>
                     <div class="flex flex-col items-end gap-2 shrink-0">
