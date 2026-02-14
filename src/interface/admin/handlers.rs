@@ -12,6 +12,10 @@ use log::{info, error};
 use uuid::Uuid;
 
 use crate::infrastructure::admin_config::{AdminConfigStore, ChainDefinition, InboundConfig, OutboundConfig, RoutingRule};
+use crate::infrastructure::persistence::repositories::{CdkRepositoryImpl, AuthRepositoryImpl};
+use crate::application::cdk_usecase::CdkUseCase;
+use crate::application::errors::UsecaseError;
+use crate::interface::web::dto::{CdkGenerateRequestVO, CdkCodeVO};
 use crate::infrastructure::node_transport::NodeTransport;
 use crate::infrastructure::persistence::{
     accelerator_game, accelerator_game_node_binding, accelerator_node, admin_node_config, admin_inbound, admin_outbound,
@@ -373,6 +377,63 @@ pub async fn update_game(
     }
 }
 
+#[web::post("/api/admin/cdk/generate")]
+pub async fn admin_generate_cdks(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Json(body): Json<CdkGenerateRequestVO>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let cdk_repo = CdkRepositoryImpl::new(&state.db);
+    let auth_repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
+
+    match usecase.generate_cdks(body.into()).await {
+        Ok(cdks) => {
+            let payload: Vec<CdkCodeVO> = cdks.into_iter().map(Into::into).collect();
+            HttpResponse::Created().json(&serde_json::json!({
+                "msg": "ok",
+                "data": payload,
+            }))
+        }
+        Err(err) => map_usecase_err(err),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AdminCdkListQuery {
+    pub status: Option<String>,
+}
+
+#[web::get("/api/admin/cdk/list")]
+pub async fn admin_list_cdks(
+    state: State<AdminState>,
+    req: HttpRequest,
+    Query(query): Query<AdminCdkListQuery>,
+) -> HttpResponse {
+    if let Err(resp) = require_admin_token(&req) {
+        return resp;
+    }
+
+    let cdk_repo = CdkRepositoryImpl::new(&state.db);
+    let auth_repo = AuthRepositoryImpl::new(&state.db);
+    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
+
+    match usecase.list_cdks(query.status.as_deref()).await {
+        Ok(cdks) => {
+            let payload: Vec<CdkCodeVO> = cdks.into_iter().map(Into::into).collect();
+            HttpResponse::Ok().json(&serde_json::json!({
+                "msg": "ok",
+                "data": payload,
+            }))
+        }
+        Err(err) => map_usecase_err(err),
+    }
+}
+
 #[web::delete("/api/admin/games/{game_id}")]
 pub async fn delete_game(
     state: State<AdminState>,
@@ -407,6 +468,31 @@ pub struct AdminState {
     pub config: AdminConfigStore,
     pub db: DatabaseConnection,
     pub node_transport: Option<std::sync::Arc<dyn NodeTransport>>,
+}
+
+fn map_usecase_err(err: UsecaseError) -> HttpResponse {
+    match err {
+        UsecaseError::Validation(msg) => HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": msg,
+        })),
+        UsecaseError::NotFound(res) => HttpResponse::NotFound().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("{} not found", res),
+        })),
+        UsecaseError::Unauthorized => HttpResponse::Unauthorized().json(&serde_json::json!({
+            "msg": "error",
+            "error": "unauthorized",
+        })),
+        UsecaseError::Expired => HttpResponse::BadRequest().json(&serde_json::json!({
+            "msg": "error",
+            "error": "operation expired",
+        })),
+        UsecaseError::Repository(e) => HttpResponse::InternalServerError().json(&serde_json::json!({
+            "msg": "error",
+            "error": format!("repository error: {}", e),
+        })),
+    }
 }
 
 #[derive(Deserialize)]

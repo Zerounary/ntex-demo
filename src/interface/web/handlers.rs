@@ -2610,19 +2610,6 @@ pub async fn list_active_nodes(state: State<AppState>) -> Result<HttpResponse, A
     Ok(ApiResponse::success(nodes).into_http(StatusCode::OK))
 }
 
-#[web::post("/cdk/generate")]
-pub async fn generate_cdks(
-    state: State<AppState>,
-    Json(body): Json<CdkGenerateRequestVO>,
-) -> Result<HttpResponse, AppError> {
-    let cdk_repo = CdkRepositoryImpl::new(&state.db);
-    let auth_repo = AuthRepositoryImpl::new(&state.db);
-    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-    let cdks = usecase.generate_cdks(body.into()).await?;
-    let cdks_vo: Vec<CdkCodeVO> = cdks.into_iter().map(Into::into).collect();
-    Ok(ApiResponse::success(cdks_vo).into_http(StatusCode::CREATED))
-}
-
 #[web::post("/cdk/redeem")]
 pub async fn redeem_cdk(
     state: State<AppState>,
@@ -2636,20 +2623,6 @@ pub async fn redeem_cdk(
     request.user_id = user.user.id;
     let response = usecase.redeem_cdk(request).await?;
     Ok(ApiResponse::success(CdkRedeemResponseVO::from(response)).into_http(StatusCode::OK))
-}
-
-#[web::get("/cdk/list")]
-pub async fn list_cdks(
-    state: State<AppState>,
-    Query(query): Query<std::collections::HashMap<String, String>>,
-) -> Result<HttpResponse, AppError> {
-    let cdk_repo = CdkRepositoryImpl::new(&state.db);
-    let auth_repo = AuthRepositoryImpl::new(&state.db);
-    let usecase = CdkUseCase::new(cdk_repo, auth_repo);
-    let status = query.get("status").map(|s| s.as_str());
-    let cdks = usecase.list_cdks(status).await?;
-    let cdks_vo: Vec<CdkCodeVO> = cdks.into_iter().map(Into::into).collect();
-    Ok(ApiResponse::success(cdks_vo).into_http(StatusCode::OK))
 }
 
 #[web::post("/account/validate")]

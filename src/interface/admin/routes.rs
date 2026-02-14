@@ -67,6 +67,10 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
     // accelerator_activity 活动配置
     cfg.service(handlers::get_accelerator_activity);
     cfg.service(handlers::set_accelerator_activity);
+
+    // CDK management
+    cfg.service(handlers::admin_generate_cdks);
+    cfg.service(handlers::admin_list_cdks);
     
 }
 
