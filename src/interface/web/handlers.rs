@@ -231,7 +231,16 @@ struct AcceleratorActivityConfig {
     invite_rewards: Vec<AcceleratorInviteRewardTier>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserRegisterActivityConfig {
+    enabled: bool,
+    cdk_type: String,
+    num: i64,
+}
+
 const ACCELERATOR_ACTIVITY_KEY: &str = "accelerator_activity";
+const USER_REGISTER_ACTIVITY_KEY: &str = "user_register_activity";
 const ENTRY_CONFIG_KEY: &str = "entry_config";
 
 #[web::get("/entry_config")]
@@ -424,6 +433,80 @@ async fn apply_invite_rewards(
             .insert(db)
             .await
             .map_err(|e| format!("insert invite_reward_grant failed: {}", e))?;
+    }
+
+    Ok(())
+}
+
+async fn apply_user_register_activity_reward(
+    db: &sea_orm::DatabaseConnection,
+    user_id: i64,
+) -> Result<(), String> {
+    let row = config_entry::Entity::find_by_id(USER_REGISTER_ACTIVITY_KEY.to_string())
+        .one(db)
+        .await
+        .map_err(|e| format!("query user_register_activity failed: {}", e))?;
+
+    let cfg: UserRegisterActivityConfig = match row {
+        Some(m) => serde_json::from_value(m.payload)
+            .map_err(|e| format!("invalid user_register_activity payload: {}", e))?,
+        None => {
+            return Ok(());
+        }
+    };
+
+    if !cfg.enabled {
+        return Ok(());
+    }
+
+    let num = cfg.num;
+    if num <= 0 {
+        return Ok(());
+    }
+
+    let auth_repo = AuthRepositoryImpl::new(db);
+    let cdk_type = cfg.cdk_type.trim().to_lowercase();
+
+    if cdk_type == "bandwidth" {
+        auth_repo
+            .set_bandwidth_mbps(user_id, num)
+            .await
+            .map_err(|e| format!("set_bandwidth_mbps failed: {:?}", e))?;
+    } else if cdk_type == "minute" {
+        auth_repo
+            .add_remaining_minutes(user_id, num)
+            .await
+            .map_err(|e| format!("add_remaining_minutes failed: {:?}", e))?;
+    } else {
+        let cdk_type_enum = crate::domain::cdk::CdkType::from_str(&cdk_type)
+            .ok_or_else(|| format!("invalid cdkType: {}", cdk_type))?;
+        if cdk_type_enum == crate::domain::cdk::CdkType::Minute
+            || cdk_type_enum == crate::domain::cdk::CdkType::Bandwidth
+        {
+            return Err(format!("invalid pass-type cdkType: {}", cdk_type));
+        }
+
+        let user = auth_repo
+            .get_user_by_id(user_id)
+            .await
+            .map_err(|e| format!("get_user_by_id failed: {:?}", e))?
+            .ok_or_else(|| "user not found".to_string())?;
+
+        let duration_minutes = cdk_type_enum.duration_minutes() * num;
+        if duration_minutes <= 0 {
+            return Err("invalid duration computed for register reward".to_string());
+        }
+
+        let now = chrono::Utc::now();
+        let next = if user.valid_until > now {
+            user.valid_until + chrono::Duration::minutes(duration_minutes)
+        } else {
+            now + chrono::Duration::minutes(duration_minutes)
+        };
+        auth_repo
+            .update_user_valid_until(user_id, next)
+            .await
+            .map_err(|e| format!("update_user_valid_until failed: {:?}", e))?;
     }
 
     Ok(())
@@ -2366,6 +2449,10 @@ pub async fn accelerator_user_register(
         if let Err(e) = apply_invite_rewards(&state.db, inviter_id, new_user_id).await {
             log::warn!("apply_invite_rewards failed (ignored): {}", e);
         }
+    }
+
+    if let Err(e) = apply_user_register_activity_reward(&state.db, new_user_id).await {
+        log::warn!("apply_user_register_activity_reward failed (ignored): {}", e);
     }
 
     Ok(ApiResponse::success(MessageResponse {

@@ -173,6 +173,7 @@ async fn seed_config_entries(db: &DatabaseConnection) -> Result<(), sea_orm::DbE
         ("settings_meta", settings_payload()),
         ("navigation", navigation_payload()),
         ("accelerator_activity", accelerator_activity_payload()),
+        ("user_register_activity", user_register_activity_payload()),
         ("entry_config", entry_config_payload()),
     ];
 
@@ -224,6 +225,14 @@ fn library_payload() -> JsonValue {
         "opsMemos": [
             { "label": "节点巡航", "detail": "亚洲集群调度完成" }
         ]
+    })
+}
+
+fn user_register_activity_payload() -> JsonValue {
+    json!({
+        "enabled": true,
+        "cdkType": "day",
+        "num": 3
     })
 }
 
