@@ -286,11 +286,6 @@ pub async fn apply_chain_udp(
         endpoints.push((ip, socks_port));
     }
 
-    let entry_ip = endpoints
-        .first()
-        .map(|(ip, _)| ip.clone())
-        .ok_or_else(|| "chain has no entry endpoint".to_string())?;
-
     let mut results: Vec<Value> = Vec::new();
 
     for i in 0..(node_path.len() - 1) {
@@ -349,15 +344,13 @@ pub async fn apply_chain_udp(
     let socks_tag = format!("chain_{}_socks", chain_id);
     let socks_inbound = InboundConfig {
         tag: socks_tag.clone(),
-        protocol: "socks".to_string(),
+        protocol: "shadowsocks".to_string(),
         port: socks_port as i32,
         listen: Some("0.0.0.0".to_string()),
         settings: serde_json::json!({
-            "accounts": [],
-            "auth": "password",
-            "udp": true,
-            "userLevel": 0,
-            "ip": entry_ip
+            "network": "udp",
+            "method": "chacha20-ietf-poly1305",
+            "clients": []
         }),
         stream_settings: None,
         sniffing: None,

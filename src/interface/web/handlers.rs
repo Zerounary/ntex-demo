@@ -1564,8 +1564,10 @@ pub async fn session_start(
     let mut primary_outbound_tag: String = "".to_string();
 
     let mut tcp_admin_user_id: Option<u64> = None;
+    let mut tcp_admin_uuid: Option<String> = None;
     let mut tcp_outbound_tag: Option<String> = None;
     let mut udp_admin_user_id: Option<u64> = None;
+    let mut udp_admin_uuid: Option<String> = None;
     let mut udp_outbound_tag: Option<String> = None;
 
     match binding.r#type.as_str() {
@@ -1611,17 +1613,19 @@ pub async fn session_start(
                         .unwrap_or(8);
                     cp_add_user(&*state, tcp_node_id, uuid.clone(), st, 0, true, sync_timeout).await?
                 };
+                let admin_uuid = admin_user.uuid.clone();
                 tcp_admin_user_id = Some(admin_user.id);
-                primary_admin_uuid = admin_user.uuid;
+                tcp_admin_uuid = Some(admin_uuid.clone());
+                primary_admin_uuid = admin_uuid.clone();
                 let tag = select_outbound_tag(&*state, tcp_node_id, desired_outbound_tag).await?;
                 if use_main_admin_http() {
-                    main_admin_add_mapping(tcp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                    main_admin_add_mapping(tcp_node_id, admin_uuid.clone(), tag.clone()).await?;
                 } else {
                     let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
                         .ok()
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(8);
-                    cp_add_mapping(&*state, tcp_node_id, primary_admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
+                    cp_add_mapping(&*state, tcp_node_id, admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
                 }
                 tcp_outbound_tag = Some(tag);
             }
@@ -1636,26 +1640,34 @@ pub async fn session_start(
                         .unwrap_or(8);
                     cp_add_user(&*state, udp_node_id, uuid.clone(), st, 0, true, sync_timeout).await?
                 };
+                let admin_uuid = admin_user.uuid.clone();
                 udp_admin_user_id = Some(admin_user.id);
-                primary_admin_uuid = admin_user.uuid;
+                udp_admin_uuid = Some(admin_uuid.clone());
+                primary_admin_uuid = admin_uuid.clone();
                 let tag = select_outbound_tag(&*state, udp_node_id, desired_outbound_tag).await?;
                 if use_main_admin_http() {
-                    main_admin_add_mapping(udp_node_id, primary_admin_uuid.clone(), tag.clone()).await?;
+                    main_admin_add_mapping(udp_node_id, admin_uuid.clone(), tag.clone()).await?;
                 } else {
                     let sync_timeout = env::var("SESSION_SYNC_TIMEOUT")
                         .ok()
                         .and_then(|v| v.parse::<u64>().ok())
                         .unwrap_or(8);
-                    cp_add_mapping(&*state, udp_node_id, primary_admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
+                    cp_add_mapping(&*state, udp_node_id, admin_uuid.clone(), tag.clone(), true, sync_timeout).await?;
                 }
                 udp_outbound_tag = Some(tag);
             }
 
             // primary fields pick tcp first (if exists) else udp
             if let (Some(node_id), Some(admin_id), Some(tag)) = (tcp_exit_node_id, tcp_admin_user_id, tcp_outbound_tag.clone()) {
+                if let Some(admin_uuid) = tcp_admin_uuid.clone() {
+                    primary_admin_uuid = admin_uuid;
+                }
                 primary_admin_user_id = admin_id;
                 primary_outbound_tag = tag;
             } else if let (Some(node_id), Some(admin_id), Some(tag)) = (udp_exit_node_id, udp_admin_user_id, udp_outbound_tag.clone()) {
+                if let Some(admin_uuid) = udp_admin_uuid.clone() {
+                    primary_admin_uuid = admin_uuid;
+                }
                 primary_admin_user_id = admin_id;
                 primary_outbound_tag = tag;
             } else {
@@ -1722,6 +1734,7 @@ pub async fn session_start(
         reality_spider_x: String,
         udp_server_override: Option<String>,
         udp_port: i32,
+        udp_proxy_password: Option<String>,
         process_name: String,
         region: String,
     | {
@@ -1745,6 +1758,7 @@ pub async fn session_start(
             reality_fingerprint,
             reality_spider_x,
             udp_proxy: format!("{}:{}", udp_host, udp_port),
+            udp_proxy_password,
             mode: binding.mode.clone().unwrap_or_else(|| "进程模式".to_string()),
             status: binding.status.clone().unwrap_or_else(|| "active".to_string()),
             region,
@@ -1866,6 +1880,7 @@ pub async fn session_start(
                 reality_spider_x,
                 None,
                 port,
+                None,
                 game.process_name,
                 binding.region.clone().unwrap_or_else(|| game.region),
             ));
@@ -1926,7 +1941,9 @@ pub async fn session_start(
 
                 tcp_profile_vo = Some(build_profile(
                     entry_node_id.to_string(),
-                    primary_admin_uuid.clone(),
+                    tcp_admin_uuid
+                        .clone()
+                        .unwrap_or_else(|| primary_admin_uuid.clone()),
                     tcp_server.clone(),
                     tcp_port,
                     reality_server_name,
@@ -1936,6 +1953,7 @@ pub async fn session_start(
                     reality_spider_x,
                     None,
                     tcp_port,
+                    None,
                     game.process_name.clone(),
                     binding.region.clone().unwrap_or_else(|| game.region.clone()),
                 ));
@@ -2021,7 +2039,9 @@ pub async fn session_start(
 
                 udp_profile_vo = Some(build_profile(
                     entry_node_id.to_string(),
-                    primary_admin_uuid.clone(),
+                    udp_admin_uuid
+                        .clone()
+                        .unwrap_or_else(|| primary_admin_uuid.clone()),
                     udp_server.clone(),
                     udp_port,
                     reality_server_name,
@@ -2031,6 +2051,7 @@ pub async fn session_start(
                     reality_spider_x,
                     None,
                     udp_port,
+                    udp_admin_uuid.clone(),
                     game.process_name.clone(),
                     binding.region.clone().unwrap_or_else(|| game.region.clone()),
                 ));
@@ -2048,6 +2069,7 @@ pub async fn session_start(
             }
             if let (Some((udp_host, udp_port)), Some(profile)) = (udp_entry_endpoint.clone(), profile_vo.as_mut()) {
                 profile.udp_proxy = format!("{}:{}", udp_host, udp_port);
+                profile.udp_proxy_password = udp_admin_uuid.clone();
             }
         }
         other => {

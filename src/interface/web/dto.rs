@@ -170,6 +170,8 @@ pub struct ProfileVO {
     pub reality_fingerprint: String,
     pub reality_spider_x: String,
     pub udp_proxy: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub udp_proxy_password: Option<String>,
     pub mode: String,
     pub status: String,
     pub region: String,
